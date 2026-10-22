@@ -1,3 +1,5 @@
 private
-.claude
-.codex
+node_modules/
+dist/
+.wisdom/
+.npm-cache/

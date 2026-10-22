@@ -1,0 +1,91 @@
+{
+  "title": "optim-jev",
+  "diagrams": [
+    {
+      "type": "overview",
+      "title": "optim-jev",
+      "root": { "title": "One plugin", "lines": ["3 tools"] },
+      "items": [
+        { "title": "jev-compacter", "lines": ["smaller context"], "features": [
+          { "title": "Removes stale context", "lines": ["tool calls and their outputs"] }
+        ] },
+        { "title": "jev-router", "lines": ["cheaper subagents"], "features": [
+          { "title": "Routes by your rules", "lines": ["right model, not just cheapest"] },
+          { "title": "Self-evolving rules", "lines": ["updated as your workflow changes"] }
+        ] },
+        { "title": "jev-skills", "lines": ["shorter skill list"], "features": [
+          { "title": "Shortlists per prompt", "lines": ["Jev decides what Claude sees"] },
+          { "title": "Replaces the full list", "lines": ["only relevant skills are sent"] }
+        ] }
+      ]
+    },
+    {
+      "type": "flow",
+      "title": "jev-compacter",
+      "headers": ["Trigger", "Judge", "Check", "Result"],
+      "start": { "title": "/compact", "lines": ["auto-limit 85%", "turn end 60%"] },
+      "step": { "title": "Jev, per tool call", "lines": ["keep · truncate · drop"] },
+      "check": {
+        "left": { "title": "Tokens freed", "lines": ["8k or more, or", "lands at 40%"] },
+        "right": { "title": "Jev reachable", "lines": ["error or timeout:", "fall back"] }
+      },
+      "results": [
+        { "title": "enough freed", "lines": ["apply the prune"] },
+        { "title": "too little · soft", "lines": ["defer a turn"] },
+        { "title": "too little · hard", "lines": ["built-in summary"] }
+      ],
+      "caption": ["pinned, never judged:", "first message + newest 6"],
+      "loop": {
+        "header": "Memory",
+        "title": "Keeps Jev's scores",
+        "note": "per session · on disk",
+        "left": ["reused scores", "confident calls skipped"],
+        "right": ["new scores", "saved after each run"]
+      },
+      "footer": "logs → /jev-compact stats"
+    },
+    {
+      "type": "flow",
+      "title": "jev-router",
+      "headers": ["Rules", "Spawn", "Guard", "Result"],
+      "start": { "title": "rules.json", "lines": ["RULES.md"] },
+      "step": { "chain": ["haiku", "sonnet", "opus"], "lines": ["Jev picks the", "cheapest allowed"] },
+      "check": {
+        "left": { "title": "Rule check", "lines": ["may this model", "write here?"] },
+        "right": { "title": "Errors", "dots": [["grey", "write 1 — ok"], ["red", "write 2 — error"], ["red", "write 3 — error"]] }
+      },
+      "results": [
+        { "title": "allowed", "lines": ["write goes through"] },
+        { "title": "denied", "lines": ["refused, rule named"] },
+        { "title": "3 errors", "lines": ["next spawn goes up"] }
+      ],
+      "caption": ["main loop writes only", "the two rules files"],
+      "loop": {
+        "header": "Escalation",
+        "title": "Next spawn goes up",
+        "note": "same files · one model up",
+        "left": ["one model up", "for those files"],
+        "right": ["errors + denials", "logged per session"]
+      },
+      "footer": "logs → /jev-route stats"
+    },
+    {
+      "type": "flow",
+      "title": "jev-skills",
+      "headers": ["Prompt", "Roster", "Judge", "Result"],
+      "start": { "title": "each new request" },
+      "step": { "title": "SKILL.md files", "lines": ["project · global"] },
+      "check": {
+        "left": { "title": "Batches", "lines": ["Jev scores", "the whole roster"] },
+        "right": { "title": "Final round", "lines": ["best of each", "scored again"] }
+      },
+      "results": [
+        { "title": "shortlist", "lines": ["top skills, % each"] },
+        { "title": "Jev offline", "lines": ["names only"] },
+        { "title": "skipped", "lines": ["slash, short reply"] }
+      ],
+      "caption": ["built-in skill listing", "replaced, not re-sent"],
+      "footer": "logs → /jev-skills stats"
+    }
+  ]
+}
