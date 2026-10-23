@@ -88,6 +88,15 @@ Use an actual returned `readVersion`. If `nextOffset` is present, repeat with
 Native evidence can arrive later than hooks. A nested tool may have no native
 message; empty source results do not prove it never ran.
 
+## Follow a call into the subagent it started
+
+```json
+{"find":"tools","captureId":"CAPTURE","where":{"toolName":"spawn_agent"},"select":["toolName","status"],
+ "include":{"subagent":{"where":{"type":{"in":["tool_started","file_change"]}},"select":["type","toolName","path"]}}}
+```
+
+Use `toolName: "Agent"` for Claude Code. A subagent's own records also match `where: {"agentId": "ID"}`.
+
 ## Failures and side effects
 
 ```json

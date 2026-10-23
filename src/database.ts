@@ -41,13 +41,17 @@ export class LedgerDatabase {
   }
 
   manifests(): Manifest[] {
-    return this.sql.prepare('SELECT manifest FROM captures').all().map(row => JSON.parse(String(row.manifest)));
+    return this.sql.prepare('SELECT manifest FROM captures').all().map(row => {
+      const manifest = JSON.parse(String(row.manifest)) as Manifest;
+      manifest.sessionId ??= manifest.piSessionId!;
+      return manifest;
+    });
   }
 
   saveManifest(manifest: Manifest): void {
     this.sql.prepare(`INSERT INTO captures(id, session_id, workspace_root, manifest) VALUES(?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET manifest=excluded.manifest`).run(
-      manifest.captureId, manifest.piSessionId, workspaceKey(manifest.workspaceRoot), JSON.stringify(manifest));
+      ON CONFLICT(id) DO UPDATE SET manifest=excluded.manifest, session_id=excluded.session_id`).run(
+      manifest.captureId, manifest.sessionId, workspaceKey(manifest.workspaceRoot), JSON.stringify(manifest));
   }
 
   recovery(id: string): string[] {
@@ -61,9 +65,14 @@ export class LedgerDatabase {
       record.requestId = parent?.type === 'input' ? parent.id : parent?.requestId;
       if (record.requestId) record.linkBasis = 'recorded-parent';
     }
-    if (!record.requestId && record.type.startsWith('source_')) {
-      const input = this.sql.prepare("SELECT id FROM records WHERE capture_id=? AND type='input' ORDER BY seq DESC LIMIT 1").get(record.captureId);
-      if (input) { record.requestId = String(input.id); record.linkBasis = 'observed-input-window'; }
+    // Transcript evidence and the usage it reports belong to the input window they arrived in.
+    if (record.requestId && record.type === 'usage' && !record.linkBasis) record.linkBasis = 'observed-input-window';
+    if (!record.requestId && (record.type.startsWith('source_') || record.type === 'usage')) {
+      const input = record.turnId
+        ? this.sql.prepare("SELECT id FROM records WHERE capture_id=? AND type='input' AND json_extract(body,'$.turnId')=? AND json_extract(body,'$.agentId') IS ? ORDER BY seq DESC LIMIT 1")
+          .get(record.captureId, record.turnId, record.agentId ?? null)
+        : this.sql.prepare("SELECT id FROM records WHERE capture_id=? AND type='input' ORDER BY seq DESC LIMIT 1").get(record.captureId);
+      if (input) { record.requestId = String(input.id); record.linkBasis = record.turnId ? 'recorded-turn' : 'observed-input-window'; }
     }
     this.sql.prepare(`INSERT INTO records(id,capture_id,seq,type,parent_id,request_id,tool_call_id,
       tool_name,source_entry_id,path,role,is_error,observation_id,body) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(

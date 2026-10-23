@@ -3,6 +3,7 @@ import type { Captures } from './captures.js';
 import { messageContent as content } from './content.js';
 import { EvidenceReader, evidenceVersion } from './evidence.js';
 import { selectPage } from './composable-query.js';
+import { nativeMessage } from './harnesses/index.js';
 import { surfaceRoles } from './vocabulary.js';
 
 interface Entry {
@@ -60,7 +61,9 @@ export function cleanEntries(entries: Entry[], mode = 'events'): Record<string, 
     const identity = key(e, id ?? e.id);
     if (seenTools.has(identity)) return;
     seenTools.add(identity);
-    const result = finishes.get(identity) ?? nativeResults.get(identity);
+    // A finish established from the transcript has no hook body; show the native result.
+    const finish = finishes.get(identity);
+    const result = finish && finish.body !== null ? finish : nativeResults.get(identity) ?? finish;
     if (showTools) rows.push({ tool: name ?? 'unknown', input: input ?? null,
       output: result ? output(result.body) : null });
   }
@@ -75,7 +78,8 @@ export function cleanEntries(entries: Entry[], mode = 'events'): Record<string, 
       if (!starts.has(key(e))) tool(e, e.toolCallId, e.toolName, null);
     } else if (e.type === 'source_record' || e.type === 'message') {
       if (e.sourceEntryId) {
-        const sourceKey = `${e.sessionId}:${e.sourceEntryId}`;
+        // One native line can hold several tool results; each keeps its own call ID.
+        const sourceKey = `${e.sessionId}:${e.sourceEntryId}:${e.toolCallId ?? ''}`;
         if (seenSources.has(sourceKey)) continue;
         seenSources.add(sourceKey);
       }
@@ -133,8 +137,9 @@ export function cleanQuery(captures: Captures, request: Query): Record<string, u
       if (raw && raw.length > 4 * 1024 * 1024) throw new Error('Body exceeds clean-view read limit; use normal inspection.');
       loadedChars += raw?.length ?? 0;
       if (loadedChars > 16 * 1024 * 1024) throw new Error('Clean view exceeds 16 MiB of source evidence; narrow scope/where.');
-      entries.push({ ...record, sessionId: captures.get(record.captureId).manifest.piSessionId,
-        body: raw === undefined ? null : JSON.parse(raw) });
+      const manifest = captures.get(record.captureId).manifest;
+      entries.push({ ...record, sessionId: manifest.sessionId, body: raw === undefined ? null
+        : record.type === 'source_record' ? { message: nativeMessage(manifest.harness, raw, record.toolCallId) } : JSON.parse(raw) });
     }
     if (entries.length > 10000) throw new Error('Clean view exceeds 10,000 records; narrow scope/where.');
     cursor = page.nextCursor ?? undefined;

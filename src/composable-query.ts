@@ -72,6 +72,8 @@ function relationQuery(record: LedgerRecord, relation: string, spec: Expansion, 
     case 'request': find = 'requests'; where = { id: requestId ?? '__unlinked__' }; break;
     case 'parent': where = { id: record.parentId ?? '__unlinked__' }; break;
     case 'children': where = { parentId: record.id }; break;
+    // Everything the subagent this call started did, in one step.
+    case 'subagent': where = { agentId: record.childAgentId ?? '__unlinked__' }; break;
     case 'source': where = record.toolCallId ? { toolCallId: record.toolCallId, type: { in: ['source_record', 'source_tool_call'] } }
       : { id: record.type.startsWith('source_') ? record.id : '__unlinked__' }; break;
     default:
@@ -129,7 +131,7 @@ export function composableQuery(captures: Captures, original: Query): unknown {
   function project(record: LedgerRecord, spec: Expansion, reservedRoots = 0): Record<string, unknown> {
     nodes++;
     const output: Record<string, unknown> = { id: record.id, captureId: record.captureId,
-      sessionId: captures.get(record.captureId).manifest.piSessionId,
+      sessionId: captures.get(record.captureId).manifest.sessionId,
       evidence: { recordId: record.id, toolCallId: record.toolCallId, requestId: record.requestId,
         sourceEntryId: record.sourceEntryId, linkBasis: record.linkBasis } };
     for (const field of spec.select ?? defaults) {
@@ -141,7 +143,11 @@ export function composableQuery(captures: Captures, original: Query): unknown {
       } else if (field in record) output[field] = (record as any)[field];
     }
     for (const [name, nested] of Object.entries(spec.include ?? {})) {
-      const query = relationQuery(record, name, nested, version);
+      // The child ID is learned from the call's result; a tool start reaches it through that result.
+      const linked = name === 'subagent' && !record.childAgentId && record.toolCallId
+        ? { ...record, childAgentId: captures.database.records('capture_id=? AND tool_call_id=? AND type=? AND revision<=?',
+          [record.captureId, record.toolCallId, 'tool_finished', version], 'ORDER BY seq DESC LIMIT 1')[0]?.childAgentId } : record;
+      const query = relationQuery(linked, name, nested, version);
       if (nodes >= 500 - reservedRoots) { output[name] = { items: [], truncated: true, nextQuery: query }; continue; }
       const result = selectPage(captures, query, version);
       const items: unknown[] = [];

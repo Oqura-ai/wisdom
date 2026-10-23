@@ -15,7 +15,7 @@ test('clean HTTP returns exact dialogue and paired tools without metadata or dup
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { workspaceRoot: workspace, piSessionId: 's', source });
+    const { captureId } = await call(c, '/captures', { workspaceRoot: workspace, harness: 'pi', sessionId: 's', source });
     const send = (type: string, fields = {}) => call(c, `/captures/${captureId}/observe`, { type, observationId: randomUUID(), ...fields });
     await send('input', { data: { text: 'Print hello.\nKeep this newline.' } });
     await send('tool_started', { toolCallId: 't', toolName: 'bash', data: { input: { command: 'echo hello', timeout: 10 } } });

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { call, connectionAt, defaultDataDir } from './client.js';
-import type { Connection } from './daemon.js';
+import { call, connectionAt, defaultDataDir } from '../../client.js';
+import type { Connection } from '../../daemon.js';
 
 // A tiny structural interface keeps this extension independent of a second Pi
 // installation. The installed Pi supplies its real API at runtime (verified on 1.2.0).
@@ -38,7 +38,7 @@ export default function wisdomTracking(pi: PiAPI): void {
     try {
       connection = connectionAt(process.env.WISDOM_DATA_DIR ?? defaultDataDir);
       const manifest = await call(connection, '/captures', {
-        piSessionId: ctx.sessionManager.getSessionId(), workspaceRoot: ctx.cwd,
+        harness: 'pi', sessionId: ctx.sessionManager.getSessionId(), workspaceRoot: ctx.cwd,
         source: ctx.sessionManager.getSessionFile() ?? null
       });
       captureId = manifest.captureId;

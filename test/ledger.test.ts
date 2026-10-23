@@ -27,7 +27,7 @@ test('live queries show pending calls, exact patches, failed side effects, and b
   const daemon = await startDaemon(box.data, 0);
   try {
     const connection = daemon.connection;
-    const capture = await call(connection, '/captures', { piSessionId: 'test-session', workspaceRoot: box.workspace, source: null });
+    const capture = await call(connection, '/captures', { harness: 'pi', sessionId: 'test-session', workspaceRoot: box.workspace, source: null });
     const id = capture.captureId;
     const send = (record: unknown) => call(connection, `/captures/${id}/observe`, record);
     const ask = (query: object) => call(connection, '/query', { captureId: id, ...query });
@@ -71,7 +71,7 @@ test('pagination freezes its read position; external edits, rename and deletion 
   const daemon = await startDaemon(box.data, 0);
   try {
     const c = daemon.connection;
-    const manifest = await call(c, '/captures', { piSessionId: 's', workspaceRoot: box.workspace, source: null });
+    const manifest = await call(c, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
     const id = manifest.captureId;
     const send = (record: unknown) => call(c, `/captures/${id}/observe`, record);
     for (let i = 0; i < 3; i++) await send(obs('input', { data: { text: `request ${i}` } }));
@@ -115,7 +115,7 @@ test('native mirroring preserves bytes across partial UTF-8 lines and correlates
   const box = sandbox();
   try {
     const source = path.join(box.root, 'native.jsonl'); fs.writeFileSync(source, '');
-    const ledger = new Ledger(path.join(box.data, 'capture'), { schemaVersion: 1, captureId: 'capture', piSessionId: 's',
+    const ledger = new Ledger(path.join(box.data, 'capture'), { schemaVersion: 1, captureId: 'capture', harness: 'pi', sessionId: 's',
       workspaceRoot: box.workspace, source, startedAt: new Date().toISOString(), status: 'recording', scope }, new LedgerDatabase(path.join(box.data, 'ledger.sqlite')), true);
     const first = Buffer.from(JSON.stringify({ type: 'message', id: 'm1', parentId: null, message: { role: 'assistant',
       content: [{ type: 'text', text: 'हैलो\u2028world' }, { type: 'toolCall', id: 'a', name: 'edit', arguments: {} },
@@ -126,7 +126,7 @@ test('native mirroring preserves bytes across partial UTF-8 lines and correlates
     assert.equal(ledger.listRecords().length, 3);
     const result = Buffer.from(JSON.stringify({ type: 'message', id: 'm2', parentId: 'm1', message: { role: 'toolResult', toolCallId: 'b', content: [] } }) + '\n');
     fs.appendFileSync(source, result); ledger.syncSource();
-    assert.deepEqual(fs.readFileSync(path.join(ledger.dir, 'pi-session.jsonl')), Buffer.concat([first, result]));
+    assert.deepEqual(fs.readFileSync(ledger.mirror), Buffer.concat([first, result]));
     assert.equal(ledger.listRecords().filter(r => r.toolCallId === 'b').length, 2);
     ledger.database.close();
   } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
@@ -136,7 +136,7 @@ test('MCP uses the same read-only queries and captures survive daemon restart', 
   const box = sandbox();
   let daemon = await startDaemon(box.data, 0);
   try {
-    const manifest = await call(daemon.connection, '/captures', { piSessionId: 's', workspaceRoot: box.workspace, source: null });
+    const manifest = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
     await call(daemon.connection, `/captures/${manifest.captureId}/observe`, obs('input', { data: { text: 'Preserve this intent.' } }));
     const server = createLedgerMcp(daemon.connection);
     const client = new Client({ name: 'test', version: '1' });
@@ -167,7 +167,7 @@ test('nested operations do not duplicate patches or imply exclusive attribution'
   const box = sandbox();
   const daemon = await startDaemon(box.data, 0);
   try {
-    const m = await call(daemon.connection, '/captures', { piSessionId: 's', workspaceRoot: box.workspace, source: null });
+    const m = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
     const send = (record: unknown) => call(daemon.connection, `/captures/${m.captureId}/observe`, record);
     await send(obs('tool_started', { toolCallId: 'parent', toolName: 'custom' }));
     await send(obs('tool_started', { toolCallId: 'parent/1', parentToolCallId: 'parent', toolName: 'write', data: { input: { path: 'nested.txt' } } }));
@@ -186,7 +186,7 @@ test('relative native source paths resolve against Pi cwd and do not become code
   try {
     const source = path.join(box.workspace, 'native.jsonl');
     fs.writeFileSync(source, JSON.stringify({ type: 'session', id: 's' }) + '\n');
-    const manifest = await call(daemon.connection, '/captures', { piSessionId: 's', workspaceRoot: box.workspace, source: 'native.jsonl' });
+    const manifest = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: 'native.jsonl' });
     assert.equal(manifest.source, source);
     fs.appendFileSync(source, JSON.stringify({ type: 'message', id: 'm', parentId: null, message: { role: 'user', content: 'hello' } }) + '\n');
     await call(daemon.connection, `/captures/${manifest.captureId}/close`, { reason: 'test' });

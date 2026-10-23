@@ -4,7 +4,7 @@ Node 24's built-in `node:sqlite` supplies `DatabaseSync`. There is no ORM or ext
 database service. The daemon remains the single writer and local query endpoint.
 
 ```text
-Pi hooks + native JSONL + workspace observations
+Harness adapters (Pi extension, Claude Code/Codex hooks) + native JSONL + workspace observations
                      |
               Captures / Ledger
                      |
@@ -14,8 +14,11 @@ Pi hooks + native JSONL + workspace observations
                      |
               HTTP / CLI / MCP
 
-.wisdom/sessions/<capture>/pi-session.jsonl  (native evidence)
-.wisdom/sessions/<capture>/payloads/<sha256> (hook bodies / patches)
+.wisdom/harnesses/<harness>/<capture>/native-session.jsonl    (native evidence)
+.wisdom/harnesses/<harness>/<capture>/payloads/<sha256>       (hook bodies / patches)
+.wisdom/harnesses/claude-code/<capture>/subagents/agent-<id>.jsonl
+
+Captures recorded before harness tagging stay in .wisdom/sessions/<capture>/pi-session.jsonl.
 ```
 
 ## Tables
@@ -60,7 +63,7 @@ database is not a rebuild strategy.
 
 Recording captures become interrupted after daemon restart because the in-memory
 workspace baseline cannot be safely reconstructed as if no time had passed.
-Reload Pi to start a new capture. Old captures remain queryable.
+Start a new capture (`/reload` in Pi, or run `wisdom track claude` again). Old captures remain queryable.
 
 ## Reading the implementation
 
@@ -79,9 +82,14 @@ Reload Pi to start a new capture. Old captures remain queryable.
 | [content.ts](../src/content.ts) / [cursor.ts](../src/cursor.ts) | Shared text extraction and opaque cursor encoding. |
 | [clean-query.ts](../src/clean-query.ts) | Bounded conversation selection and formatting in the daemon. |
 | [daemon.ts](../src/daemon.ts) | Local authenticated HTTP and lifecycle. |
-| [pi-extension.ts](../src/pi-extension.ts) | Pi hooks that send observations and wait at tool boundaries. |
+| [harnesses/types.ts](../src/harnesses/types.ts) | The adapter contract: tool targets, direct file tools and native-line reading. |
+| [harnesses/pi/](../src/harnesses/pi/) | Pi adapter, extension and launcher. |
+| [harnesses/claude-code/](../src/harnesses/claude-code/) | Claude Code adapter, hook mapping and launcher; the plugin lives in [integrations/claude-code/](../integrations/claude-code/). |
+| [harnesses/codex/](../src/harnesses/codex/) | Codex adapter, hook mapping, trust preflight and launcher. See [Codex recording](CODEX.md). |
 | [client.ts](../src/client.ts) | Daemon descriptor lookup, authenticated calls and background startup. |
 | [mcp.ts](../src/mcp.ts) / [cli.ts](../src/cli.ts) | Two clients of the same query contract. |
+| [stats.ts](../src/stats.ts) | `op: "stats"`: project inventory and per-harness, capture, tool, file and model counts and token usage in SQL. Usage records come from each adapter's `nativeEntry().usage` ([harnesses/types.ts](../src/harnesses/types.ts)). |
+| [dashboard.ts](../src/dashboard.ts) / [dashboard/](../dashboard/) | Optional Next.js live viewer started by the daemon; reads through the query API. |
 
 Custom root selection runs in SQLite; includes fetch bounded related pages
 internally. One client request can involve several SQL statements. This avoids

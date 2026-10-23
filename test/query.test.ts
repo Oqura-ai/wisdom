@@ -19,7 +19,7 @@ test('one query returns interaction surfaces, exact edit patches and outputs wit
   const box = fixture(); const daemon = await startDaemon(box.data, 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { workspaceRoot: box.workspace, piSessionId: 's', source: null });
+    const { captureId } = await call(c, '/captures', { workspaceRoot: box.workspace, harness: 'pi', sessionId: 's', source: null });
     const send = (type: string, extra = {}) => call(c, `/captures/${captureId}/observe`, observation(type, extra));
     const input = await send('input', { data: { text: 'Enable authentication, preserving the API.' } });
     await send('message', { data: { role: 'assistant', content: [
@@ -63,7 +63,7 @@ test('scope isolates projects, session scope spans captures, pagination freezes 
     const other = path.join(box.root, 'other'); fs.mkdirSync(other);
     const captures: string[] = [];
     for (const [workspaceRoot, piSessionId] of [[box.workspace, 'same-session'], [box.workspace, 'same-session'], [other, 'other-session']]) {
-      const m = await call(c, '/captures', { workspaceRoot, piSessionId, source: null }); captures.push(m.captureId);
+      const m = await call(c, '/captures', { harness: 'pi', workspaceRoot, sessionId: piSessionId, source: null }); captures.push(m.captureId);
       await call(c, `/captures/${m.captureId}/observe`, observation('input', { data: { text: workspaceRoot } }));
       await call(c, `/captures/${m.captureId}/observe`, observation('tool_started', { toolCallId: 'shared-id', toolName: 'bash' }));
     }
@@ -93,7 +93,7 @@ test('nested continuations and evidence budgets are explicit; malformed queries 
   const box = fixture(); const daemon = await startDaemon(box.data, 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { workspaceRoot: box.workspace, piSessionId: 's', source: null });
+    const { captureId } = await call(c, '/captures', { workspaceRoot: box.workspace, harness: 'pi', sessionId: 's', source: null });
     await call(c, `/captures/${captureId}/observe`, observation('input', { data: { text: 'Review changes.' } }));
     for (let i = 0; i < 3; i++) {
       await call(c, `/captures/${captureId}/observe`, observation('tool_started', { toolCallId: `t${i}`, toolName: 'read' }));
@@ -123,7 +123,7 @@ test('nested continuations and evidence budgets are explicit; malformed queries 
     assert(vocab.relations.includes('outputs'));
     // Missing evidence is distinct from an empty successful output.
     const record = daemon.captures.get(captureId).listRecords().find(r => r.type === 'tool_finished')!;
-    fs.unlinkSync(path.join(box.data, 'sessions', captureId, 'payloads', record.dataRef!));
+    fs.unlinkSync(path.join(box.data, 'harnesses', 'pi', captureId, 'payloads', record.dataRef!));
     const missing = await call(c, '/query', { find: 'outputs', captureId, where: { id: record.id }, select: ['content'] });
     assert.equal(missing.items[0].content.available, false); assert.equal(missing.issues.length, 1);
   } finally { await daemon.close(); fs.rmSync(box.root, { recursive: true, force: true }); }
@@ -132,10 +132,10 @@ test('nested continuations and evidence budgets are explicit; malformed queries 
 test('SQLite captures survive restart without reading historical JSONL manifests', async () => {
   const box = fixture(); let daemon = await startDaemon(box.data, 0);
   try {
-    const { captureId } = await call(daemon.connection, '/captures', { workspaceRoot: box.workspace, piSessionId: 's', source: null });
+    const { captureId } = await call(daemon.connection, '/captures', { workspaceRoot: box.workspace, harness: 'pi', sessionId: 's', source: null });
     const request = await call(daemon.connection, `/captures/${captureId}/observe`, observation('input', { data: { text: 'Keep this record' } }));
     await call(daemon.connection, `/captures/${captureId}/close`, {});
-    const dir = path.join(box.data, 'sessions', captureId);
+    const dir = path.join(box.data, 'harnesses', 'pi', captureId);
     fs.writeFileSync(path.join(dir, 'manifest.json'), 'invalid old manifest');
     fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"unfinished":');
     const before = await call(daemon.connection, '/query', { preset: 'timeline', captureId });
@@ -153,7 +153,7 @@ test('a result and its edit retain the original request when a new input arrives
   const box = fixture(); const daemon = await startDaemon(box.data, 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { workspaceRoot: box.workspace, piSessionId: 's', source: null });
+    const { captureId } = await call(c, '/captures', { workspaceRoot: box.workspace, harness: 'pi', sessionId: 's', source: null });
     const send = (type: string, extra = {}) => call(c, `/captures/${captureId}/observe`, observation(type, extra));
     const first = await send('input', { data: { text: 'Enable the flag' } });
     await send('tool_started', { toolCallId: 'slow', toolName: 'edit', data: { input: { path: 'auth.ts' } } });

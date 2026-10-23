@@ -1,12 +1,12 @@
 ---
 name: wisdom-ledger
-description: Query live Wisdom session evidence to review recorded intent, trace code edits to tool outputs, or debug tracked Pi activity. Use for Wisdom ledger investigations across captures or sessions.
+description: Query live Wisdom session evidence to review recorded intent, trace code edits to tool outputs, or debug tracked coding-agent activity (Pi, Claude Code, or Codex). Use for Wisdom ledger investigations across captures or sessions.
 ---
 
 # Query Wisdom evidence
 
 Use the existing `ledger_query` MCP tool when available. The CLI accepts the same
-JSON via `node <wisdom>/dist/src/cli.js query --file <request.json>`. `wisdom track`
+JSON via `node <wisdom>/dist/src/cli.js query --file <request.json>`. `wisdom track pi`
 sets `WISDOM_CLI_PATH` to that CLI and `WISDOM_DATA_DIR` to the active data directory,
 so commands work from a different tracked workspace. In PowerShell use
 `node "$env:WISDOM_CLI_PATH"`; in POSIX shells use `node "$WISDOM_CLI_PATH"`.

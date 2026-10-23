@@ -1,0 +1,23 @@
+{
+  "name": "wisdom-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local live viewer for Wisdom captures. Started by the Wisdom daemon.",
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 7435",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 7435",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.2",
+    "react": "19.2.9",
+    "react-dom": "19.2.9"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  }
+}

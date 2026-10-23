@@ -2,6 +2,7 @@ import type { Captures } from './captures.js';
 import type { LedgerRecord, InspectQuery } from './schema.js';
 import { surfaceText } from './content.js';
 import { isSurfaceRecord } from './vocabulary.js';
+import { nativeMessage } from './harnesses/index.js';
 
 /** Cache source bytes only for the lifetime of one query. Several references can
  * point to the same native message without causing repeated file reads.
@@ -20,7 +21,10 @@ export class EvidenceReader {
         : record.sourceOffset !== undefined ? ledger.readSource(record) : undefined);
     }
     const raw = this.bodies.get(key);
-    return raw !== undefined && section === 'content' && isSurfaceRecord(record) ? surfaceText(JSON.parse(raw)) : raw;
+    if (raw === undefined || section !== 'content' || !isSurfaceRecord(record)) return raw;
+    // Native lines are read through their harness adapter; hook bodies are already neutral.
+    return surfaceText(record.type === 'source_record'
+      ? nativeMessage(this.captures.get(record.captureId).manifest.harness, raw, record.toolCallId) : JSON.parse(raw));
   }
 }
 

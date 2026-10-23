@@ -5,12 +5,14 @@ import { cleanQuery } from './clean-query.js';
 import { inspectEvidence } from './evidence.js';
 import { decodeCursor, encodeCursor } from './cursor.js';
 import { vocabulary } from './vocabulary.js';
+import { stats } from './stats.js';
 
 /** One service boundary for HTTP and MCP. Clients only submit requests. */
 export function query(captures: Captures, input: unknown): unknown {
   const request = querySchema.parse(input);
   if (request.op === 'describe') return vocabulary;
   if (request.op === 'inspect') return inspectEvidence(captures, request);
+  if (request.op === 'stats') return stats(captures, request);
   if (request.op === 'sessions') {
     const cursor = request.cursor ? decodeCursor(request.cursor) : undefined;
     if (cursor && (cursor.op !== 'sessions' || typeof cursor.after !== 'string')) throw new Error('Invalid sessions cursor');

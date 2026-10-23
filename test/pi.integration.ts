@@ -20,7 +20,7 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
   const daemon = await startDaemon(dataDir, 0);
   const child = spawn(process.execPath, [entry, '--mode', 'rpc', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
     '--no-mcp', '--provider', 'wisdom-test', '--model', 'scripted', '--thinking', 'off',
-    '--extension', path.join(project, 'dist', 'src', 'pi-extension.js'),
+    '--extension', path.join(project, 'dist', 'src', 'harnesses', 'pi', 'extension.js'),
     '--skill', path.join(project, 'skills', 'wisdom-ledger'),
     '--extension', path.join(project, 'test', 'fixtures', 'scripted-provider.mjs'),
     '--session-dir', path.join(root, 'native')], {
@@ -74,7 +74,7 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     assert(ledger.listRecords().some(r => r.type === 'tool_finished' && r.toolName === 'partial_failure' && r.isError));
     assert(ledger.listRecords().some(r => r.parentToolCallId));
     assert(ledger.listRecords().some(r => r.type === 'source_record' && r.role === 'user'));
-    assert.deepEqual(fs.readFileSync(path.join(ledger.dir, 'pi-session.jsonl')), fs.readFileSync(ledger.manifest.source!));
+    assert.deepEqual(fs.readFileSync(ledger.mirror), fs.readFileSync(ledger.manifest.source!));
     const review = await call(daemon.connection, '/query', { preset: 'interaction-review', captureId, maxChars: 32000 });
     assert.equal(review.items.length, 1);
     assert(review.items[0].changes.items.some((r: any) => r.path === 'example.txt' && r.patch.available));

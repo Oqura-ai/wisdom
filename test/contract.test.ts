@@ -36,7 +36,7 @@ test('inspection respects revisions and shared path filters work through HTTP an
   const data = path.join(root, 'data');
   const daemon = await startDaemon(data, 0);
   try {
-    const { captureId } = await call(daemon.connection, '/captures', { workspaceRoot: workspace, piSessionId: 's', source: null });
+    const { captureId } = await call(daemon.connection, '/captures', { workspaceRoot: workspace, harness: 'pi', sessionId: 's', source: null });
     const ledger = daemon.captures.get(captureId);
     const record = ledger.append({ type: 'file_change', path: 'src/auth.ts', operation: 'modify', summary: 'Changed auth',
       patchRef: ledger.payload('patch text') });
@@ -61,7 +61,7 @@ test('clean queries skip unrelated evidence bodies and share CLI/HTTP output', a
   const data = path.join(root, 'data');
   const daemon = await startDaemon(data, 0);
   try {
-    const { captureId } = await call(daemon.connection, '/captures', { workspaceRoot: workspace, piSessionId: 's', source: null });
+    const { captureId } = await call(daemon.connection, '/captures', { workspaceRoot: workspace, harness: 'pi', sessionId: 's', source: null });
     const ledger = daemon.captures.get(captureId);
     ledger.append({ type: 'input', summary: 'Hello', dataRef: ledger.payload({ text: 'Hello' }) });
     const discarded = ledger.payload({ diagnostic: 'Unrelated gap body' });

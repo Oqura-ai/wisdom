@@ -1,0 +1,5 @@
+{
+  "name": "wisdom-tracking",
+  "version": "0.3.0",
+  "description": "Records this Claude Code session into the Wisdom ledger. Loaded only by `wisdom track claude`."
+}

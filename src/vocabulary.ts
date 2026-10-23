@@ -24,8 +24,9 @@ export const resources = {
 export const fields = [
   'id', 'captureId', 'sessionId', 'seq', 'observedAt', 'type', 'summary', 'parentId',
   'requestId', 'linkBasis', 'toolCallId', 'parentToolCallId', 'toolName', 'role', 'path',
-  'operation', 'isError', 'attribution', 'activeToolCallIds', 'beforeHash', 'afterHash',
-  'patchUnavailable', 'sourceEntryId', 'sourceParentId', 'sourceTimestamp',
+  'operation', 'isError', 'agentId', 'childAgentId', 'resultBasis', 'usage', 'usageKey', 'usageScope', 'model', 'provider',
+  'beforeCapture', 'internalAgent', 'attribution', 'activeToolCallIds', 'beforeHash', 'afterHash',
+  'patchUnavailable', 'sourceEntryId', 'sourceParentId', 'sourceTimestamp', 'turnId',
   'content', 'data', 'patch', 'status',
 ] as const;
 
@@ -35,10 +36,13 @@ export const filterColumns: Record<string, string> = {
   type: 'r.type', parentId: 'r.parent_id', requestId: 'r.request_id', toolCallId: 'r.tool_call_id',
   toolName: 'r.tool_name', path: 'r.path', role: 'r.role', isError: 'r.is_error',
   observedAt: "json_extract(r.body,'$.observedAt')", operation: "json_extract(r.body,'$.operation')",
-  attribution: "json_extract(r.body,'$.attribution')", text: "json_extract(r.body,'$.summary')",
+  attribution: "json_extract(r.body,'$.attribution')",
+  turnId: "json_extract(r.body,'$.turnId')",
+  agentId: "json_extract(r.body,'$.agentId')", childAgentId: "json_extract(r.body,'$.childAgentId')",
+  model: "json_extract(r.body,'$.model')", harness: "coalesce(json_extract(c.manifest,'$.harness'),'pi')", text: "json_extract(r.body,'$.summary')",
 };
 
-export const relations = ['request', 'messages', 'tools', 'outputs', 'changes', 'source', 'parent', 'children'] as const;
+export const relations = ['request', 'messages', 'tools', 'outputs', 'changes', 'source', 'parent', 'children', 'subagent'] as const;
 export const presets = {
   intent: { find: 'events', where: { surface: true }, select: ['type', 'role', 'content', 'linkBasis'] },
   timeline: { find: 'events' },
@@ -57,12 +61,15 @@ export const vocabulary = {
   queryVersion: 3,
   terms: {
     workspace: 'Canonical project directory. File paths are relative to this directory.',
-    sessionId: 'Pi logical session ID; one session can have several recording captures.',
+    harness: 'Coding agent that produced a capture: pi, claude-code, or codex.',
+    sessionId: "The harness's logical session ID; one session can have several recording captures.",
+    agentId: 'Subagent identity when supplied by the harness. Missing identity does not prove main-agent authorship for Codex.',
+    turnId: 'Native harness turn ID when supplied; used to associate overlapping Codex turns.',
     captureId: 'One continuous Wisdom recording period, with its own sequence numbers.',
     request: 'Recorded input event, not proof of when the model consumed queued input.',
     toolCallId: 'Harness call/result correlation ID, scoped to a capture.',
     requestId: 'Recorded input associated with an event. Inspect linkBasis before inferring causality.',
-    linkBasis: 'recorded-parent follows hook parentage; observed-input-window is only temporal association.',
+    linkBasis: 'recorded-parent follows hook parentage; recorded-turn matches a native turn ID; observed-input-window is only temporal association.',
     readVersion: 'Global committed SQLite record revision; fixes the evidence visible to this query and its includes.',
     lastSeq: 'Latest visible per-capture sequence; use readVersion to fix the evidence boundary.',
     patch: 'Observed file delta. Attribution records an interval, not exclusive authorship.',

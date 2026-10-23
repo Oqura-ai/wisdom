@@ -66,6 +66,9 @@ exceeds its limits; use normal views for evidence relationships and patches.
 
 Responses have root `items`, `readVersion`, `nextCursor`, `coverage`, and `issues`.
 Relations have `items`, `truncated`, and `nextQuery`; submit `nextQuery` directly.
+`include.subagent` on a call that started a subagent (Codex `spawn_agent`, Claude Code
+`Agent`) returns that subagent's records in the same query. A `tool_finished` with
+`resultBasis: "native-transcript"` was established from the transcript, not a result hook.
 Bodies have `available`, `text`, `totalChars`, `truncated`, and, if needed, `inspect`.
 Surface-content inspection returns the underlying raw record from offset zero.
 Further body pages use `contentOffset` from `sections.data.nextOffset` (or patch).

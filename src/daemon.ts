@@ -6,6 +6,12 @@ import { Captures } from './captures.js';
 import { query } from './query.js';
 import { openSchema, observationSchema } from './schema.js';
 import { writeJson } from './ledger.js';
+import { startDashboard } from './dashboard.js';
+
+/** Bumped when the capture-opening contract changes. A daemon started from an older
+ * build keeps running old code in memory, so clients check this before recording.
+ */
+export const CAPTURE_API = 4;
 
 export interface Connection { url: string; token: string; pid: number }
 
@@ -21,7 +27,7 @@ async function body(request: http.IncomingMessage): Promise<unknown> {
 }
 
 /** One local process owns SQLite and evidence files. No web framework is needed. */
-export async function startDaemon(dataDir: string, port = 7434) {
+export async function startDaemon(dataDir: string, port = 7434, options: { dashboardPort?: number } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const lock = path.join(dataDir, 'daemon.lock');
   if (fs.existsSync(lock)) {
@@ -35,9 +41,10 @@ export async function startDaemon(dataDir: string, port = 7434) {
   }
   fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
   let captures: Captures;
-  try { captures = new Captures(path.join(dataDir, 'sessions')); }
+  try { captures = new Captures(dataDir); }
   catch (error) { fs.unlinkSync(lock); throw error; }
   const token = randomBytes(32).toString('hex');
+  let dashboard: ReturnType<typeof startDashboard> | undefined;
   let closing = false;
   let timer: NodeJS.Timeout;
   let finish!: () => void;
@@ -53,7 +60,8 @@ export async function startDaemon(dataDir: string, port = 7434) {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (request.method === 'GET' && url.pathname === '/health') {
         send(200, { status: 'running', pid: process.pid, captures: captures.ledgers.size,
-          storage: 'sqlite', queryVersion: 3, readVersion: captures.database.revision }); return;
+          storage: 'sqlite', captureApi: CAPTURE_API, queryVersion: 3, readVersion: captures.database.revision,
+          dashboard: dashboard?.state() ?? { status: 'unavailable', reason: 'Not started with this daemon.' } }); return;
       }
       if (request.method !== 'POST') { send(404, { error: 'Unknown route' }); return; }
       const input = await body(request);
@@ -85,11 +93,14 @@ export async function startDaemon(dataDir: string, port = 7434) {
   const connection: Connection = { url: `http://127.0.0.1:${address.port}`, token, pid: process.pid };
   writeJson(path.join(dataDir, 'daemon.json'), connection);
   timer = setInterval(() => captures.poll(), 500);
+  // Optional viewer. Started after daemon.json exists, since it reads it to connect.
+  if (options.dashboardPort) dashboard = startDashboard(dataDir, options.dashboardPort);
 
   async function close(): Promise<void> {
     if (closing) return closed;
     closing = true;
     clearInterval(timer);
+    dashboard?.close();
     captures.shutdown();
     await new Promise<void>(resolve => server.close(() => resolve()));
     captures.database.close();

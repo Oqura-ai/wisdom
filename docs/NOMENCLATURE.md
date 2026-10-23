@@ -9,8 +9,13 @@ without a daemon, or send `{"op":"describe"}` to the daemon/MCP for discovery.
 | Name | Meaning | Scope / caveat |
 | --- | --- | --- |
 | Workspace | Canonical project directory | `scope.workspaceRoot`; Windows casing is normalized. |
-| Session | Pi's logical conversation | `sessionId` in queries; `piSessionId` in manifests. One session may have multiple captures. |
-| Capture | One Wisdom recording period | `captureId`; restarting/resuming Pi opens another capture. |
+| Harness | The coding agent recorded (`pi`, `claude-code`, `codex`) | `harness` filter. Captures from before harness tagging are `pi`. |
+| Session | The harness's logical conversation | `sessionId` in queries and manifests (older manifests: `piSessionId`). One session may have multiple captures. |
+| Usage | Tokens and cost one model response reported in the harness transcript | `type: "usage"` records with `usage: {input, cacheRead, cacheWrite, output, reasoning, costUsd}`, `model`, `usageKey`. Additive buckets: `input` is fresh (uncached) input; `reasoning` is part of `output`. Counted once per `usageKey` (Claude Code repeats one response per content block). `beforeCapture` marks resumed history. Subagent transcripts are indexed under their `agentId`. Cost is only what the harness reports (Pi per message; Claude Code `usageScope: "session-total"`); Codex reports none. |
+| Stats | Aggregate counts (`op: "stats"`) | Without `workspaceRoot`: tracked projects. With it: per harness, per capture, per tool, per file and per model, including tokens and reported cost. `requests` are the user's own prompts; `replies` are assistant messages with text; `subagents` are agents that did work. Failures count results marked as errors; unknown outcomes are not counted. |
+| Agent | Subagent identity supplied by a harness | `agentId` on its records; `agentId: null` selects records without one. For Codex, absent identity does not establish main-agent authorship. A call that started a subagent (Codex `spawn_agent`, Claude Code `Agent`) records it as `childAgentId` on its result. |
+| Turn | Native turn identity when available | `turnId`; associates overlapping Codex activity with its recorded input. |
+| Capture | One Wisdom recording period | `captureId`; restarting/resuming the harness opens another capture. |
 | Record / event | One immutable observation or source reference | `id`; unique across the database. |
 | `seq` | Append position within one capture | The first record has sequence 1. |
 | `readVersion` | Global SQLite append revision | Fixes all records and includes returned by a composable query. It is not a filesystem snapshot. |
@@ -19,8 +24,8 @@ without a daemon, or send `{"op":"describe"}` to the daemon/MCP for discovery.
 | `requestId` | Input associated with an observation | Check `linkBasis`. Missing means unlinked, not nonexistent. |
 | `parentId` | Immediate observed parent record | A result points to its start; a change points to the observed tool start when available. |
 | `toolCallId` | Harness call/result ID | Join using **capture + toolCallId**, never toolCallId alone. |
-| `sourceEntryId` | Entry ID in Pi's native transcript | Distinct from Wisdom's record ID. |
-| `sourceParentId` | Pi transcript branch parent | Native branch structure is preserved, but is not interpreted as a filesystem history. |
+| `sourceEntryId` | Native entry ID, or byte-offset/content-hash identity when omitted | Distinct from Wisdom's record ID; supports deduplicating resumed transcript copies. |
+| `sourceParentId` | Native transcript branch parent (Pi `parentId`, Claude Code `parentUuid`) | Native branch structure is preserved, but is not interpreted as a filesystem history. |
 | Patch | UTF-8 unified diff for an observed creation, modification or deletion | Creation and deletion diff from or to empty (`/dev/null`), so the file's contents are visible. Binary or non-UTF-8 sides have no patch and set `patchUnavailable`. |
 | Payload | Exact stored hook body or patch | Content-addressed SHA-256 file within the capture directory. |
 | Surface content | Recorded user/assistant text blocks | Excludes assistant thinking blocks and tool-call arguments. |
@@ -28,10 +33,11 @@ without a daemon, or send `{"op":"describe"}` to the daemon/MCP for discovery.
 | Gap | Known missing/limited observation | Query events with `where.type="gap"`; also inspect recovery gaps. |
 
 `linkBasis="recorded-parent"` follows the parent recorded by the hook observer.
+`linkBasis="recorded-turn"` matches a native record's turn ID to a recorded input.
 `linkBasis="observed-input-window"` associates native records with the most recent
 observed input at ingestion. The latter can be wrong for semantic intent after
 steering, compaction, transcript branching, or delayed persistence. It is useful
-navigation, not a causal assertion. Neither value proves the model consumed that input.
+navigation, not a causal assertion. These values do not prove the model consumed that input.
 
 File `attribution="observed-during-tool"` means the change was seen during an
 operation interval. `activeToolCallIds` preserves overlapping tools. External
@@ -102,7 +108,7 @@ sessions, since unrelated projects can contain identical relative paths.
 
 Filters: `id`, `captureId`, `sessionId`, `seq`, `type`, `parentId`, `requestId`,
 `toolCallId`, `toolName`, `path`, `role`, `isError`, `observedAt`, `operation`,
-`attribution`, `text`, `surface`, `tool.name`, `tool.isError`.
+`attribution`, `agentId`, `childAgentId`, `harness`, `text`, `surface`, `tool.name`, `tool.isError`.
 
 `text` searches the short deterministic summary, case-insensitively with
 `contains`. It does not search all bodies. Paths are workspace-relative; both slash styles
@@ -120,6 +126,7 @@ plus `summary`, `observedAt`, `beforeHash`, `afterHash`, `operation`, `linkBasis
 - `data`: original raw body, explicitly requested; may contain tool arguments and thinking blocks.
 - `patch`: recorded unified diff, or `{available:false, reason}`.
 - `status`: for tool starts, `completed`, `error`, or `pending-or-missing`. Completed means a result was recorded, not that the resulting code is correct.
+- `resultBasis`: `native-transcript` on a `tool_finished` established from the harness transcript because no result hook arrived (Codex sends none for failed commands). Absent means a result hook.
 
 ## Relationships
 
@@ -133,6 +140,7 @@ plus `summary`, `observedAt`, `beforeHash`, `afterHash`, `operation`, `linkBasis
 | `source` | Empty unless there is an explicit source link | Native source records with the same toolCallId. A native record without a call ID returns itself. |
 | `parent` | Recorded immediate parent, if present | Recorded immediate parent. |
 | `children` | Direct recorded children | Direct recorded children. |
+| `subagent` | Empty | Every record of the subagent this call started (via `childAgentId`, read from the call's result). |
 
 When a record lacks a call ID, tools/outputs/changes fall back to its associated
 request. When it lacks both, the relation is empty. Nested operations with their

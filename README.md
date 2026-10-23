@@ -1,12 +1,12 @@
 # Wisdom
 
-Wisdom records a Pi session while it runs and makes its evidence queryable from another terminal or agent. The project root is this directory.
+Wisdom records a coding-agent session (Pi, Claude Code, or Codex) while it runs and makes its evidence queryable from another terminal or agent. The project root is this directory.
 
-Wisdom has a local daemon, SQLite storage, a Pi extension, a CLI, and one read-only MCP query tool. Presets and composable queries let you retrieve intent, edits and tool outputs in one request. It does not orchestrate agents or generate model-written summaries. Intent views show recorded surface text with evidence references.
+Wisdom has a local daemon, SQLite storage, one adapter per harness (a Pi extension, Claude Code/Codex hooks), a CLI, and one read-only MCP query tool. Presets and composable queries let you retrieve intent, edits and tool outputs in one request. It does not orchestrate agents or generate model-written summaries. Intent views show recorded surface text with evidence references.
 
 ## Start here
 
-Requires Node.js 24 or newer and an existing Pi installation. The extension was tested against the installed Pi 1.2.0. SQLite comes with Node; no database installation is needed.
+Requires Node.js 24 or newer and an existing Pi, Claude Code, or Codex installation. Tested against Pi 1.2.0 and Claude Code 2.1.306; Codex hook discovery is checked against CLI 0.147.0. SQLite comes with Node; no database installation is needed.
 
 ```powershell
 npm.cmd ci --legacy-peer-deps
@@ -16,21 +16,34 @@ npm.cmd run wisdom -- daemon start
 
 On shells without PowerShell's script restrictions, `npm` works instead of `npm.cmd`.
 
-Start a tracked Pi in the project you want to observe:
+Start a tracked harness in the project you want to observe. Only sessions started this way are recorded; a plain `pi` or `claude` is untouched.
 
 ```powershell
-npm.cmd run wisdom -- track --cwd "C:\path\to\your\project"
+npm.cmd run wisdom -- track pi --cwd "C:\path\to\your\project"
+npm.cmd run wisdom -- track claude --cwd "C:\path\to\your\project"
 ```
 
-The launcher uses your managed Pi installation and passes our extension and the bundled `wisdom-ledger` skill explicitly. It does not change your global Pi configuration. `--pi-entry <absolute-path-to-cli.js>` supports another installation. Pi options go after a second `--`:
+For Pi, the launcher uses your managed Pi installation and passes our extension and the bundled `wisdom-ledger` skill explicitly. It does not change your global Pi configuration. `--pi-entry <absolute-path-to-cli.js>` supports another installation. Pi options go after a second `--`:
 
 ```powershell
-npm.cmd run wisdom -- track --cwd "C:\path\to\project" -- --continue
+npm.cmd run wisdom -- track pi --cwd "C:\path\to\project" -- --continue
 ```
 
 Inside Pi, `/wisdom-status` reports the capture ID. Each startup/resume/reload gets a new capture; Pi's conversation ID is stored separately. A resumed session's native copy includes its existing history, but file observations start when this capture starts.
 
-The daemon remains running after Pi exits. To query from a second terminal:
+For Claude Code, the launcher starts the daemon, opens a capture, and runs `claude` with Wisdom's hooks loaded through `--plugin-dir` and `ledger_query` through `--mcp-config`, for that process only; your global Claude Code configuration is not changed. `--claude-bin FILE` selects another executable, and Claude Code options go after `--`. The capture closes when `claude` exits. Subagent tool calls carry `agentId`, and each subagent transcript is copied when it stops. `/clear` or a session switch inside one process is recorded as a gap, because one capture mirrors one native transcript.
+
+For Codex, first review the invocation-scoped recording hooks, then start a tracked session:
+
+```powershell
+npm.cmd run wisdom -- track codex --cwd "C:\path\to\project" --setup-hooks
+# In Codex: open /hooks, review and trust Wisdom's hooks, then quit.
+npm.cmd run wisdom -- track codex --cwd "C:\path\to\project"
+```
+
+Use `--codex-bin FILE` for another installation; pass Codex arguments after `--`, for example `-- resume --last`. The launcher checks hook trust before opening a capture, adds Wisdom's MCP server for this invocation, and uses the existing ledger. Setup does not record. Codex transcripts are best-effort supplementary evidence (they supply results Codex sends no hook for, such as failed commands), and hooks do not cover every tool path. `--trust-all-hooks` skips the review but also runs other untrusted hooks; it is opt-in. See [Codex setup, coverage, and tests](docs/CODEX.md).
+
+The daemon remains running after the harness exits. To query from a second terminal:
 
 ```powershell
 npm.cmd run wisdom -- sessions
@@ -42,14 +55,14 @@ npm.cmd run wisdom -- file-history --workspace "C:\path\to\project" --path src/a
 npm.cmd run wisdom -- vocabulary
 ```
 
-`interaction-review` returns requests, surface messages, patches, and outputs together, omitting tool arguments. `changes` can span all tracked sessions in a workspace. Use `--session <pi-session-id>` to narrow to a logical session, or pass a capture ID for one recording. Query replies are structured JSON by default.
+`interaction-review` returns requests, surface messages, patches, and outputs together, omitting tool arguments. `changes` can span all tracked sessions in a workspace. Use `--session <session-id>` (the harness's session ID) to narrow to a logical session, or pass a capture ID for one recording. Query replies are structured JSON by default.
 
 For conversation content without metadata wrappers:
 
 ```powershell
-node dist/src/cli.js interaction-review --session <pi-session-id> --clean
-node dist/src/cli.js intent --session <pi-session-id> --clean
-node dist/src/cli.js timeline --session <pi-session-id> --clean
+node dist/src/cli.js interaction-review --session <session-id> --clean
+node dist/src/cli.js intent --session <session-id> --clean
+node dist/src/cli.js timeline --session <session-id> --clean
 ```
 
 Clean mode returns an array of `{user}`, `{assistant}`, and `{tool, input, output}` objects. It preserves content without summarizing, joins tool results to their starts, and removes matching duplicate native copies. Text blocks become strings; other structured data remains structured. No IDs, timestamps, patches or coverage wrappers are included. Pending or missing tool results appear as `output: null`.
@@ -65,7 +78,7 @@ npm.cmd run wisdom -- inspect <capture-id> <change-id> --section patch
 
 All query commands return JSON. Use `--limit` and `--cursor` for preset pages;
 `--read-version` fixes the evidence boundary. Inspection uses `--max-chars`
-and `--offset` to read large bodies in parts. Record IDs differ from Pi tool-call
+and `--offset` to read large bodies in parts. Record IDs differ from harness tool-call
 IDs. Use `include` to join related evidence without fetching intermediate IDs.
 
 For a custom query, create a JSON request and use `query --file request.json`. Start at the data you know and select related evidence in the same request:
@@ -88,12 +101,24 @@ For a custom query, create a JSON request and use `query --file request.json`. S
 ## What is running?
 
 ```text
-Pi extension ── local HTTP ── daemon ── SQLite
-                                 │
+Pi extension ─────┐
+Claude Code hooks ┼ local HTTP ── daemon ── SQLite
+Codex hooks ──────┘                │
                          indexed query engine
                                  │
-                  CLI queries / MCP queries
+                  CLI queries / MCP queries / live dashboard
 ```
+
+### Live dashboard
+
+A local web viewer in [dashboard/](dashboard/) (Next.js) shows tracked projects live: per-harness cards, tool usage, most-changed files, every capture, and each capture as a work tree (request → tool calls → file changes, with subagents nested under the call that started them). Assistant replies appear in place (❝), and a subagent lane ends with what the subagent returned. Token usage is shown per harness, model, capture and request: fresh input, cache read, cache write, output, reasoning and cache hit rate, with cost where the harness reports it. Claude Code's internal helper agents (prompt suggestions, recaps) are recorded but folded out of the tree. Selecting a node shows its request text, reply, tool input and result, or patch. Its look follows the Wisdom design ([private/idea](private/idea/index.html)) with Light, Dark and Night themes; the choice is remembered per browser and the first visit follows the system setting. Build it once:
+
+```powershell
+npm.cmd run dashboard:install
+npm.cmd run dashboard:build
+```
+
+After that, `wisdom daemon start` (and any `wisdom track`) also serves it on the daemon port + 1, `http://127.0.0.1:7435` by default, and stops it with the daemon. `wisdom dashboard` prints the URL; `--no-dashboard` skips it. If it is not built, the daemon records normally and reports why the dashboard is missing. It reads through the same read-only query API (`op: "stats"` for counts and tokens). Token usage comes from each harness's native transcript; captures recorded before usage indexing are indexed once from their preserved transcript copy when the daemon next starts. The daemon token stays on the dashboard's server, and requests not addressed to localhost are refused, because recordings are unredacted. Use `npm.cmd run dashboard:dev` while changing it. Its output goes to `.wisdom/dashboard.log`.
 
 The daemon listens on `127.0.0.1:7434` by default. Its PID and local access token are stored in `.wisdom/daemon.json`; it binds only to loopback. `--data DIR` selects another data directory and `--port N` selects another port. The CLI and MCP use the saved descriptor rather than hard-coding the port. Background startup is hidden on Windows.
 
@@ -121,9 +146,9 @@ Configure a local stdio MCP server with Node directly; npm's banner would interf
 }
 ```
 
-The server exposes `ledger_query`. Use `op=describe` for discovery, `op=sessions` for capture inventory, a `preset` for standard views, or `find/where/select/include` for a custom projection. Use `op=inspect` for exact body pages. Requests use the same schema and engine as the CLI. The tool cannot start Pi or edit code. Starting the MCP adapter can start the local daemon, including normal interrupted-capture recovery.
+The server exposes `ledger_query`. Use `op=describe` for discovery, `op=sessions` for capture inventory, a `preset` for standard views, or `find/where/select/include` for a custom projection. Use `op=inspect` for exact body pages. Requests use the same schema and engine as the CLI. The tool cannot start a harness or edit code. Starting the MCP adapter can start the local daemon, including normal interrupted-capture recovery.
 
-Agents can query directly by workspace, path, session, or known capture without collecting intermediate record IDs. The portable [harness skill](skills/wisdom-ledger/SKILL.md) explains scope, progressive disclosure, and evidence limits. `wisdom track` loads it into Pi and sets `WISDOM_CLI_PATH` so the skill can call this installation from another project. For another harness, register/copy `skills/wisdom-ledger/` through that harness's skill mechanism and configure the MCP server above or an absolute CLI path. No global harness configuration is changed by this repository.
+Agents can query directly by workspace, path, session, or known capture without collecting intermediate record IDs. The portable [harness skill](skills/wisdom-ledger/SKILL.md) explains scope, progressive disclosure, and evidence limits. `wisdom track pi` loads it into Pi and sets `WISDOM_CLI_PATH` so the skill can call this installation from another project. For another harness, register/copy `skills/wisdom-ledger/` through that harness's skill mechanism and configure the MCP server above or an absolute CLI path. No global harness configuration is changed by this repository.
 
 ## Files you can read
 
@@ -134,25 +159,26 @@ Agents can query directly by workspace, path, session, or known capture without 
   ledger.sqlite                # Authoritative capture/record metadata and SQL indexes
   ledger.sqlite-wal            # SQLite may keep sidecar files while running
   ledger.sqlite-shm
-  sessions/<capture-id>/
-    pi-session.jsonl           # Complete native records, byte-preserved
+  harnesses/<harness>/<capture-id>/   # pi, claude-code: one directory per harness
+    native-session.jsonl       # Complete native records, byte-preserved
+    subagents/agent-<id>.jsonl # Claude Code subagent transcripts
     payloads/<sha256>          # Exact observed arguments/results and patches
 ```
 
-All generated data stays local. Native transcripts and hook payloads are preserved without redaction and may contain sensitive content. `.wisdom/` is ignored by Git. Live hook payloads and native records can overlap: one records what the extension observed, the other preserves what Pi persisted.
+All generated data stays local. Native transcripts and hook payloads are preserved without redaction and may contain sensitive content. `.wisdom/` is ignored by Git. Live hook payloads and native records can overlap: one records what the adapter observed, the other preserves what the harness persisted.
 
 SQLite is authoritative. Historical Wisdom `manifest.json`, `events.jsonl` and
 `changes.jsonl` are ignored and left untouched. There is no importer or dual-write.
-Native Pi JSONL remains source evidence. For backup, stop the daemon and copy
+Native harness JSONL remains source evidence. For backup, stop the daemon and copy
 the whole data directory, including payloads and native mirrors. See
 [storage details](docs/STORAGE.md).
 
-A previously recording capture becomes interrupted after daemon restart; it does not silently resume with a missing file baseline. Reload the Pi extension to create a new capture after restoring the daemon.
+A previously recording capture becomes interrupted after daemon restart; it does not silently resume with a missing file baseline. Reload the Pi extension, or start Claude Code again through `wisdom track claude`, to create a new capture after restoring the daemon.
 
 ## Capture scope and honest limits
 
-- Native session mirroring and idle watcher processing run every 500 ms. Before a tool runs, Pi waits for its start observation to be accepted. File changes are observed at tool boundaries, not after every internal filesystem write.
-- Direct `read`, `edit`, and `write` calls inspect their named target and watcher hints. Shell/custom calls reconcile the tracked workspace afterward. An idle reconciliation also runs every 30 seconds as a watcher fallback.
+- Native session mirroring and idle watcher processing run every 500 ms. Before a tool runs, the harness waits for its start observation to be accepted. File changes are observed at tool boundaries, not after every internal filesystem write.
+- Direct file tools (Pi `read`/`edit`/`write`; Claude Code `Read`/`Edit`/`Write`/`NotebookEdit` and read-only tools) inspect their named target and watcher hints. Shell/custom calls reconcile the tracked workspace afterward. An idle reconciliation also runs every 30 seconds as a watcher fallback.
 - Baseline contents live in memory. The first version caps an individual observed file at 1 MiB, a workspace scan at 10,000 files, and retained baseline bytes at 64 MiB. Limits and read errors produce visible gaps. Scans are synchronous and can briefly delay queries; use a bounded workspace.
 - `.git`, `.wisdom`, `.npm-cache`, `node_modules`, `dist`, `build`, `.next`, `.venv`, and `__pycache__` are excluded by directory name. Symlinks are excluded. Permissions/ACLs are not tracked.
 - Add `.wisdomignore` in the tracked project for relative paths to exclude. It accepts files and directory prefixes, one per line, with `#` comments; it intentionally has no glob or negation syntax. Wisdom's own file excludes `private/`.
@@ -160,7 +186,7 @@ A previously recording capture becomes interrupted after daemon restart; it does
 - User shell commands outside model tool hooks are observed through filesystem activity and native records; they are not automatically attributed as agent tool calls.
 - Renames appear as delete + create. Creations, modifications and deletions store UTF-8 unified diffs when possible; a created or deleted file diffs from or to empty, so its contents are readable. Binary changes get hashes and a missing-patch explanation. Full historical restoration is not promised.
 - A failed tool can leave changes, which are still recorded. Pending calls remain visible if recording stops. A lost extension heartbeat marks the capture interrupted after 30 seconds.
-- If before-tool recording fails, this tracking extension blocks that tool and reports the problem. Restore the daemon and `/reload`, or explicitly start Pi without tracking. Post-tool capture failure cannot undo a write that already occurred.
+- If before-tool recording fails, the tool is blocked (Pi extension; Claude Code `PreToolUse` and `UserPromptSubmit` hooks exit 2), so work pauses until the daemon is back. Restore the daemon, then `/reload` in Pi or restart `wisdom track claude`; or start the harness without tracking. Post-tool capture failure cannot undo a write that already occurred.
 - SQLite commits use WAL and FULL synchronous mode. Payload/native-file writes are separate and are not one atomic, power-loss-safe transaction with the database. Recorded recovery gaps and mirror mismatches appear in recovery coverage. Native records above 32 MiB and requests above 16 MiB are explicit limits.
 - No LLM-inferred intent, candidate-bound test certification, fixed code review snapshots, automatic multi-agent attribution, or full-text search engine is implemented. `where.text` searches summaries only; full-body search is not implemented. Exact IDs, tool links, request links and file paths have SQL indexes.
 - Native-message `observed-input-window` links are temporal, especially after queued input, steering or branching. Read `linkBasis` and attribution before inferring causality. Read versions freeze evidence, not the codebase itself.
@@ -170,7 +196,7 @@ A previously recording capture becomes interrupted after daemon restart; it does
 Read these in order:
 
 1. [schema.ts](src/schema.ts): record and query vocabulary.
-2. [pi-extension.ts](src/pi-extension.ts): how Pi supplies events and waits at tool boundaries.
+2. [harnesses/](src/harnesses/): one adapter per harness. [types.ts](src/harnesses/types.ts) is the contract; [pi/extension.ts](src/harnesses/pi/extension.ts) and [claude-code/hook.ts](src/harnesses/claude-code/hook.ts) supply events and wait at tool boundaries.
 3. [captures.ts](src/captures.ts): session lifecycle and operation/change coordination.
 4. [workspace.ts](src/workspace.ts): scoped file observation and diff generation.
 5. [database.ts](src/database.ts) and [ledger.ts](src/ledger.ts): SQLite, payloads and native mirroring.
