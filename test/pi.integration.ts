@@ -59,8 +59,8 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     const captureId = [...daemon.captures.ledgers.keys()][0];
     child.stdin.write(JSON.stringify({ id: 'prompt', type: 'prompt', message: 'Run the local recording fixture.' }) + '\n');
     await waitFor(() => daemon.captures.get(captureId).listRecords().some(r => r.type === 'tool_started' && r.toolName === 'nested_writer'));
-    const live = await call(daemon.connection, '/query', { preset: 'timeline', captureId });
-    assert(live.coverage[0].pendingToolCount > 0);
+    const live = (await call(daemon.connection, '/ledger', { capture: captureId, glance: true })).text;
+    assert.match(live, / pending/, 'a running call is visible while Pi works');
     await waitFor(() => messages.some(m => m.type === 'agent_settled'));
     child.stdin.end();
     await new Promise<void>((resolve, reject) => { child.once('exit', code => code === 0 ? resolve() : reject(new Error(stderr))); });
@@ -75,12 +75,13 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     assert(ledger.listRecords().some(r => r.parentToolCallId));
     assert(ledger.listRecords().some(r => r.type === 'source_record' && r.role === 'user'));
     assert.deepEqual(fs.readFileSync(ledger.mirror), fs.readFileSync(ledger.manifest.source!));
-    const review = await call(daemon.connection, '/query', { preset: 'interaction-review', captureId, maxChars: 32000 });
-    assert.equal(review.items.length, 1);
-    assert(review.items[0].changes.items.some((r: any) => r.path === 'example.txt' && r.patch.available));
-    assert(review.items[0].outputs.items.some((r: any) => r.toolName === 'partial_failure' && r.isError));
-    assert(review.items[0].messages.items.some((r: any) => r.role === 'assistant'));
-    console.log(`Verified installed Pi ${version}: ${changes.length} file observations, live queries, native source mirrored byte-for-byte.`);
+    const read = async (request: object): Promise<string> => (await call(daemon.connection, '/ledger', { capture: captureId, ...request })).text;
+    assert.match(await read({ glance: true }), /^1 turn · /m);
+    const turn = await read({ open: 't1' });
+    assert.match(turn, /^p\d+  example\.txt · modify · /m);
+    assert.match(turn, /^c\d+  partial_failure · failed/m);
+    assert.match(turn, /^reply /m);
+    console.log(`Verified installed Pi ${version}: ${changes.length} file observations, live reads, native source mirrored byte-for-byte.`);
   } finally {
     if (child.exitCode === null) child.kill();
     await daemon.close();

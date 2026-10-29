@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ledger, type Project, type ProjectStats } from '@/lib/api';
+import { view as read, type Project, type ProjectStats } from '@/lib/api';
 import { Overview } from './Overview';
 import { SessionList } from './SessionList';
 import { WorkTree } from './WorkTree';
-import { HarnessBadge, LiveBadge, ThemeSwitch, Wordmark, shortPath } from './bits';
+import { HarnessBadge, LiveBadge, ScaleSwitch, ThemeSwitch, Wordmark, shortPath } from './bits';
 
 type Live = { status: 'connecting' | 'live' | 'offline'; readVersion?: number; error?: string };
 
@@ -52,16 +52,24 @@ export function Dashboard() {
   const [projects, setProjects] = useState<Project[]>();
   const [stats, setStats] = useState<ProjectStats>();
   const [error, setError] = useState<string>();
+  // The session drawer floats over the page; the main view always keeps the full width.
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawer(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawer]);
 
   // Refetch summaries only when the ledger revision moves.
   useEffect(() => {
     if (live.status !== 'live') return;
-    ledger<{ projects: Project[] }>({ op: 'stats' }).then(result => { setProjects(result.projects); setError(undefined); }, e => setError(e.message));
+    read<{ projects: Project[] }>({ view: 'projects' }).then(result => { setProjects(result.projects); setError(undefined); }, e => setError(e.message));
   }, [live.status, live.readVersion]);
   const workspace = view.workspace ?? projects?.[0]?.workspaceRoot;
   useEffect(() => {
     if (live.status !== 'live' || !workspace) return;
-    ledger<ProjectStats>({ op: 'stats', workspaceRoot: workspace }).then(setStats, e => setError(e.message));
+    read<ProjectStats>({ view: 'project', workspaceRoot: workspace }).then(setStats, e => setError(e.message));
   }, [live.status, live.readVersion, workspace]);
 
   const sessions = useMemo(() => (stats?.sessions ?? []).filter(s => !view.harness || s.harness === view.harness), [stats, view.harness]);
@@ -70,12 +78,15 @@ export function Dashboard() {
   return (
     <div className="shell">
       <header className="topbar">
+        <button className="drawer-toggle" aria-expanded={drawer} aria-controls="sessions-drawer" title={drawer ? 'Close sessions' : 'Open sessions'}
+          onClick={() => setDrawer(!drawer)}><i className={`chevron ${drawer ? 'back' : ''}`} aria-hidden /></button>
         <div className="brand"><Wordmark /><span className="tagline">ledger</span></div>
-        <select className="project" value={workspace ?? ''} onChange={e => setView({ workspace: e.target.value, capture: undefined })}>
+        <span className="select-wrap"><select className="project" value={workspace ?? ''} onChange={e => setView({ workspace: e.target.value, capture: undefined })}>
           {!projects?.length && <option value="">No tracked projects yet</option>}
-          {projects?.map(p => <option key={p.workspaceRoot} value={p.workspaceRoot}>{shortPath(p.workspaceRoot)} · {p.captures} captures</option>)}
-        </select>
+          {projects?.map(p => <option key={p.workspaceRoot} value={p.workspaceRoot}>{shortPath(p.workspaceRoot)} · {p.captures} sessions</option>)}
+        </select></span>
         <div className="spacer" />
+        <ScaleSwitch />
         <ThemeSwitch />
         <LiveBadge status={live.status} readVersion={live.readVersion} />
       </header>
@@ -84,7 +95,8 @@ export function Dashboard() {
       {error && live.status === 'live' && <div className="banner">{error}</div>}
 
       <div className="body">
-        <aside className="sidebar">
+        {drawer && <div className="scrim" onClick={() => setDrawer(false)} aria-hidden />}
+        <aside id="sessions-drawer" className={`sidebar ${drawer ? 'open' : ''}`} aria-hidden={!drawer} inert={!drawer}>
           <div className="filters">
             <button className={!view.harness ? 'chip on' : 'chip'} onClick={() => setView({ harness: undefined })}>All</button>
             {stats?.harnesses.map(h => (
@@ -93,7 +105,7 @@ export function Dashboard() {
               </button>
             ))}
           </div>
-          <SessionList sessions={sessions} selected={view.capture} onSelect={capture => setView({ capture })} />
+          <SessionList sessions={sessions} selected={view.capture} onSelect={capture => { setView({ capture }); setDrawer(false); }} />
         </aside>
 
         <main className="main">

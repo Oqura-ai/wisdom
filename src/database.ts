@@ -42,9 +42,7 @@ export class LedgerDatabase {
 
   manifests(): Manifest[] {
     return this.sql.prepare('SELECT manifest FROM captures').all().map(row => {
-      const manifest = JSON.parse(String(row.manifest)) as Manifest;
-      manifest.sessionId ??= manifest.piSessionId!;
-      return manifest;
+      return JSON.parse(String(row.manifest)) as Manifest;
     });
   }
 

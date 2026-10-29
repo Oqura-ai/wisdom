@@ -3,7 +3,11 @@
  */
 export interface NeutralMessage {
   role: string;
-  /** A string, or blocks: text, thinking, image, and toolCall {id, name, arguments}. */
+  /** A string, or blocks: text, image, toolCall {id, name, arguments}, and thinking
+   * {thinking, redacted?, durationMs?}. `redacted` means the harness recorded that
+   * thinking happened but not its text (omitted or provider-encrypted). Surface views
+   * never show thinking; the conversation view shows it explicitly.
+   */
   content: unknown;
   toolCallId?: string;
   toolName?: string;
@@ -50,6 +54,12 @@ export interface HarnessAdapter {
   toolTarget(toolName: string, input: any): string | undefined;
   /** Tools that touch nothing but their named target. Others need a workspace reconcile. */
   isDirectFileTool(toolName: string): boolean;
+  /** How the ledger shows this tool's calls without repeating evidence held elsewhere.
+   * 'patch': the input is the file change itself, shown once, as its patch.
+   * 'file': a successful output is file content; listed by size, read by opening the call.
+   * 'full': input and output are shown whole. Unknown tools must be 'full'.
+   */
+  toolView(toolName: string): 'patch' | 'file' | 'full';
   /** Read one native transcript line. Unknown entry kinds must not throw. */
   nativeEntry(entry: any): NativeEntry;
 }

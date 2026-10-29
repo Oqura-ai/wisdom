@@ -10,7 +10,12 @@ function messages(entry: any): NeutralMessage[] {
   if (!Array.isArray(message.content)) return [{ role: message.role ?? entry.type, content: message.content ?? null }];
   if (entry.type === 'assistant') {
     return [{ role: 'assistant', content: message.content.map((block: any) => block?.type === 'tool_use'
-      ? { type: 'toolCall', id: block.id, name: block.name, arguments: block.input } : block) }];
+      ? { type: 'toolCall', id: block.id, name: block.name, arguments: block.input }
+      // Claude Code keeps a signature and duration but may omit the text (thinkingDisplay).
+      : block?.type === 'thinking' ? { type: 'thinking', thinking: block.thinking ?? '', redacted: !block.thinking || undefined,
+        durationMs: typeof entry.thinkingDurationMs === 'number' ? entry.thinkingDurationMs : undefined }
+      : block?.type === 'redacted_thinking' ? { type: 'thinking', thinking: '', redacted: true }
+      : block) }];
   }
   // A user entry carries tool results, possibly several, beside any typed text.
   const results = message.content.filter((block: any) => block?.type === 'tool_result');
@@ -42,6 +47,7 @@ export const claudeCode: HarnessAdapter = {
   toolTarget: (_toolName, input) => typeof input?.file_path === 'string' ? input.file_path
     : typeof input?.notebook_path === 'string' ? input.notebook_path : undefined,
   isDirectFileTool: toolName => direct.has(toolName),
+  toolView: toolName => ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName) ? 'patch' : toolName === 'Read' ? 'file' : 'full',
   nativeEntry: entry => ({ id: entry?.uuid, parentId: entry?.parentUuid, timestamp: entry?.timestamp,
     kind: String(entry?.type ?? 'unknown'), messages: messages(entry), usage: usage(entry) }),
 };

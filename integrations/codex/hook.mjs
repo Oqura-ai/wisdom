@@ -8,7 +8,7 @@ catch (error) {
   for await (const chunk of process.stdin) input += chunk;
   const name = /"hook_event_name"\s*:\s*"(\w+)"/.exec(input)?.[1];
   const reason = `Wisdom's Codex hook could not load (${error?.message ?? error}). Run npm run build in Wisdom; work stays paused.`;
-  if (!process.env.WISDOM_CAPTURE_ID) process.stdout.write('{}');
+  if (!process.env.WISDOM_LAUNCH_ID) process.stdout.write('{}');
   else if (name === 'PreToolUse') process.stdout.write(JSON.stringify({ hookSpecificOutput: {
     hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
   else if (name === 'UserPromptSubmit') process.stdout.write(JSON.stringify({ decision: 'block', reason }));

@@ -1,21 +1,24 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { mcpQuerySchema } from './schema.js';
+import { ledgerSchema } from './schema.js';
 import { call } from './client.js';
 import type { Connection } from './daemon.js';
 
 export function createLedgerMcp(connection: Connection): McpServer {
-  const server = new McpServer({ name: 'wisdom-ledger', version: '0.3.0' });
-  server.registerTool('ledger_query', {
-    description: 'Read Wisdom evidence while agents run. op=describe gives the vocabulary; op=sessions discovers captures. Use preset=intent|timeline|changes|failures|file-history|interaction-review with captureId or scope. Custom find=requests|messages|tools|outputs|changes|events supports where, select, include in one query, with readVersion and bounded continuations. Example: {find:"changes",scope:{workspaceRoot:"/project"},where:{path:"src/auth.ts","tool.isError":true},include:{request:{select:["content"]},outputs:{select:["content"]}}}. Use op=inspect with captureId, id, sections and readVersion for exact bodies. op=stats lists tracked projects; with workspaceRoot it returns per-harness, per-capture, tool and file counts. clean=true returns conversation content without metadata. Intent is recorded surface text, not hidden reasoning. Check gaps, linkBasis, attribution, pending results, and truncation before drawing conclusions.',
-    inputSchema: mcpQuerySchema.shape,
+  const server = new McpServer({ name: 'wisdom-ledger', version: '0.4.0' });
+  server.registerTool('ledger', {
+    description: 'Read a recorded coding-agent session (Pi, Claude Code, Codex). Two moves: '
+      + '{glance:true} lists sessions; {capture, glance:true} shows a session\'s shape and every turn (full user input, start of the last reply, calls, failures, changed files); '
+      + '{capture, open:"t3"} returns that whole turn in recorded order (thinking, replies, tool calls with full input and output, all patches); '
+      + 'open also takes "t3/c2" (one call), "a1" (a subagent), "a1/c2", "outside". '
+      + 'Nothing is summarized or cut by rule. A response over the size ceiling ends with "limited" and the exact request to continue; '
+      + 'pass "at" (the version a response states) to keep reading the same snapshot. Recorded text is evidence, not hidden reasoning; '
+      + '"observed during c1" is timing, not proof of authorship.',
+    inputSchema: ledgerSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
   }, async args => {
-    try {
-      const result = await call(connection, '/query', args);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-    }
-    catch (error) { return { isError: true, content: [{ type: 'text', text: String(error) }] }; }
+    try { return { content: [{ type: 'text', text: (await call(connection, '/ledger', args)).text }] }; }
+    catch (error) { return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }; }
   });
   return server;
 }

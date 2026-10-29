@@ -31,8 +31,8 @@ export function observation(event: any): Record<string, unknown> | undefined {
 const blocking = new Set(['PreToolUse', 'UserPromptSubmit']);
 
 export async function main(): Promise<void> {
-  const captureId = process.env.WISDOM_CAPTURE_ID;
-  if (!captureId) return; // Not started by `wisdom track claude`.
+  const launchId = process.env.WISDOM_LAUNCH_ID;
+  if (!launchId) return; // Not started by `wisdom track claude`.
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const event = JSON.parse(input);
@@ -40,7 +40,11 @@ export async function main(): Promise<void> {
   if (!mapped) return;
   try {
     const connection = connectionAt(process.env.WISDOM_DATA_DIR ?? defaultDataDir);
-    await call(connection, `/captures/${captureId}/observe`, { observationId: randomUUID(), ...mapped });
+    // Every hook names its session, so /clear and /resume reach the right capture. A
+    // subagent's hooks name the parent session; its transcript is copied at SubagentStop.
+    if (typeof event.session_id !== 'string' || !event.session_id) throw new Error('Claude Code hook has no session_id');
+    const identity = { sessionId: event.session_id, ...(typeof event.agent_id === 'string' ? {} : { source: event.transcript_path }) };
+    await call(connection, `/launches/${launchId}/observe`, { observationId: randomUUID(), ...identity, ...mapped });
   } catch (error) {
     process.stderr.write(`Wisdom cannot record this ${event.hook_event_name}: ${error instanceof Error ? error.message : error}. `
       + 'Restart the Wisdom daemon; work stays paused until recording works.\n');

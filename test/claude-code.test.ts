@@ -40,6 +40,7 @@ test('Claude Code transcript lines become neutral messages, one per parallel too
   assert.deepEqual(other.messages, []); assert.equal(other.kind, 'attachment');
   assert.equal(claudeCode.toolTarget('NotebookEdit', { notebook_path: 'n.ipynb' }), 'n.ipynb');
   assert(claudeCode.isDirectFileTool('Edit')); assert(!claudeCode.isDirectFileTool('Bash'));
+  assert.deepEqual(['Write', 'Edit', 'Read', 'Bash', 'Unknown'].map(claudeCode.toolView), ['patch', 'patch', 'file', 'full', 'full']);
 });
 
 test('a Claude Code capture records hooks, patches, subagents and its transcript in its own harness directory', async () => {
@@ -54,11 +55,11 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
   const daemon = await startDaemon(data, 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { harness: 'claude-code', sessionId: 'pending-resume',
-      harnessVersion: '2.1.306 (Claude Code)', workspaceRoot: workspace, source: null });
-    const hook = (event: Record<string, unknown>) =>
-      call(c, `/captures/${captureId}/observe`, { observationId: randomUUID(), ...observation({ ...common, ...event })! });
-    await hook({ hook_event_name: 'SessionStart', transcript_path: native, source: 'resume' });
+    const { launchId } = await call(c, '/launches', { harness: 'claude-code', harnessVersion: '2.1.306 (Claude Code)', workspaceRoot: workspace });
+    // As the hook process does: every event names its session; a subagent's names its parent's.
+    const hook = (event: Record<string, unknown>) => call(c, `/launches/${launchId}/observe`, { observationId: randomUUID(),
+      sessionId: common.session_id, ...(event.agent_id ? {} : { source: native }), ...observation({ ...common, ...event })! });
+    const { captureId } = await hook({ hook_event_name: 'SessionStart', transcript_path: native, source: 'resume' });
     await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'Edit existing.txt' });
     fs.appendFileSync(native, line({ type: 'user', uuid: 'u0', message: { role: 'user', content: 'Edit existing.txt' } }));
 
@@ -78,7 +79,7 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Glob', tool_use_id: 'toolu_g', agent_id: 'a1', tool_response: { filenames: [] } });
     await hook({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: subTranscript });
     await hook({ hook_event_name: 'Stop', last_assistant_message: 'Done' });
-    await call(c, `/captures/${captureId}/close`, { reason: 'exit-0' });
+    await call(c, `/launches/${launchId}/close`, { reason: 'exit-0' });
 
     const ledger = daemon.captures.get(captureId);
     assert.equal(ledger.dir, path.join(data, 'harnesses', 'claude-code', captureId));
@@ -86,25 +87,25 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
     assert.deepEqual(fs.readFileSync(ledger.mirror), fs.readFileSync(native));
     assert.deepEqual(fs.readFileSync(path.join(ledger.dir, 'subagents', 'agent-a1.jsonl')), fs.readFileSync(subTranscript));
 
-    const changes = await call(c, '/query', { preset: 'changes', captureId });
-    const edit = changes.items.find((r: any) => r.path === 'existing.txt');
-    assert.equal(edit.attribution, 'observed-during-tool');
-    assert.match(edit.patch.text, /\+hello world/);
-    assert(changes.items.some((r: any) => r.path === 'leftover.txt' && r.operation === 'create'));
-    const failures = await call(c, '/query', { preset: 'failures', captureId });
-    assert.equal(failures.items[0].toolName, 'Bash');
+    const read = async (request: object): Promise<string> => (await call(c, '/ledger', { capture: captureId, ...request })).text;
+    const glance = await read({ glance: true });
+    assert.match(glance, /^resume with: wisdom resume cc-session$/m);
+    assert.match(glance, /^t1  in {8}Edit existing\.txt$/m);
+    assert.match(glance, /^ {4}2 tool calls · 1 failed · changed existing\.txt, leftover\.txt$/m);
+    assert.match(glance, /^ {4}subagent a1 \(Explore\) · 1 tool call · no changes$/m);
 
-    const subagent = await call(c, '/query', { find: 'tools', captureId, where: { agentId: 'a1' } });
-    assert.deepEqual(subagent.items.map((r: any) => r.toolName), ['Glob']);
-    const main = await call(c, '/query', { find: 'tools', scope: { sessionIds: ['cc-session'] }, where: { agentId: null, harness: 'claude-code' } });
-    assert.deepEqual(main.items.map((r: any) => r.toolName), ['Edit', 'Bash']);
+    // The turn reads Claude Code's transcript through its adapter; the edit is shown once, as its patch.
+    const turn = await read({ open: 't1' });
+    assert.match(turn, /^reply {5}calling Edit$/m);
+    assert.match(turn, /^c1  Edit existing\.txt · ok · → p1$/m);
+    assert.match(turn, /^c2  Bash · failed · → p2\n {4}input {5}\{"command":"make"\}\n {4}output {4}Exit code 1$/m);
+    assert.match(turn, /^p1  existing\.txt · modify · \+1 −1 · observed during c1\n[\s\S]*^ {4}\+hello world$/m);
+    assert.match(turn, /^p2  leftover\.txt · create · \+1 −0 · observed during c2$/m);
+    assert.equal(turn.match(/^c\d+ /gm)?.length, 2);
 
-    // The clean view reads Claude Code's transcript through its adapter.
-    const clean = await call(c, '/query', { preset: 'timeline', captureId, clean: true });
-    assert.deepEqual(clean[0], { user: 'Edit existing.txt' });
-    assert(clean.some((row: any) => row.assistant === 'calling Edit'));
-    assert(clean.some((row: any) => row.tool === 'Bash' && row.output?.error === 'Exit code 1'));
-    assert.equal(clean.filter((row: any) => row.tool === 'Edit').length, 1);
+    const subagent = await read({ open: 'a1' });
+    assert.match(subagent, /^a1 · subagent \(Explore\) in t1 · /);
+    assert.match(subagent, /^c1  Glob · ok$/m);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -115,11 +116,11 @@ test('a Claude Code hook blocks the tool when Wisdom cannot record it', async ()
   const run = (event: unknown, env: Record<string, string>) => spawnSync(process.execPath, [hook],
     { input: JSON.stringify(event), encoding: 'utf8', env: { ...process.env, WISDOM_DATA_DIR: empty, ...env } });
   try {
-    const blocked = run({ ...common, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't', tool_input: {} }, { WISDOM_CAPTURE_ID: 'x' });
+    const blocked = run({ ...common, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't', tool_input: {} }, { WISDOM_LAUNCH_ID: 'x' });
     assert.equal(blocked.status, 2); assert.match(blocked.stderr, /work stays paused/);
     // Without Wisdom's launcher there is no capture, so the hook stays out of the way.
     const unmanaged = spawnSync(process.execPath, [hook], { input: JSON.stringify({ hook_event_name: 'PreToolUse' }), encoding: 'utf8',
-      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'WISDOM_CAPTURE_ID')) as Record<string, string> });
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'WISDOM_LAUNCH_ID')) as Record<string, string> });
     assert.equal(unmanaged.status, 0);
   } finally { fs.rmSync(empty, { recursive: true, force: true }); }
 });

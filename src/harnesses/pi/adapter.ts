@@ -16,6 +16,7 @@ export const pi: HarnessAdapter = {
   name: 'pi',
   toolTarget: (_toolName, input) => typeof input?.path === 'string' ? input.path : undefined,
   isDirectFileTool: toolName => ['read', 'edit', 'write'].includes(toolName),
+  toolView: toolName => ['edit', 'write'].includes(toolName) ? 'patch' : toolName === 'read' ? 'file' : 'full',
   nativeEntry: entry => ({ id: entry?.id, parentId: entry?.parentId, timestamp: entry?.timestamp,
     kind: String(entry?.type ?? 'unknown'), messages: entry?.message ? [entry.message] : [], usage: usage(entry) }),
 };

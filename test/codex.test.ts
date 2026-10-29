@@ -31,11 +31,16 @@ test('Codex normalizes response items without duplicating event messages or expo
     call_id: 'patch-1', name: 'apply_patch', input: '*** Begin Patch' } });
   assert.equal((custom.messages[0].content as any[])[0].arguments, '*** Begin Patch');
   assert.equal(codex.nativeEntry({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'c', output: 'ok' } }).messages[0].toolCallId, 'c');
-  for (const raw of [{ type: 'event_msg', payload: { type: 'agent_message', message: 'Done' } },
-    { type: 'response_item', payload: { type: 'reasoning', encrypted_content: 'opaque' } }, { type: 'future-record' }]) {
+  for (const raw of [{ type: 'event_msg', payload: { type: 'agent_message', message: 'Done' } }, { type: 'future-record' }]) {
     assert.deepEqual(codex.nativeEntry(raw).messages, []);
   }
+  // Encrypted reasoning is recorded as redacted thinking, never as surface text.
+  assert.deepEqual(codex.nativeEntry({ type: 'response_item', payload: { type: 'reasoning', summary: [], encrypted_content: 'opaque' } }).messages,
+    [{ role: 'assistant', content: [{ type: 'thinking', thinking: '', redacted: true }] }]);
+  assert.equal((codex.nativeEntry({ type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Plan' }] } })
+    .messages[0].content as any[])[0].thinking, 'Plan');
   assert.equal(codex.isDirectFileTool('apply_patch'), false);
+  assert.deepEqual(['apply_patch', 'exec_command', 'Bash'].map(codex.toolView), ['patch', 'full', 'full']);
 });
 
 test('Codex hook mapping preserves turn identity and unknown outcomes', () => {
@@ -73,11 +78,11 @@ test('Codex capture preserves bytes, correlates overlapping turns, and serves ex
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { harness: 'codex', sessionId: 'pending-start', workspaceRoot: workspace, source: null });
-    const hook = async (event: any, observationId = randomUUID()) => call(c, `/captures/${captureId}/observe`, {
+    const { launchId } = await call(c, '/launches', { harness: 'codex', workspaceRoot: workspace });
+    const hook = async (event: any, observationId = randomUUID()) => call(c, `/launches/${launchId}/observe`, {
       observationId, sessionId: 'codex-session', source, ...observation(event),
     });
-    await hook({ hook_event_name: 'SessionStart', session_id: 'codex-session', transcript_path: source, source: 'startup' });
+    const { captureId } = await hook({ hook_event_name: 'SessionStart', session_id: 'codex-session', transcript_path: source, source: 'startup' });
     fs.appendFileSync(source, line('turn_context', { turn_id: 'a' }) + message('user-a', 'user', 'Edit one.txt'));
     const a = await hook({ hook_event_name: 'UserPromptSubmit', turn_id: 'a', prompt: 'Edit one.txt' });
     await hook({ hook_event_name: 'PreToolUse', turn_id: 'a', tool_name: 'Bash', tool_use_id: 'tool-a', tool_input: { command: 'edit one.txt' } });
@@ -91,7 +96,7 @@ test('Codex capture preserves bytes, correlates overlapping turns, and serves ex
       + line('response_item', { type: 'function_call', id: 'f1', name: 'exec_command', call_id: 'tool-a', arguments: '{"cmd":"edit one.txt"}' })
       + line('response_item', { type: 'function_call_output', id: 'f2', call_id: 'tool-a', output: 'native duplicate' }));
     await hook({ hook_event_name: 'Stop', turn_id: 'a', last_assistant_message: 'Both files changed' });
-    await call(c, `/captures/${captureId}/close`, {});
+    await call(c, `/launches/${launchId}/close`, {});
     const ledger = daemon.captures.get(captureId);
     assert.equal(ledger.manifest.sessionId, 'codex-session');
     assert.equal(ledger.manifest.status, 'closed');
@@ -100,34 +105,34 @@ test('Codex capture preserves bytes, correlates overlapping turns, and serves ex
     assert.equal(records.filter(r => r.type === 'tool_finished').length, 1);
     assert.equal(records.find(r => r.type === 'tool_finished')?.requestId, a.id);
     assert.equal(records.find(r => r.sourceEntryId === 'assistant-a')?.requestId, a.id);
-    const changes = await call(c, '/query', { preset: 'changes', captureId });
-    assert.equal(changes.items.length, 2);
-    assert(changes.items.every((r: any) => r.attribution === 'observed-during-tool'));
-    const failures = await call(c, '/query', { preset: 'failures', captureId });
-    assert.equal(failures.items.length, 1);
-    const review = await call(c, '/query', { preset: 'interaction-review', captureId, maxChars: 32000 });
-    assert.equal(review.items.find((r: any) => r.id === a.id).changes.items.length, 2);
-    const clean = await call(c, '/query', { preset: 'timeline', captureId, clean: true, maxChars: 32000 });
-    assert.equal(clean.filter((r: any) => r.user === 'Edit one.txt').length, 1);
-    assert.equal(clean.filter((r: any) => r.assistant === 'Both files changed').length, 1);
-    assert.equal(clean.filter((r: any) => r.tool).length, 1);
-    assert.equal((await call(c, '/query', { find: 'tools', captureId, where: { harness: 'codex', turnId: 'a' } })).items.length, 1);
+    const read = async (request: object): Promise<string> => (await call(c, '/ledger', { capture: captureId, ...request })).text;
+    const glance = await read({ glance: true });
+    assert.match(glance, /^resume with: wisdom resume codex-session$/m);
+    assert.match(glance, /^t1  in {8}Edit one\.txt\n {4}out {7}Both files changed\n {4}1 tool call · 1 failed · changed one\.txt, two\.txt$/m);
+    assert.match(glance, /^t2  in {8}Another request\n {4}no tool calls · no changes$/m);
+    // The overlapping turn keeps its own call, reply and both changes; the native duplicate is not a second call.
+    const turn = await read({ open: 't1' });
+    assert.equal(turn.match(/^c\d+ /gm)?.length, 1);
+    assert.match(turn, /^c1  Bash · failed · → p1, p2$/m);
+    assert.equal(turn.match(/^reply {5}Both files changed$/gm)?.length, 1);
+    assert.match(turn, /^p1  one\.txt · modify · \+1 −1 · observed during c1$/m);
+    assert.match(turn, /^p2  two\.txt · create · \+1 −0 · observed during c1$/m);
+    // CLI, HTTP and MCP return the same text.
     const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
-    const { stdout } = await promisify(execFile)(process.execPath, [cli, 'timeline', captureId,
-      '--clean', '--max-chars', '32000', '--data', path.join(root, 'data')]);
-    assert.deepEqual(JSON.parse(stdout), clean);
+    const { stdout } = await promisify(execFile)(process.execPath, [cli, 'open', 't1', '--capture', captureId, '--data', path.join(root, 'data')]);
+    assert.equal(stdout, turn + '\n');
     const server = createLedgerMcp(c);
     const client = new Client({ name: 'codex-test', version: '1' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     try {
       await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-      const result = await client.callTool({ name: 'ledger_query', arguments: { preset: 'timeline', captureId, clean: true, maxChars: 32000 } });
-      assert.deepEqual(JSON.parse((result.content as any[])[0].text), clean);
+      const result = await client.callTool({ name: 'ledger', arguments: { capture: captureId, open: 't1' } });
+      assert.equal((result.content as any[])[0].text, turn);
     } finally { await client.close(); await server.close(); }
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Codex resume deduplicates native history; subagent copies, compaction and missing transcripts remain explicit', async () => {
+test('a resumed Codex session continues its capture; subagent copies, compaction and missing transcripts remain explicit', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-codex-resume-'));
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
   const source = path.join(root, 'rollout.jsonl');
@@ -137,25 +142,31 @@ test('Codex resume deduplicates native history; subagent copies, compaction and 
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const open = async (nativeSource: string | null = source) => (await call(c, '/captures', {
-      harness: 'codex', sessionId: 'native-session', workspaceRoot: workspace, source: nativeSource,
+    const open = async (nativeSource: string | null = source, sessionId = 'native-session') => (await call(c, '/captures', {
+      harness: 'codex', sessionId, workspaceRoot: workspace, source: nativeSource,
     })).captureId as string;
     const first = await open(); await call(c, `/captures/${first}/close`, {});
+    // The same native session is the same capture: a resume is a new visit, not a new capture.
     const second = await open();
+    assert.equal(second, first);
+    assert(daemon.captures.get(second).listRecords().some(r => r.summary.startsWith('not-recording-between-visits')));
     const hook = (event: any) => call(c, `/captures/${second}/observe`, { observationId: randomUUID(), ...observation(event) });
     await hook({ hook_event_name: 'SessionStart', session_id: 'native-session', transcript_path: source, source: 'resume' });
     await hook({ hook_event_name: 'PreCompact', trigger: 'auto', turn_id: 'new' });
     await hook({ hook_event_name: 'PostCompact', trigger: 'auto', turn_id: 'new' });
     await hook({ hook_event_name: 'SubagentStop', agent_id: 'sub-1', agent_transcript_path: sub });
     await call(c, `/captures/${second}/close`, {});
-    const clean = await call(c, '/query', { preset: 'timeline', scope: { sessionIds: ['native-session'] }, clean: true });
-    assert.equal(clean.filter((row: any) => row.assistant === 'Existing history').length, 1);
+    // History from before the capture is mirrored byte for byte, but belongs to no turn,
+    // so a reader never sees it as this capture's work.
+    const history = daemon.captures.database.records("type='source_record' AND role='assistant'").filter(r => r.summary === 'Existing history');
+    assert(history.length >= 1 && history.every(r => !r.requestId));
+    assert.match((await call(c, '/ledger', { capture: second, glance: true })).text, /^0 turns · /m);
     const ledger = daemon.captures.get(second);
     assert.deepEqual(fs.readFileSync(path.join(ledger.dir, 'subagents', 'agent-sub-1.jsonl')), fs.readFileSync(sub));
     assert.equal(ledger.listRecords().filter(r => r.type === 'session_compact').length, 2);
-    const missing = await open(null); await call(c, `/captures/${missing}/close`, {});
+    const missing = await open(null, 'no-transcript'); await call(c, `/captures/${missing}/close`, {});
     assert(daemon.captures.get(missing).listRecords().some(r => r.summary.startsWith('native-session-unavailable')));
-    const pending = await open(null);
+    const pending = await open(null, 'unfinished');
     await call(c, `/captures/${pending}/observe`, { observationId: randomUUID(), type: 'tool_started', turnId: 'unfinished', toolCallId: 'pending', toolName: 'Bash' });
     await call(c, `/captures/${pending}/close`, {});
     assert.equal(daemon.captures.get(pending).manifest.status, 'interrupted');
@@ -176,22 +187,23 @@ test('Codex hook process acknowledges writes, preserves raw payloads and denies 
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
   const data = path.join(root, 'data');
   const daemon = await startDaemon(data, 0);
-  const env = { ...process.env, WISDOM_DATA_DIR: data, WISDOM_CAPTURE_ID: '' };
+  const env = { ...process.env, WISDOM_DATA_DIR: data, WISDOM_LAUNCH_ID: '' };
+  const session = (id: string) => [...daemon.captures.ledgers.values()].find(l => l.manifest.sessionId === id)!;
   try {
-    env.WISDOM_CAPTURE_ID = (await call(daemon.connection, '/captures', { harness: 'codex', sessionId: 'pending-start', workspaceRoot: workspace, source: null })).captureId;
+    env.WISDOM_LAUNCH_ID = (await call(daemon.connection, '/launches', { harness: 'codex', workspaceRoot: workspace })).launchId;
     const event = { session_id: 'native-session', transcript_path: null, hook_event_name: 'UserPromptSubmit', turn_id: 'a', prompt: 'Hello' };
     const result = await runHook(JSON.stringify(event), env);
     assert.equal(result.code, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), {});
-    const ledger = daemon.captures.get(env.WISDOM_CAPTURE_ID);
+    const ledger = session('native-session');
     const raw = ledger.listRecords().find(r => r.type === 'harness_event')!;
     assert.deepEqual(JSON.parse(ledger.readPayload(raw.dataRef!)), event);
     // One request carries both records; the raw event hangs off its observation.
     assert.equal(raw.parentId, ledger.listRecords().find(r => r.type === 'input')!.id);
-    // A changed session must never mix another transcript into this capture.
-    // Codex runs the tool after a non-zero exit, so failures exit 0 with a decision.
+    // Another session (/new, /clear) is another capture; the previous one closes, nothing mixes.
     const changed = await runHook(JSON.stringify({ ...event, session_id: 'different' }), env);
-    assert.equal(changed.code, 0); assert.equal(JSON.parse(changed.stdout).decision, 'block');
-    assert.equal(ledger.manifest.status, 'degraded');
+    assert.equal(changed.code, 0); assert.deepEqual(JSON.parse(changed.stdout), {});
+    assert.equal(ledger.manifest.endReason, 'session-switched');
+    assert.equal(session('different').listRecords().filter(r => r.type === 'input').length, 1);
     const blocked = await runHook(JSON.stringify({ ...event, hook_event_name: 'PreToolUse', tool_use_id: 'x', tool_name: 'Bash' }),
       { ...env, WISDOM_DATA_DIR: path.join(root, 'missing') });
     assert.equal(blocked.code, 0);
@@ -202,7 +214,7 @@ test('Codex hook process acknowledges writes, preserves raw payloads and denies 
     // Unparseable input: the event name is still recovered from the raw text.
     const truncated = await runHook('{"hook_event_name":"PreToolUse","tool_input":', env);
     assert.equal(JSON.parse(truncated.stdout).hookSpecificOutput.permissionDecision, 'deny');
-    const inactive = await runHook('{}', { ...env, WISDOM_CAPTURE_ID: '' });
+    const inactive = await runHook('{}', { ...env, WISDOM_LAUNCH_ID: '' });
     assert.equal(inactive.code, 0); assert.deepEqual(JSON.parse(inactive.stdout), {});
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

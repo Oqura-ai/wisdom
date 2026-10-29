@@ -53,7 +53,7 @@ export function observation(event: any): Record<string, unknown> | undefined {
     case 'Stop': return { type: 'agent_settled', ...identity, data: { lastAssistantMessage: event.last_assistant_message } };
     case 'SubagentStart': return { type: 'subagent_started', ...identity, data: { agentType: event.agent_type } };
     case 'SubagentStop': return { type: 'subagent_stopped', ...identity,
-      data: { agentType: event.agent_type, transcriptPath: event.agent_transcript_path } };
+      data: { agentType: event.agent_type, transcriptPath: event.agent_transcript_path, lastAssistantMessage: event.last_assistant_message } };
     case 'PreCompact': case 'PostCompact': return { type: 'session_compact', ...identity,
       data: { phase: event.hook_event_name, trigger: event.trigger } };
     default: return undefined;
@@ -61,8 +61,8 @@ export function observation(event: any): Record<string, unknown> | undefined {
 }
 
 export async function main(): Promise<void> {
-  const captureId = process.env.WISDOM_CAPTURE_ID;
-  if (!captureId) { process.stdout.write('{}'); return; } // Hook trust setup, not recording.
+  const launchId = process.env.WISDOM_LAUNCH_ID;
+  if (!launchId) { process.stdout.write('{}'); return; } // Hook trust setup, not recording.
   let event: any;
   let input = '';
   try {
@@ -80,7 +80,7 @@ export async function main(): Promise<void> {
       if (typeof identity.sessionId !== 'string' || !identity.sessionId) throw new Error('Codex hook has no session_id');
       // One request: the neutral observation plus the exact received JSON object,
       // kept as a separate record so it never enters clean conversation output.
-      await call(connection, `/captures/${captureId}/observe`, { observationId: randomUUID(), ...identity, ...mapped,
+      await call(connection, `/launches/${launchId}/observe`, { observationId: randomUUID(), ...identity, ...mapped,
         harnessEvent: event }, daemonTimeoutMs);
     }
     process.stdout.write('{}'); // Stop and SubagentStop require JSON, not plain text.

@@ -41,8 +41,8 @@ export class Ledger {
     }
   }
 
-  /** Byte copy of the harness's native transcript. Pre-harness captures used Pi's name. */
-  get mirror(): string { return path.join(this.dir, this.manifest.harness ? 'native-session.jsonl' : 'pi-session.jsonl'); }
+  /** Byte copy of the harness's native transcript. */
+  get mirror(): string { return path.join(this.dir, 'native-session.jsonl'); }
 
   saveManifest(): void { this.database.saveManifest(this.manifest); }
 
@@ -154,52 +154,6 @@ export class Ledger {
     }
   }
 
-  /** Index usage from an existing mirror (captures recorded before usage indexing).
-   * Reads the byte-preserved copies only; the manifest's usageIndexed flag prevents repeats.
-   */
-  backfillUsage(): void {
-    if (this.manifest.usageIndexed) return;
-    const harness = adapter(this.manifest.harness);
-    // Link each response to the request its transcript line was linked to when it was
-    // mirrored live; "latest input" would be wrong now that every input exists.
-    const requestAt = new Map(this.database.sql.prepare(`SELECT json_extract(body,'$.sourceOffset') AS offset, request_id AS requestId
-      FROM records WHERE capture_id=? AND type='source_record' AND request_id IS NOT NULL`).all(this.manifest.captureId)
-      .map(row => [Number(row.offset), String(row.requestId)]));
-    const agentRequest = new Map(this.database.sql.prepare(`SELECT json_extract(body,'$.agentId') AS agentId, request_id AS requestId
-      FROM records WHERE capture_id=? AND type='subagent_stopped' AND request_id IS NOT NULL`).all(this.manifest.captureId)
-      .map(row => [String(row.agentId), String(row.requestId)]));
-    let model: string | undefined;
-    if (fs.existsSync(this.mirror)) {
-      const bytes = fs.readFileSync(this.mirror);
-      let start = 0;
-      for (let end = bytes.indexOf(10); end >= 0; end = bytes.indexOf(10, start)) {
-        const line = bytes.subarray(start, end + 1);
-        try {
-          const entry = harness.nativeEntry(JSON.parse(line.toString('utf8')));
-          if (entry.model) model = entry.model;
-          this.recordUsage(entry, { sourceModel: model, requestId: requestAt.get(start), sourceEntryId: entry.id,
-            sourceTimestamp: entry.timestamp, sourceOffset: start, sourceLength: line.length });
-        } catch { /* Malformed lines were already reported as gaps when mirrored. */ }
-        start = end + 1;
-      }
-    }
-    const subagents = path.join(this.dir, 'subagents');
-    for (const file of fs.existsSync(subagents) ? fs.readdirSync(subagents) : []) {
-      const agentId = /^agent-(.+)\.jsonl$/.exec(file)?.[1];
-      if (!agentId) continue;
-      let agentModel: string | undefined;
-      for (const line of fs.readFileSync(path.join(subagents, file), 'utf8').split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          const entry = harness.nativeEntry(JSON.parse(line));
-          if (entry.model) agentModel = entry.model;
-          this.recordUsage(entry, { agentId, sourceModel: agentModel, requestId: agentRequest.get(agentId), sourceEntryId: entry.id, sourceTimestamp: entry.timestamp });
-        } catch { /* Preserved copy; parse failures are not new evidence. */ }
-      }
-    }
-    this.manifest.usageIndexed = true;
-    this.saveManifest();
-  }
 
   private recordSourceLine(line: Buffer, offset: number): void {
     try {

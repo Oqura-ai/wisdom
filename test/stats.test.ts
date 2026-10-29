@@ -28,12 +28,12 @@ test('op=stats lists projects and aggregates one project per harness, capture, t
     await send(codex, { type: 'tool_started', toolCallId: 'c', toolName: 'Bash', data: { input: { command: 'y' } } });
     await open('pi', other);
 
-    const inventory = await call(c, '/query', { op: 'stats' });
+    const inventory = await call(c, '/view', { view: 'projects' });
     assert.equal(inventory.projects.length, 2);
     const listed = inventory.projects.find((p: any) => p.harnesses.includes('codex'));
     assert.deepEqual(listed.harnesses, ['claude-code', 'codex']); assert.equal(listed.recording, 1);
 
-    const stats = await call(c, '/query', { op: 'stats', workspaceRoot: project });
+    const stats = await call(c, '/view', { view: 'project', workspaceRoot: project });
     const byHarness = Object.fromEntries(stats.harnesses.map((h: any) => [h.harness, h]));
     assert.deepEqual([byHarness['claude-code'].tools, byHarness['claude-code'].failures, byHarness['claude-code'].changes, byHarness['claude-code'].subagents], [2, 1, 1, 1]);
     assert.equal(byHarness.codex.recording, 1); assert.equal(byHarness.pi, undefined);
@@ -42,6 +42,6 @@ test('op=stats lists projects and aggregates one project per harness, capture, t
       { harness: 'claude-code', toolName: 'Bash', calls: 1, failures: 1 });
     assert.equal(stats.files[0].path, 'a.txt');
     // stats has its own strict contract; selection fields are refused.
-    await assert.rejects(call(c, '/query', { op: 'stats', where: {} }));
+    await assert.rejects(call(c, '/view', { view: 'projects', where: {} }));
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

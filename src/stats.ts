@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import type { Captures } from './captures.js';
 import { workspaceKey } from './database.js';
-import type { StatsQuery } from './schema.js';
 
 export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null }
 const emptyTokens = (): TokenTotals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null });
@@ -14,7 +13,7 @@ function addTokens(into: TokenTotals, from: TokenTotals): void {
  * not quality: a failure is a tool result marked as an error, a change is an
  * observed file delta, and an unknown outcome is not counted as either.
  */
-export function stats(captures: Captures, request: StatsQuery) {
+export function stats(captures: Captures, request: { workspaceRoot?: string }) {
   const readVersion = captures.database.revision;
   const manifests = captures.database.manifests();
   if (!request.workspaceRoot) {
@@ -23,7 +22,7 @@ export function stats(captures: Captures, request: StatsQuery) {
     for (const manifest of manifests) {
       const key = workspaceKey(manifest.workspaceRoot);
       const project = projects.get(key) ?? { workspaceRoot: manifest.workspaceRoot, captures: 0, harnesses: new Set(), lastStartedAt: '', recording: 0 };
-      project.captures++; project.harnesses.add(manifest.harness ?? 'pi');
+      project.captures++; project.harnesses.add(manifest.harness);
       if (manifest.status === 'recording') project.recording++;
       if (manifest.startedAt > project.lastStartedAt) project.lastStartedAt = manifest.startedAt;
       projects.set(key, project);
@@ -69,7 +68,7 @@ export function stats(captures: Captures, request: StatsQuery) {
     .all(key).map(row => [String(row.id), Number(row.costUsd)]));
   const tokensByCapture = new Map<string, TokenTotals>();
   const modelRows = new Map<string, TokenTotals & { harness: string; model: string }>();
-  const harnessOfCapture = new Map(inScope.map(m => [m.captureId, m.harness ?? 'pi']));
+  const harnessOfCapture = new Map(inScope.map(m => [m.captureId, m.harness]));
   for (const row of usageRows) {
     const tokens: TokenTotals = { calls: number(row.calls), input: number(row.input), cacheRead: number(row.cacheRead),
       cacheWrite: number(row.cacheWrite), output: number(row.output), reasoning: number(row.reasoning), total: 0,
@@ -77,7 +76,7 @@ export function stats(captures: Captures, request: StatsQuery) {
     tokens.total = tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.output;
     const id = String(row.id);
     addTokens(tokensByCapture.get(id) ?? tokensByCapture.set(id, emptyTokens()).get(id)!, tokens);
-    const harness = harnessOfCapture.get(id) ?? 'pi';
+    const harness = harnessOfCapture.get(id) ?? 'unknown';
     const modelKey = `${harness}:${row.model}`;
     const model = modelRows.get(modelKey) ?? { ...emptyTokens(), harness, model: String(row.model) };
     addTokens(model, tokens); modelRows.set(modelKey, model);
@@ -90,7 +89,7 @@ export function stats(captures: Captures, request: StatsQuery) {
 
   const sessions = inScope.map(manifest => {
     const row: any = counts.get(manifest.captureId) ?? {};
-    return { captureId: manifest.captureId, sessionId: manifest.sessionId, harness: manifest.harness ?? 'pi',
+    return { captureId: manifest.captureId, harness: manifest.harness,
       harnessVersion: manifest.harnessVersion, status: manifest.status, endReason: manifest.endReason,
       startedAt: manifest.startedAt, endedAt: manifest.endedAt, lastObservedAt: row.lastObservedAt ?? manifest.startedAt,
       requests: number(row.requests), replies: number(row.replies), tools: number(row.tools), failures: number(row.failures),

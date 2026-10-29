@@ -56,11 +56,17 @@ test('stats count each response once, include subagents, exclude resumed history
     await send({ type: 'agent_settled', data: { lastAssistantMessage: 'done' } });
     await call(c, `/captures/${captureId}/close`, {});
 
-    const stats = await call(c, '/query', { op: 'stats', workspaceRoot: workspace });
+    const stats = await call(c, '/view', { view: 'project', workspaceRoot: workspace });
     const tokens = stats.sessions[0].tokens;
     assert.deepEqual([tokens.calls, tokens.input, tokens.cacheRead, tokens.cacheWrite, tokens.output, tokens.costUsd], [2, 4, 200, 20, 10, 0.01]);
     assert.equal(tokens.total, 4 + 200 + 20 + 10);
     assert.equal(stats.sessions[0].subagents, 0, 'only agents that did work count; neither stop event did any');
+    // The agent's glance counts the same tokens. It lists every subagent with recorded evidence (here
+    // a transcript and a reply, but no tool work), so nothing is hidden; the helper stays excluded.
+    const glance = (await call(c, '/ledger', { capture: captureId, glance: true })).text;
+    assert.match(glance, /· 1 subagent · 234 tokens · \$0\.0100 reported$/m);
+    assert.match(glance, /^ {4}subagent a1 \(Explore\) · no tool calls · no changes$/m);
+    assert(!/subagent a2/.test(glance), 'the helper agent is not listed');
     const records = daemon.captures.get(captureId).listRecords();
     assert(!records.some(r => r.type === 'gap' && r.summary.includes('helper')));
     assert.equal(records.find(r => r.type === 'subagent_stopped' && r.agentId === 'helper')!.internalAgent, true);
@@ -72,8 +78,8 @@ test('stats count each response once, include subagents, exclude resumed history
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('captures from before usage indexing are backfilled once from their mirror, linked to their requests', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-backfill-'));
+test('usage is indexed live, linked to its requests, and not indexed again after a restart', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-usage-restart-'));
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
   const transcript = path.join(root, 'main.jsonl'); fs.writeFileSync(transcript, '');
   const data = path.join(root, 'data');
@@ -89,22 +95,13 @@ test('captures from before usage indexing are backfilled once from their mirror,
     fs.appendFileSync(transcript, lines(reply('b', 20)));
     await send({ type: 'agent_settled' });
     await call(daemon.connection, `/captures/${captureId}/close`, {});
-    // Simulate a capture recorded before usage indexing: drop its usage and flag.
-    daemon.captures.database.sql.prepare("DELETE FROM records WHERE type='usage'").run();
-    const ledger = daemon.captures.get(captureId);
-    delete ledger.manifest.usageIndexed; ledger.saveManifest();
+    const records = daemon.captures.get(captureId).listRecords();
+    const inputs = records.filter(r => r.type === 'input');
+    assert.deepEqual(records.filter(r => r.type === 'usage').map(r => [r.usage!.input, r.requestId]), [[10, inputs[0].id], [20, inputs[1].id]]);
     await daemon.close();
-
-    daemon = await startDaemon(data, 0);
-    const restored = daemon.captures.get(captureId);
-    const usage = restored.listRecords().filter(r => r.type === 'usage');
-    const inputs = restored.listRecords().filter(r => r.type === 'input');
-    assert.deepEqual(usage.map(r => [r.usage!.input, r.requestId]), [[10, inputs[0].id], [20, inputs[1].id]]);
-    assert.equal(restored.manifest.usageIndexed, true);
-    await daemon.close();
-    daemon = await startDaemon(data, 0); // A second start does not index again.
+    daemon = await startDaemon(data, 0); // A restart reads the same records; nothing is indexed again.
     assert.equal(daemon.captures.get(captureId).listRecords().filter(r => r.type === 'usage').length, 2);
-    const stats = await call(daemon.connection, '/query', { op: 'stats', workspaceRoot: workspace });
+    const stats = await call(daemon.connection, '/view', { view: 'project', workspaceRoot: workspace });
     assert.equal(stats.sessions[0].tokens.costUsd, 0.002);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

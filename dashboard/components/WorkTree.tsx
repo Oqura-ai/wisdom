@@ -4,8 +4,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { captureEvents, type EventRecord, type Session } from '@/lib/api';
 import { buildTree, subtreeStats, tokensByRequest, toolState, type TreeNode } from '@/lib/tree';
 import { Inspector } from './Inspector';
-import { Face, HarnessBadge, StatusDot, cost, duration, since, tokens } from './bits';
+import { BackButton, Face, HarnessBadge, HarnessIcon, StatusDot, UserAvatar, cost, duration, since, tokens } from './bits';
 import { TokenBar } from './TokenBar';
+import { ChatView } from './ChatView';
+
+type View = 'chat' | 'dev';
+function useView(): [View, (view: View) => void] {
+  const [view, setView] = useState<View>('chat');
+  useEffect(() => { try { if (localStorage.getItem('wisdom-view') === 'dev') setView('dev'); } catch { /* default */ } }, []);
+  return [view, (next: View) => { setView(next); try { localStorage.setItem('wisdom-view', next); } catch { /* still applies */ } }];
+}
 
 /** One capture as a tree: request → tool calls → file changes, subagents nested
  * under the call that started them. Refreshes when the ledger revision moves.
@@ -16,6 +24,14 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
   const [selected, setSelected] = useState<TreeNode>();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [onlyProblems, setOnlyProblems] = useState(false);
+  const [view, setView] = useView();
+  const [copied, setCopied] = useState(false);
+  // The command as typed in this project's terminal; Windows PowerShell needs npm.cmd.
+  const npm = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent) ? 'npm.cmd' : 'npm';
+  const resume = `${npm} run wisdom -- resume ${session.captureId}`;
+  const copyResume = () => void navigator.clipboard.writeText(resume).then(() => {
+    setCopied(true); setTimeout(() => setCopied(false), 1500);
+  });
 
   useEffect(() => { captureEvents(session.captureId).then(setData, e => setError(e.message)); }, [session.captureId, readVersion]);
   const tree = useMemo(() => buildTree(data?.events ?? []), [data]);
@@ -42,34 +58,46 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
   };
 
   return (
-    <div className="session-view">
+    <div className={`session-view ${view === 'chat' ? 'chat-mode' : ''}`}>
       <div className="session-head">
-        <button className="ghost" onClick={onBack}>← project</button>
+        <BackButton onClick={onBack} label="project" />
         <StatusDot status={session.status} />
-        <Face tone={session.harness} size="large" mood={session.status === 'recording' ? 'happy' : undefined} />
-        <span className="title">{session.captureId.slice(0, 8)}</span>
+        <HarnessIcon harness={session.harness} size="large" live={session.status === 'recording'} />
+        <span className="title" title={session.captureId}>{session.captureId.slice(0, 8)}</span>
         <HarnessBadge harness={session.harness} face={false} />
-        <span className="mono muted">{session.captureId}</span>
         <span className="muted small">{session.harnessVersion}</span>
         <span className="spacer" />
         <span className="muted small">started {since(session.startedAt)} · {duration(session.startedAt, session.endedAt)}</span>
+        <span className="themes" role="radiogroup" aria-label="View">
+          {(['chat', 'dev'] as const).map(option => (
+            <button key={option} role="radio" aria-checked={view === option} className={view === option ? 'on' : ''} onClick={() => setView(option)}
+              title={option === 'chat' ? 'Read the session like a conversation' : 'Records, links and evidence'}>{option}</button>
+          ))}
+        </span>
+      </div>
+      <div className="resume-line">
+        <span className="label">resume</span>
+        <code title="Continues this session with recording">{resume}</code>
+        <button onClick={copyResume} title="Copy the command">{copied ? 'copied' : 'copy'}</button>
       </div>
       <div className="session-metrics">
-        {[['requests', session.requests], ['replies', session.replies], ['tool calls', session.tools], ['failures', session.failures],
-          ['file changes', session.changes], ['subagents', session.subagents], ['gaps', session.gaps]].map(([label, value]) => (
+        {[['requests', session.requests], ['replies', session.replies], ['tools', session.tools], ['failures', session.failures],
+          ['changes', session.changes], ['subagents', session.subagents], ['gaps', session.gaps]].map(([label, value]) => (
           <div key={label as string} className={`metric ${label === 'failures' && value ? 'bad' : ''} ${label === 'gaps' && value ? 'warn' : ''}`}>
             <b>{value}</b><span>{label}</span>
           </div>
         ))}
         <div className="metric wide" title="Tokens across every model response in this capture, subagents included">
-          <b>{tokens(session.tokens.total)}</b><span>tokens · {session.tokens.calls} responses · {cost(session.tokens.costUsd)}</span>
+          <b>{tokens(session.tokens.total)}</b><span>tokens · {session.tokens.calls} responses</span>
         </div>
-        <label className="toggle"><input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> problems only</label>
+        {view === 'dev' && <label className="toggle"><input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> problems only</label>}
       </div>
       {error && <div className="banner">{error}</div>}
       {session.evidenceMissing && <div className="banner">This capture's evidence folder is missing on disk. Its records remain, but request text, tool input and output, patches and the transcript copy cannot be shown.</div>}
       {session.tokens.calls > 0 && <TokenBar tokens={session.tokens} />}
-      <div className="split">
+      {view === 'chat' && <ChatView session={session} readVersion={data?.readVersion}
+        requests={tree.roots.filter(node => node.kind === 'request')} usage={usage.byRequest} />}
+      {view === 'dev' && <div className="split">
         <div className="tree card">
           {!data && <div className="empty small">Loading capture…</div>}
           {data && !tree.roots.length && !tree.unlinked.length && <div className="empty small">Nothing recorded yet.</div>}
@@ -91,7 +119,7 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
           )}
         </div>
         <Inspector captureId={session.captureId} readVersion={data?.readVersion} node={selected} onClose={() => setSelected(undefined)} />
-      </div>
+      </div>}
     </div>
   );
 }
@@ -118,9 +146,9 @@ function NodeRow({ node, depth, open, selected, tokenTotal, onToggle, onSelect }
   return (
     <div className={`node k-${node.kind} ${state ? `t-${state}` : ''} ${selected ? 'on' : ''}`} style={{ paddingLeft: 8 + depth * 18 }} onClick={onSelect}>
       <button className="twisty" onClick={e => { e.stopPropagation(); onToggle(); }} disabled={!node.children.length}>
-        {node.children.length ? (open ? '▾' : '▸') : ''}
+        {node.children.length ? <i className={`chevron ${open ? 'open' : ''}`} aria-hidden /> : null}
       </button>
-      <span className="icon">{node.kind === 'request' ? <Face tone={node.agentId ? 'sub' : 'user'} size="small" />
+      <span className="icon">{node.kind === 'request' ? (node.agentId ? <Face tone="sub" size="small" /> : <UserAvatar size="small" />)
         : node.kind === 'subagent' ? <Face tone="sub" size="small" /> : icon}</span>
       <span className={['request', 'reply'].includes(node.kind) ? 'label' : 'label mono'}>{label}</span>
       {state && <span className={`state st-${state}`} title={stateTitle[state]}>{stateLabel[state]}</span>}

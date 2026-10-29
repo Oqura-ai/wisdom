@@ -1,10 +1,9 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import type { Launch } from '../launch.js';
+import { harnessHome, type Launch } from '../launch.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
   'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact'] as const;
@@ -106,23 +105,25 @@ export async function launchCodex(options: {
   catch { throw new Error(`Cannot run Codex (${command}). Install it or pass --codex-bin.`); }
   const match = /codex-cli (\d+)\.(\d+)\.(\d+)/.exec(version);
   if (!match || Number(match[1]) === 0 && Number(match[2]) < 147) throw new Error('Codex CLI 0.147.0 or newer is required.');
+  // Codex keeps its sessions, login and hook trust in Wisdom's folder, not in ~/.codex.
+  const env = { CODEX_HOME: harnessHome(options.dataDir, 'codex') };
   const settings = hookSettings();
   const overrides = inspectionArgs(options.args);
   if (options.setupHooks) {
     if (options.args.length) throw new Error('--setup-hooks does not accept Codex arguments');
     if (options.trustAllHooks) throw new Error('--setup-hooks and --trust-all-hooks are alternatives; choose one');
-    return { command, args: ['-C', options.cwd, ...settings.args], setupOnly: true };
+    return { command, env, args: ['-C', options.cwd, ...settings.args], setupOnly: true };
   }
-  requireTrustedHooks(await inspectHooks(command, [...settings.args, ...overrides], options.cwd), settings.command, options.trustAllHooks);
+  requireTrustedHooks(await inspectHooks(command, [...settings.args, ...overrides], options.cwd, { ...process.env, ...env }), settings.command, options.trustAllHooks);
   if (options.trustAllHooks) console.error(trustAllWarning);
-  const configFile = path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex'), 'config.toml');
+  const configFile = path.join(env.CODEX_HOME, 'config.toml');
   if (nodeReplEnabled(fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : '', overrides)) {
     console.error('Note: the node_repl MCP server is enabled. Commands it runs inside one call are invisible to hooks; '
       + 'Wisdom still records their file changes. Add -- -c mcp_servers.node_repl.enabled=false to see each command.');
   }
   const mcp = ['-c', `mcp_servers.wisdom.command=${JSON.stringify(process.execPath)}`, '-c',
     `mcp_servers.wisdom.args=${JSON.stringify([options.cliPath, 'mcp', '--data', options.dataDir])}`];
-  return { command, args: ['-C', options.cwd, ...settings.args, ...mcp,
+  return { command, env, args: ['-C', options.cwd, ...settings.args, ...mcp,
     ...(options.trustAllHooks ? ['--dangerously-bypass-hook-trust'] : []), ...options.args],
-    capture: { harness: 'codex', sessionId: 'pending-start', harnessVersion: version } };
+    launch: { harness: 'codex', harnessVersion: version } };
 }

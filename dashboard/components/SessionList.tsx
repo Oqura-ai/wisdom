@@ -4,7 +4,7 @@ import type { Session } from '@/lib/api';
 import { HarnessBadge, StatusDot, since, tokens } from './bits';
 
 export function SessionList({ sessions, selected, onSelect }: { sessions: Session[]; selected?: string; onSelect: (id: string) => void }) {
-  if (!sessions.length) return <div className="empty small">No captures for this filter.</div>;
+  if (!sessions.length) return <div className="empty small">No sessions for this filter.</div>;
   return (
     <ul className="sessions">
       {sessions.map(session => (

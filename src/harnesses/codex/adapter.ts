@@ -19,6 +19,12 @@ function messages(entry: any): NeutralMessage[] {
   if (item.type === 'message') return [{ role: item.role, content: Array.isArray(item.content)
     ? item.content.map((block: any) => ['input_text', 'output_text'].includes(block?.type)
       ? { type: 'text', text: block.text } : block) : item.content }];
+  // Reasoning is encrypted by the provider; its summary is only present when reasoning
+  // summaries are enabled. Record that it happened without inventing text.
+  if (item.type === 'reasoning') {
+    const summary = Array.isArray(item.summary) ? item.summary.map((part: any) => part?.text).filter(Boolean).join('\n\n') : '';
+    return [{ role: 'assistant', content: [{ type: 'thinking', thinking: summary, redacted: !summary || undefined }] }];
+  }
   if (item.type === 'function_call' || item.type === 'custom_tool_call') {
     let input = item.arguments ?? item.input;
     if (item.type === 'function_call' && typeof input === 'string') {
@@ -51,6 +57,7 @@ export const codex: HarnessAdapter = {
   // apply_patch can change several files; shell and MCP calls can write anywhere.
   toolTarget: () => undefined,
   isDirectFileTool: () => false,
+  toolView: toolName => toolName === 'apply_patch' ? 'patch' : 'full',
   nativeEntry: entry => ({
     id: typeof entry?.payload?.id === 'string' && entry.payload.id ? entry.payload.id : undefined,
     timestamp: entry?.timestamp,

@@ -1,55 +1,28 @@
 import { z } from 'zod';
 import { harnessNames } from './harnesses/index.js';
 
-const limit = z.number().int().min(1).max(100).default(20);
-const readVersion = z.number().int().nonnegative().optional();
-const maxChars = z.number().int().min(100).max(32000).default(8000);
-
-// Each operation has its own strict contract. Reject unrelated options here,
-// before reaching selection, discovery or body inspection.
-export const selectionSchema = z.object({
-  clean: z.boolean().optional().describe('Return only ordered user, assistant, and tool/input/output objects for conversation queries. No metadata or summarization. Oversized results error instead of truncating.'),
-  op: z.literal('query').optional(),
-  preset: z.enum(['intent', 'timeline', 'changes', 'failures', 'file-history', 'interaction-review']).optional(),
-  find: z.enum(['requests', 'messages', 'tools', 'outputs', 'changes', 'events']).optional(),
-  scope: z.object({
-    captureIds: z.array(z.string()).min(1).max(100).optional(),
-    sessionIds: z.array(z.string()).min(1).max(100).optional(),
-    workspaceRoot: z.string().optional(),
-  }).strict().optional(),
-  where: z.record(z.unknown()).optional(),
-  select: z.array(z.string()).max(30).optional(),
-  // A bounded tree is validated by the query engine against the vocabulary.
-  include: z.record(z.unknown()).optional(),
-  readVersion,
-  captureId: z.string().optional(),
-  limit,
-  cursor: z.string().optional(),
-  maxChars
+/** The agent-facing ledger: two moves over one session (glance, open) and a way to
+ * continue a limited response. Positions are the address: t3, t2/c4, a1, a1/c2, outside.
+ */
+export const ledgerSchema = z.object({
+  capture: z.string().min(1).optional().describe('A capture ID, a unique prefix of one (8+ characters), or "latest". Omit with glance to list sessions.'),
+  glance: z.literal(true).optional().describe('The shape of a session and one entry per turn. Without capture: the recorded sessions, newest first.'),
+  open: z.string().min(1).optional().describe('A position from a glance: t3 (a turn), t3/c2 (one tool call), a1 (a subagent), a1/c2, or outside (changes outside any turn).'),
+  from: z.number().int().min(1).optional().describe('Continue a limited response from this line, as its last line says.'),
+  at: z.number().int().nonnegative().optional().describe('Read version to pin. Every response states its version; pass it back to read the same snapshot.'),
 }).strict();
-export type Query = z.infer<typeof selectionSchema>;
+export type LedgerRequest = z.infer<typeof ledgerSchema>;
 
-export const inspectSchema = z.object({
-  op: z.literal('inspect'), captureId: z.string().min(1), id: z.string().min(1),
-  sections: z.array(z.enum(['data', 'patch'])).min(1).max(2).default(['data']),
-  contentOffset: z.number().int().nonnegative().default(0), maxChars, readVersion,
-}).strict();
-export type InspectQuery = z.infer<typeof inspectSchema>;
-const sessionsSchema = z.object({ op: z.literal('sessions'), limit, cursor: z.string().optional() }).strict();
-const describeSchema = z.object({ op: z.literal('describe') }).strict();
-/** Aggregate counts: without workspaceRoot, the tracked projects; with it, per harness and capture. */
-const statsSchema = z.object({ op: z.literal('stats'), workspaceRoot: z.string().optional() }).strict();
-export type StatsQuery = z.infer<typeof statsSchema>;
-export const querySchema = z.union([sessionsSchema, describeSchema, statsSchema, inspectSchema, selectionSchema]);
-export type QueryRequest = z.infer<typeof querySchema>;
-
-// MCP's registration API takes an object shape. This advertises the fields;
-// the strict union above validates the selected operation inside the service.
-export const mcpQuerySchema = z.object({
-  ...selectionSchema.partial().shape, ...inspectSchema.partial().shape,
-  op: z.enum(['query', 'sessions', 'describe', 'inspect', 'stats']).optional(),
-  workspaceRoot: z.string().optional().describe('op=stats only: aggregate one project instead of listing projects.'),
-}).strict();
+/** The dashboard's data, served by the daemon. Agents use the ledger above. */
+export const viewSchema = z.discriminatedUnion('view', [
+  z.object({ view: z.literal('projects') }).strict(),
+  z.object({ view: z.literal('project'), workspaceRoot: z.string().min(1) }).strict(),
+  z.object({ view: z.literal('capture'), captureId: z.string().min(1) }).strict(),
+  z.object({ view: z.literal('turn'), captureId: z.string().min(1), requestId: z.string().min(1), readVersion: z.number().int().nonnegative().optional() }).strict(),
+  z.object({ view: z.literal('record'), captureId: z.string().min(1), id: z.string().min(1), readVersion: z.number().int().nonnegative() }).strict(),
+  z.object({ view: z.literal('native-result'), captureId: z.string().min(1), toolCallId: z.string().min(1), readVersion: z.number().int().nonnegative() }).strict(),
+]);
+export type ViewRequest = z.infer<typeof viewSchema>;
 
 export const openSchema = z.object({
   harness: z.enum(harnessNames),
@@ -57,6 +30,13 @@ export const openSchema = z.object({
   harnessVersion: z.string().optional(),
   workspaceRoot: z.string().min(1),
   source: z.string().nullable(),
+}).strict();
+
+/** A tracked harness process. Its session is named later, by the harness's own hooks. */
+export const launchSchema = z.object({
+  harness: z.enum(harnessNames),
+  harnessVersion: z.string().optional(),
+  workspaceRoot: z.string().min(1),
 }).strict();
 
 export const observationSchema = z.object({
@@ -83,19 +63,14 @@ export type Observation = z.infer<typeof observationSchema>;
 export interface Manifest {
   schemaVersion: 1;
   captureId: string;
-  /** Absent only on captures recorded before harness tagging, which were Pi. */
-  harness?: string;
+  harness: string;
   harnessVersion?: string;
   sessionId: string;
-  /** Legacy name of sessionId; read once when loading old captures. */
-  piSessionId?: string;
   workspaceRoot: string;
   source: string | null;
   startedAt: string;
   endedAt?: string;
   status: 'recording' | 'closed' | 'interrupted' | 'degraded';
-  /** Token usage has been indexed (live while mirroring, or once from the mirror). */
-  usageIndexed?: boolean;
   endReason?: string;
   scope: { excludedDirectories: string[]; excludedPaths: string[]; maxFileBytes: number; maxFiles: number; maxTotalBytes: number };
 }
