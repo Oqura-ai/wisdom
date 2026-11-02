@@ -6,8 +6,8 @@ description: Read a recorded coding-agent session (Pi, Claude Code, or Codex) fr
 # Read a Wisdom session
 
 Use the `ledger` MCP tool when available. The CLI prints the same text:
-`node <wisdom>/dist/src/cli.js glance|open …`. `wisdom track pi` sets `WISDOM_CLI_PATH`
-and `WISDOM_DATA_DIR`, so `node "$env:WISDOM_CLI_PATH" glance latest` (PowerShell) or
+`node <wisdom>/dist/src/cli.js glance|open …`, run inside the project (it finds `.wisdom/`).
+`wisdom track` sets `WISDOM_CLI_PATH`, so `node "$env:WISDOM_CLI_PATH" glance latest` (PowerShell) or
 `node "$WISDOM_CLI_PATH" glance latest` (POSIX) works from any tracked workspace.
 
 ## Two moves

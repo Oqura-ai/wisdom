@@ -12,9 +12,10 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLedgerMcp } from '../src/mcp.js';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
+import { closeSession, observeSession, openSession } from './session.js';
 import { codex } from '../src/harnesses/codex/adapter.js';
 import { observation, toolError } from '../src/harnesses/codex/hook.js';
-import { hookEvents, hookSettings, inspectionArgs, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
+import { hookEvents, inspectionArgs, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
 
 const line = (type: string, payload: unknown) => JSON.stringify({ timestamp: '2026-10-23T00:00:00Z', type, payload }) + '\n';
 const message = (id: string, role: string, text: string) => line('response_item', {
@@ -57,8 +58,8 @@ test('Codex hook mapping preserves turn identity and unknown outcomes', () => {
 });
 
 test('Codex launch checks every recording hook and preserves configuration overrides', () => {
-  const settings = hookSettings();
-  const hooks = hookEvents.map(event => ({ command: settings.command, source: 'sessionFlags',
+  const settings = { command: 'node "hook.mjs" "data"' };
+  const hooks = hookEvents.map(event => ({ command: settings.command, source: 'user',
     eventName: event[0].toLowerCase() + event.slice(1), enabled: true, trustStatus: 'trusted' }));
   requireTrustedHooks({ data: [{ hooks, errors: [] }] }, settings.command);
   assert.throws(() => requireTrustedHooks({ data: [{ hooks: hooks.slice(1) }] }, settings.command), /setup-hooks/);
@@ -78,10 +79,8 @@ test('Codex capture preserves bytes, correlates overlapping turns, and serves ex
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const { launchId } = await call(c, '/launches', { harness: 'codex', workspaceRoot: workspace });
-    const hook = async (event: any, observationId = randomUUID()) => call(c, `/launches/${launchId}/observe`, {
-      observationId, sessionId: 'codex-session', source, ...observation(event),
-    });
+    const hook = async (event: any, observationId = randomUUID()) => call(c, '/observe', { harness: 'codex', cwd: workspace,
+      observation: { observationId, sessionId: 'codex-session', source, ...observation(event) } });
     const { captureId } = await hook({ hook_event_name: 'SessionStart', session_id: 'codex-session', transcript_path: source, source: 'startup' });
     fs.appendFileSync(source, line('turn_context', { turn_id: 'a' }) + message('user-a', 'user', 'Edit one.txt'));
     const a = await hook({ hook_event_name: 'UserPromptSubmit', turn_id: 'a', prompt: 'Edit one.txt' });
@@ -96,7 +95,7 @@ test('Codex capture preserves bytes, correlates overlapping turns, and serves ex
       + line('response_item', { type: 'function_call', id: 'f1', name: 'exec_command', call_id: 'tool-a', arguments: '{"cmd":"edit one.txt"}' })
       + line('response_item', { type: 'function_call_output', id: 'f2', call_id: 'tool-a', output: 'native duplicate' }));
     await hook({ hook_event_name: 'Stop', turn_id: 'a', last_assistant_message: 'Both files changed' });
-    await call(c, `/launches/${launchId}/close`, {});
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
     const ledger = daemon.captures.get(captureId);
     assert.equal(ledger.manifest.sessionId, 'codex-session');
     assert.equal(ledger.manifest.status, 'closed');
@@ -142,20 +141,20 @@ test('a resumed Codex session continues its capture; subagent copies, compaction
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const open = async (nativeSource: string | null = source, sessionId = 'native-session') => (await call(c, '/captures', {
+    const open = async (nativeSource: string | null = source, sessionId = 'native-session') => (await openSession(c, {
       harness: 'codex', sessionId, workspaceRoot: workspace, source: nativeSource,
     })).captureId as string;
-    const first = await open(); await call(c, `/captures/${first}/close`, {});
+    const first = await open(); await closeSession(c, first);
     // The same native session is the same capture: a resume is a new visit, not a new capture.
     const second = await open();
     assert.equal(second, first);
     assert(daemon.captures.get(second).listRecords().some(r => r.summary.startsWith('not-recording-between-visits')));
-    const hook = (event: any) => call(c, `/captures/${second}/observe`, { observationId: randomUUID(), ...observation(event) });
+    const hook = (event: any) => observeSession(c, second, { observationId: randomUUID(), ...observation(event) });
     await hook({ hook_event_name: 'SessionStart', session_id: 'native-session', transcript_path: source, source: 'resume' });
     await hook({ hook_event_name: 'PreCompact', trigger: 'auto', turn_id: 'new' });
     await hook({ hook_event_name: 'PostCompact', trigger: 'auto', turn_id: 'new' });
     await hook({ hook_event_name: 'SubagentStop', agent_id: 'sub-1', agent_transcript_path: sub });
-    await call(c, `/captures/${second}/close`, {});
+    await closeSession(c, second);
     // History from before the capture is mirrored byte for byte, but belongs to no turn,
     // so a reader never sees it as this capture's work.
     const history = daemon.captures.database.records("type='source_record' AND role='assistant'").filter(r => r.summary === 'Existing history');
@@ -164,57 +163,48 @@ test('a resumed Codex session continues its capture; subagent copies, compaction
     const ledger = daemon.captures.get(second);
     assert.deepEqual(fs.readFileSync(path.join(ledger.dir, 'subagents', 'agent-sub-1.jsonl')), fs.readFileSync(sub));
     assert.equal(ledger.listRecords().filter(r => r.type === 'session_compact').length, 2);
-    const missing = await open(null, 'no-transcript'); await call(c, `/captures/${missing}/close`, {});
+    const missing = await open(null, 'no-transcript'); await closeSession(c, missing);
     assert(daemon.captures.get(missing).listRecords().some(r => r.summary.startsWith('native-session-unavailable')));
     const pending = await open(null, 'unfinished');
-    await call(c, `/captures/${pending}/observe`, { observationId: randomUUID(), type: 'tool_started', turnId: 'unfinished', toolCallId: 'pending', toolName: 'Bash' });
-    await call(c, `/captures/${pending}/close`, {});
+    await observeSession(c, pending, { observationId: randomUUID(), type: 'tool_started', turnId: 'unfinished', toolCallId: 'pending', toolName: 'Bash' });
+    await closeSession(c, pending);
     assert.equal(daemon.captures.get(pending).manifest.status, 'interrupted');
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 const hookFile = fileURLToPath(new URL('../../integrations/codex/hook.mjs', import.meta.url));
-async function runHook(input: string, env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const child = spawn(process.execPath, [hookFile], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+async function runHook(input: string, dataDir?: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [hookFile, ...(dataDir ? [dataDir] : [])], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', bytes => { stdout += bytes; }); child.stderr.on('data', bytes => { stderr += bytes; });
   child.stdin.end(input);
   return new Promise((resolve, reject) => { child.once('error', reject); child.once('close', code => resolve({ code, stdout, stderr })); });
 }
 
-test('Codex hook process acknowledges writes, preserves raw payloads and denies unavailable recording', async () => {
+test('Codex hook process acknowledges writes, preserves raw payloads and never blocks', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-codex-hook-'));
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
   const data = path.join(root, 'data');
   const daemon = await startDaemon(data, 0);
-  const env = { ...process.env, WISDOM_DATA_DIR: data, WISDOM_LAUNCH_ID: '' };
   const session = (id: string) => [...daemon.captures.ledgers.values()].find(l => l.manifest.sessionId === id)!;
   try {
-    env.WISDOM_LAUNCH_ID = (await call(daemon.connection, '/launches', { harness: 'codex', workspaceRoot: workspace })).launchId;
-    const event = { session_id: 'native-session', transcript_path: null, hook_event_name: 'UserPromptSubmit', turn_id: 'a', prompt: 'Hello' };
-    const result = await runHook(JSON.stringify(event), env);
+    const event = { session_id: 'native-session', cwd: workspace, transcript_path: null, hook_event_name: 'UserPromptSubmit', turn_id: 'a', prompt: 'Hello' };
+    const result = await runHook(JSON.stringify(event), data);
     assert.equal(result.code, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), {});
     const ledger = session('native-session');
     const raw = ledger.listRecords().find(r => r.type === 'harness_event')!;
     assert.deepEqual(JSON.parse(ledger.readPayload(raw.dataRef!)), event);
     // One request carries both records; the raw event hangs off its observation.
     assert.equal(raw.parentId, ledger.listRecords().find(r => r.type === 'input')!.id);
-    // Another session (/new, /clear) is another capture; the previous one closes, nothing mixes.
-    const changed = await runHook(JSON.stringify({ ...event, session_id: 'different' }), env);
+    // Another session (/new, /fork) is another record; the first keeps its own.
+    const changed = await runHook(JSON.stringify({ ...event, session_id: 'different' }), data);
     assert.equal(changed.code, 0); assert.deepEqual(JSON.parse(changed.stdout), {});
-    assert.equal(ledger.manifest.endReason, 'session-switched');
+    assert.equal(ledger.manifest.status, 'recording');
     assert.equal(session('different').listRecords().filter(r => r.type === 'input').length, 1);
-    const blocked = await runHook(JSON.stringify({ ...event, hook_event_name: 'PreToolUse', tool_use_id: 'x', tool_name: 'Bash' }),
-      { ...env, WISDOM_DATA_DIR: path.join(root, 'missing') });
-    assert.equal(blocked.code, 0);
-    assert.equal(JSON.parse(blocked.stdout).hookSpecificOutput.permissionDecision, 'deny');
-    // Events that cannot undo work report the failure without a decision.
-    const stop = await runHook(JSON.stringify({ ...event, hook_event_name: 'Stop' }), { ...env, WISDOM_DATA_DIR: path.join(root, 'missing') });
-    assert.equal(stop.code, 1); assert.equal(stop.stdout, '');
-    // Unparseable input: the event name is still recovered from the raw text.
-    const truncated = await runHook('{"hook_event_name":"PreToolUse","tool_input":', env);
-    assert.equal(JSON.parse(truncated.stdout).hookSpecificOutput.permissionDecision, 'deny');
-    const inactive = await runHook('{}', { ...env, WISDOM_LAUNCH_ID: '' });
-    assert.equal(inactive.code, 0); assert.deepEqual(JSON.parse(inactive.stdout), {});
+    // Unreadable input or a hook with no data folder: a warning, never a deny.
+    const truncated = await runHook('{"hook_event_name":"PreToolUse","tool_input":', data);
+    assert.deepEqual(JSON.parse(truncated.stdout), {}); assert.equal(truncated.code, 1); assert.match(truncated.stderr, /PreToolUse/);
+    const unnamed = await runHook(JSON.stringify({ ...event, hook_event_name: 'PreToolUse', tool_use_id: 'x', tool_name: 'Bash' }));
+    assert.deepEqual(JSON.parse(unnamed.stdout), {}); assert.equal(unnamed.code, 1);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

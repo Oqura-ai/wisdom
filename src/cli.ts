@@ -1,38 +1,46 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { call, connectionAt, defaultDataDir, ensureDaemon } from './client.js';
+import { call, connectionAt, ensureDaemon } from './client.js';
 import { startDaemon } from './daemon.js';
 import { serveMcp } from './mcp.js';
-import { launchPi } from './harnesses/pi/launch.js';
-import { launchClaudeCode } from './harnesses/claude-code/launch.js';
-import { launchCodex } from './harnesses/codex/launch.js';
+import { findDataDir, marker } from './paths.js';
+import { writeJson } from './ledger.js';
+import { installPi, launchPi, piEntry } from './harnesses/pi/launch.js';
+import { installClaudeCode, launchClaudeCode } from './harnesses/claude-code/launch.js';
+import { installCodex, launchCodex } from './harnesses/codex/launch.js';
+import { adapter } from './harnesses/index.js';
 import type { Launch } from './harnesses/launch.js';
 
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const help = `Wisdom — live evidence ledger for coding agents (Pi, Claude Code, Codex)
 
-  wisdom daemon start|run|status|stop [--data DIR] [--port 7434] [--no-dashboard]
-  wisdom dashboard                  Print the live dashboard URL (served on daemon port + 1)
+  wisdom init [--cwd DIR]            Make DIR (default: here) a Wisdom project: .wisdom/, hooks, daemon
   wisdom track pi [--cwd DIR] [--pi-entry FILE] [-- Pi arguments]
   wisdom track claude [--cwd DIR] [--claude-bin FILE] [-- Claude Code arguments]
   wisdom track codex [--cwd DIR] [--codex-bin FILE] [--setup-hooks | --trust-all-hooks] [-- Codex arguments]
-  wisdom resume SESSION-ID           Continue a recorded session in its harness and folder, recording
+  wisdom resume SESSION-ID           Continue a recorded session in its harness and folder
   wisdom glance [CAPTURE|latest] [--from N] [--at VERSION]
   wisdom open POSITION --capture CAPTURE|latest [--from N] [--at VERSION]
-  wisdom mcp [--data DIR]
+  wisdom daemon start|run|status|stop [--port N] [--no-dashboard]
+  wisdom dashboard                   Print the live dashboard URL (served on daemon port + 1)
+  wisdom mcp
 
-resume takes the full session ID. CAPTURE also takes its first 8+ characters, or latest. glance without CAPTURE lists recorded sessions. POSITION is t3 (a turn), t3/c2 (a tool call),
-a1 (a subagent), a1/c2, or outside. A limited response ends with the request that continues it.
+Every command finds the project's .wisdom folder from the current folder (or --cwd) upward,
+like git; --data DIR or WISDOM_DATA_DIR names it directly. Any harness process that uses
+the project's harness home records, however it was started; track is the short way.
+resume takes the full session ID. CAPTURE also takes its first 8+ characters, or latest.
+POSITION is t3 (a turn), t3/c2 (a tool call), a1 (a subagent), a1/c2, or outside.
 Run: npm.cmd run wisdom -- <command>
 `;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const separator = args.indexOf('--');
-  const piArgs = separator < 0 ? [] : args.slice(separator + 1);
+  const harnessArgs = separator < 0 ? [] : args.slice(separator + 1);
   const { positionals, values } = parseArgs({ args: separator < 0 ? args : args.slice(0, separator), allowPositionals: true,
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
@@ -42,6 +50,7 @@ async function main(): Promise<void> {
   const [command, first] = positionals;
   if (!command || values.help) { console.log(help); return; }
   const options: Record<string, string[]> = {
+    init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'],
     daemon: ['port', 'no-dashboard'], dashboard: [], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['port'],
     resume: ['port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     glance: ['from', 'at'], open: ['capture', 'from', 'at'],
@@ -52,13 +61,17 @@ async function main(): Promise<void> {
   if (separator >= 0 && command !== 'track') throw new Error('Arguments after -- are only supported by track');
   if (positionals.length > (['daemon', 'track', 'resume', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
-  const dataDir = path.resolve(values.data ?? process.env.WISDOM_DATA_DIR ?? defaultDataDir);
-  const port = Number(values.port ?? 7434);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
+  const port = values.port === undefined ? undefined : Number(values.port);
+  if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('Invalid port');
+  if (command === 'init') { await init(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
+  const explicit = values.data ?? process.env.WISDOM_DATA_DIR;
+  const start = path.resolve(values.cwd ?? process.cwd());
+  const found = explicit ? path.resolve(explicit) : findDataDir(start);
+  if (!found) throw new Error(`${start} is not inside a Wisdom project. Run: wisdom init`);
+  const dataDir = found;
   if (command === 'daemon') {
     if (first === 'run') {
-      // The dashboard listens on the next port; tests and port 0 run without it.
-      const daemon = await startDaemon(dataDir, port, { dashboardPort: values['no-dashboard'] || !port ? undefined : port + 1 });
+      const daemon = await runDaemon(dataDir, port, !values['no-dashboard']);
       console.error(`Wisdom listening at ${daemon.connection.url}; data: ${dataDir}`);
       const viewer = (await call(daemon.connection, '/health')).dashboard;
       console.error(viewer.url ? `Dashboard: ${viewer.url}` : `Dashboard not started: ${viewer.reason}`);
@@ -81,13 +94,12 @@ async function main(): Promise<void> {
     if (!viewer.url) throw new Error(`Dashboard not running: ${viewer.reason}`);
     console.log(viewer.url); return;
   }
-  if (command === 'track') { process.exitCode = await track(first, values, piArgs, dataDir, port); return; }
+  if (command === 'track') { process.exitCode = await track(first, values, harnessArgs, dataDir, port); return; }
   if (command === 'resume') {
     // The ledger knows the harness, folder and full ID; the harness gets its own resume flag.
     if (!first) throw new Error('Use: wisdom resume SESSION-ID (the full ID; glance lists them)');
     const session = await call(await ensureDaemon(dataDir, port), '/resolve', { session: first });
-    const [harness, args] = session.harness === 'pi' ? ['pi', ['--session', session.captureId]]
-      : session.harness === 'claude-code' ? ['claude', ['--resume', session.captureId]] : ['codex', ['resume', session.captureId]];
+    const [harness, ...args] = adapter(session.harness).resume(session.captureId);
     console.error(`Resuming ${session.harness} session ${session.captureId}`);
     process.exitCode = await track(harness, { ...values, cwd: session.workspaceRoot }, args, dataDir, port); return;
   }
@@ -100,10 +112,51 @@ async function main(): Promise<void> {
   console.log((await call(connectionAt(dataDir), '/ledger', input)).text);
 }
 
-/** Every tracked harness is spawned here, so its data always lands in Wisdom's
- * data directory. Fail closed: the daemon must be running before the harness starts.
+/** The daemon's default port is 7434; when another project's daemon holds it, the next
+ * free pair is used (daemon.json says which). An explicit --port is used as given.
  */
-async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port: number): Promise<number> {
+async function runDaemon(dataDir: string, port: number | undefined, dashboard: boolean) {
+  for (let candidate = port ?? 7434; ; candidate += 2) {
+    try { return await startDaemon(dataDir, candidate, { dashboardPort: dashboard && candidate ? candidate + 1 : undefined }); }
+    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= 7434 + 40) throw error; }
+  }
+}
+
+/** Make a folder a Wisdom project: its data folder, Wisdom's hooks in each installed
+ * harness's home there, and a running daemon. Running it again repairs the hooks.
+ */
+async function init(project: string, values: any, port?: number): Promise<void> {
+  if (!fs.existsSync(project)) throw new Error(`${project} does not exist`);
+  const dataDir = path.join(project, '.wisdom');
+  const fresh = !fs.existsSync(path.join(dataDir, marker));
+  fs.mkdirSync(dataDir, { recursive: true });
+  if (fresh) writeJson(path.join(dataDir, marker), { project, createdAt: new Date().toISOString() });
+  // Session files and payloads are stored unredacted: never commit them.
+  const ignore = path.join(project, '.gitignore');
+  const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
+  const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
+  if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
+  console.log(`${fresh ? 'Created' : 'Found'} ${dataDir}${ignored ? '' : ' (added .wisdom/ to .gitignore)'}`);
+  const installed = (name: string, check: () => void, install: () => string, next: string) => {
+    try { check(); } catch { console.log(`  ${name.padEnd(12)} not found, skipped (run wisdom init again after installing it)`); return; }
+    console.log(`  ${name.padEnd(12)} hooks in ${path.relative(project, install())} · ${next}`);
+  };
+  const version = (command: string) => () => { execFileSync(command, ['--version'], { windowsHide: true, stdio: 'ignore' }); };
+  installed('Claude Code', version(values['claude-bin'] ?? 'claude'), () => installClaudeCode(dataDir),
+    'first run: wisdom track claude, then log in once');
+  installed('Codex', version(values['codex-bin'] ?? 'codex'), () => installCodex(dataDir).home,
+    'first run: wisdom track codex --setup-hooks, trust Wisdom\'s hooks in /hooks, log in');
+  installed('Pi', () => { fs.accessSync(piEntry(values['pi-entry'])); }, () => installPi(dataDir),
+    'first run: wisdom track pi, then log in once (/login)');
+  console.log('Your global harness settings (~/.claude, ~/.codex, ~/.pi) are not touched.');
+  const connection = await ensureDaemon(dataDir, port);
+  console.log(`Daemon running at ${connection.url}`);
+}
+
+/** Start a harness with its home in the project's data folder. Recording comes from the
+ * hooks in that home, so the launcher only sets the folder and starts the daemon early.
+ */
+async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number): Promise<number> {
   const cwd = path.resolve(values.cwd ?? process.cwd());
   const cliPath = fileURLToPath(new URL('./cli.js', import.meta.url));
   if (values['pi-entry'] && harness !== 'pi') throw new Error('--pi-entry applies only to track pi');
@@ -115,31 +168,14 @@ async function track(harness: string | undefined, values: any, args: string[], d
     : harness === 'claude' ? launchClaudeCode({ command: values['claude-bin'], args, dataDir, cliPath })
     : harness === 'codex' ? await launchCodex({ command: values['codex-bin'], args, dataDir, cliPath, cwd, setupHooks: values['setup-hooks'], trustAllHooks: values['trust-all-hooks'] })
     : (() => { throw new Error('Use: wisdom track pi|claude|codex'); })();
-  if (launch.setupOnly) {
-    console.error('Open /hooks in Codex, review and trust the Wisdom hooks, then quit and rerun without --setup-hooks. This setup session is not recorded.');
-    const env = { ...process.env, ...launch.env }; delete env.WISDOM_LAUNCH_ID;
-    return runHarness(launch, cwd, env);
+  if (launch.setupOnly) console.error('Open /hooks in Codex, review and trust the Wisdom hooks, then quit and run wisdom track codex. '
+    + 'Until they are trusted, sessions are read from their files only.');
+  else {
+    await ensureDaemon(dataDir, port);
+    console.error('Wisdom is recording sessions in this harness home.');
   }
-  const connection = await ensureDaemon(dataDir, port);
-  const env: Record<string, string> = { ...process.env as Record<string, string>, ...launch.env,
-    WISDOM_DATA_DIR: dataDir, WISDOM_CLI_PATH: cliPath };
-  let launchId: string | undefined;
-  let heartbeat: NodeJS.Timeout | undefined;
-  if (launch.launch) {
-    // The capture is chosen when the harness names its session: a resume continues its capture.
-    launchId = (await call(connection, '/launches', { ...launch.launch, workspaceRoot: cwd })).launchId as string;
-    env.WISDOM_LAUNCH_ID = launchId;
-    console.error('Wisdom is recording this session.');
-    // The launcher outlives nothing but the harness, so its heartbeat is the harness's.
-    heartbeat = setInterval(() => void call(connection, `/launches/${launchId}/heartbeat`, {}).catch(() => {}), 5000);
-  }
-  let code = 1;
-  try { code = await runHarness(launch, cwd, env); return code; }
-  finally {
-    clearInterval(heartbeat);
-    if (launchId) await call(connection, `/launches/${launchId}/close`, { reason: `exit-${code}` })
-      .catch(error => console.error(`Wisdom could not close its capture: ${error.message}`));
-  }
+  // The ledger skill calls this installation's CLI from the project.
+  return runHarness(launch, cwd, { ...process.env, ...launch.env, WISDOM_CLI_PATH: cliPath });
 }
 
 function runHarness(launch: Launch, cwd: string, env: NodeJS.ProcessEnv): Promise<number> {

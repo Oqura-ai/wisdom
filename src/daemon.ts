@@ -5,14 +5,14 @@ import { randomBytes } from 'node:crypto';
 import { Captures } from './captures.js';
 import { ledger } from './discovery.js';
 import { view } from './views.js';
-import { launchSchema, openSchema, observationSchema, viewSchema } from './schema.js';
+import { hookSchema, viewSchema } from './schema.js';
 import { writeJson } from './ledger.js';
 import { startDashboard } from './dashboard.js';
 
 /** Bumped when the daemon's contract changes (capture opening or reading). A daemon
  * started from an older build keeps running old code in memory, so clients check this.
  */
-export const CAPTURE_API = 6;
+export const CAPTURE_API = 8;
 
 export interface Connection { url: string; token: string; pid: number }
 
@@ -68,37 +68,18 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
       const input = await body(request);
       if (url.pathname === '/ledger') { send(200, { text: ledger(captures, input) }); return; }
       if (url.pathname === '/view') { send(200, view(captures, viewSchema.parse(input))); return; }
-      if (url.pathname === '/captures') { send(201, captures.open(openSchema.parse(input))); return; }
+      // Every hook and the Pi extension: the session the event names picks its record.
+      if (url.pathname === '/observe') {
+        const record = captures.route(hookSchema.parse(input));
+        send(200, { recorded: !!record, id: record?.id, captureId: record?.captureId }); return;
+      }
       if (url.pathname === '/resolve') {
         // Resuming starts a harness, so it takes the exact session ID only: never a guess.
         const { captureId, harness, workspaceRoot } = captures.get(String((input as any)?.session ?? '')).manifest;
         send(200, { captureId, harness, workspaceRoot }); return;
       }
-      if (url.pathname === '/launches') { send(201, { launchId: captures.launch(launchSchema.parse(input)) }); return; }
       if (url.pathname === '/stop') { send(200, { status: 'stopping' }); setImmediate(() => void close()); return; }
-      const reason = typeof (input as any)?.reason === 'string' ? (input as any).reason.slice(0, 200) : 'quit';
-      // Hooks of a tracked Claude Code or Codex process: the session they name picks the capture.
-      const launch = /^\/launches\/([^/]+)\/(observe|heartbeat|close)$/.exec(url.pathname);
-      if (launch) {
-        const [, id, action] = launch;
-        if (action === 'observe') {
-          const record = captures.observeLaunch(id, observationSchema.parse(input));
-          send(200, { recorded: !!record, id: record?.id, captureId: record?.captureId });
-        } else if (action === 'heartbeat') { captures.heartbeatLaunch(id); send(200, { status: 'recording' }); }
-        else send(200, { status: captures.closeLaunch(id, reason)?.status ?? 'nothing recorded' });
-        return;
-      }
-      const match = /^\/captures\/([^/]+)\/(observe|heartbeat|close)$/.exec(url.pathname);
-      if (!match) { send(404, { error: 'Unknown route' }); return; }
-      const [, id, action] = match;
-      if (action === 'observe') {
-        const record = captures.observe(id, observationSchema.parse(input));
-        send(200, { recorded: true, id: record?.id, lastSeq: captures.get(id).lastSeq });
-      } else if (action === 'heartbeat') {
-        captures.heartbeat(id); send(200, { status: 'recording' });
-      } else {
-        captures.close(id, reason); send(200, { status: captures.get(id).manifest.status });
-      }
+      send(404, { error: 'Unknown route' });
     } catch (error) { send(400, { error: error instanceof Error ? error.message : String(error) }); }
   });
   server.requestTimeout = 30000;

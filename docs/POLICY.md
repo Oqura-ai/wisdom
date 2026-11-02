@@ -65,14 +65,19 @@ Every harness is an adapter; none is central.
   [harnesses/index.ts](../src/harnesses/index.ts).
 - **The full contract.** It implements every method of
   [HarnessAdapter](../src/harnesses/types.ts): `toolTarget`, `isDirectFileTool`,
-  `toolView`, `nativeEntry`. Unknown native entries must not throw; unknown tools are
-  `full`.
-- **Spawned by Wisdom, configured per process.** `wisdom track <name>` passes flags or
-  environment for that process only. It never edits a user's global configuration, so
-  not using `wisdom track` leaves the harness exactly as it was.
-- **Fails closed.** If a tool start cannot be recorded, the tool is blocked. Verify the
-  harness's real blocking mechanism with its installed version (Codex ignores exit code 2
-  and needs a JSON deny).
+  `toolView`, `nativeEntry`, `nativeSession`, `nativeCwd`, `nativePrompt`, `sessionFiles`.
+  Unknown native entries must not throw; unknown tools are `full`.
+- **Its home is the fence.** The harness keeps all its files in
+  `.wisdom/harnesses/<name>/home/`, and `wisdom init` writes Wisdom's hooks into that
+  home's own settings, so every process using the home records, however it was started.
+  Wisdom never edits a user's global configuration; a harness outside the home is
+  exactly as it was. Wisdom watches; it does not control how the harness runs its
+  sessions (forks, branches, worktrees are the harness's own).
+- **Never blocks, never loses.** A hook never stops the harness. An event the daemon
+  cannot take is kept in the spool and recorded later, marked late; the hook warns.
+  A session whose hooks never ran is read from its own file and marked as such. Verify
+  the harness's real hook behaviour with its installed version (Codex needs JSON output
+  from every hook).
 - **States its coverage.** What it records, what it cannot (the fog), and the harness
   version it was verified against, in a doc beside [CODEX.md](CODEX.md).
 - **Tests.** Hook payload fixtures taken from the real version, a capture test that

@@ -1,4 +1,5 @@
-import { count, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
+import path from 'node:path';
+import { contentText, count, jsonlFiles, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
 
 /** Codex's model-facing command envelope ("Exit code: 1\nWall time: ..."). Verified in
  * 0.147.0 rollouts. Codex sends no PostToolUse for a failed command, so this is often
@@ -54,10 +55,25 @@ function usage(entry: any): NeutralUsage[] {
 
 export const codex: HarnessAdapter = {
   name: 'codex',
+  homeEnv: 'CODEX_HOME',
+  resume: sessionId => ['codex', 'resume', sessionId],
   // apply_patch can change several files; shell and MCP calls can write anywhere.
   toolTarget: () => undefined,
   isDirectFileTool: () => false,
   toolView: toolName => toolName === 'apply_patch' ? 'patch' : 'full',
+  // A subagent's rollout has its own session_meta with an object source ({subagent: …}).
+  nativeSession: entry => entry?.type === 'session_meta' && typeof entry.payload?.id === 'string'
+    && typeof entry.payload.source !== 'object' ? entry.payload.id : undefined,
+  nativeCwd: entry => entry?.type === 'session_meta' && typeof entry.payload?.cwd === 'string' ? entry.payload.cwd : undefined,
+  // Codex adds its own user-role messages (AGENTS.md, <environment_context>); they are not typed.
+  nativePrompt: entry => {
+    const item = entry?.payload;
+    if (entry?.type !== 'response_item' || item?.type !== 'message' || item.role !== 'user') return undefined;
+    const text = contentText(item.content)?.trim();
+    return text && !/^(?:# AGENTS\.md instructions for |<[a-z_]+>)/.test(text) ? text : undefined;
+  },
+  // sessions/YYYY/MM/DD/rollout-….jsonl
+  sessionFiles: home => jsonlFiles(path.join(home, 'sessions'), 3),
   nativeEntry: entry => ({
     id: typeof entry?.payload?.id === 'string' && entry.payload.id ? entry.payload.id : undefined,
     timestamp: entry?.timestamp,

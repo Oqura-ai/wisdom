@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { call, connectionAt, defaultDataDir } from '../../client.js';
+import { deliver } from '../../client.js';
 
 /** Map one Claude Code hook payload to a neutral observation. Verified against
  * Claude Code 2.1.306 payloads; unknown events are ignored, not guessed.
@@ -27,27 +27,30 @@ export function observation(event: any): Record<string, unknown> | undefined {
   }
 }
 
-// Fail closed where Claude Code allows blocking: no unrecorded tool or prompt runs.
-const blocking = new Set(['PreToolUse', 'UserPromptSubmit']);
-
-export async function main(): Promise<void> {
-  const launchId = process.env.WISDOM_LAUNCH_ID;
-  if (!launchId) return; // Not started by `wisdom track claude`.
+/** Runs for every hook of every Claude Code process that uses Wisdom's home, however it
+ * was started. It never stops Claude Code: an event the daemon cannot take is kept in
+ * the spool, and exit code 1 shows the warning without blocking.
+ */
+export async function main(dataDir = process.argv[2]): Promise<void> {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const event = JSON.parse(input);
   const mapped = observation(event);
   if (!mapped) return;
   try {
-    const connection = connectionAt(process.env.WISDOM_DATA_DIR ?? defaultDataDir);
-    // Every hook names its session, so /clear and /resume reach the right capture. A
+    if (!dataDir) throw new Error('the hook names no Wisdom data folder; run wisdom init again');
+    // Every hook names its session, so /clear, /resume and forks reach the right record. A
     // subagent's hooks name the parent session; its transcript is copied at SubagentStop.
     if (typeof event.session_id !== 'string' || !event.session_id) throw new Error('Claude Code hook has no session_id');
     const identity = { sessionId: event.session_id, ...(typeof event.agent_id === 'string' ? {} : { source: event.transcript_path }) };
-    await call(connection, `/launches/${launchId}/observe`, { observationId: randomUUID(), ...identity, ...mapped });
+    const { spooled } = await deliver(dataDir, { harness: 'claude-code', cwd: typeof event.cwd === 'string' ? event.cwd : process.cwd(),
+      observation: { observationId: randomUUID(), ...identity, ...mapped } as any });
+    if (spooled) {
+      process.stderr.write(`Wisdom kept this ${event.hook_event_name} to record when its daemon is back (${spooled}). File changes meanwhile are not observed.\n`);
+      process.exitCode = 1;
+    }
   } catch (error) {
-    process.stderr.write(`Wisdom cannot record this ${event.hook_event_name}: ${error instanceof Error ? error.message : error}. `
-      + 'Restart the Wisdom daemon; work stays paused until recording works.\n');
-    process.exitCode = blocking.has(event.hook_event_name) ? 2 : 1;
+    process.stderr.write(`Wisdom could not record or keep this ${event.hook_event_name}: ${error instanceof Error ? error.message : error}.\n`);
+    process.exitCode = 1;
   }
 }

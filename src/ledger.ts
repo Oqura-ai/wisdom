@@ -19,6 +19,7 @@ export class Ledger {
   readonly recoveryGaps: string[] = [];
   private sourceOffset = 0;
   private sourceStopped = false;
+  private sourceChecked = false;
   private sourceTurnId?: string;
   private sourceModel?: string;
   private gaps = new Set<string>();
@@ -45,6 +46,37 @@ export class Ledger {
   get mirror(): string { return path.join(this.dir, 'native-session.jsonl'); }
 
   saveManifest(): void { this.database.saveManifest(this.manifest); }
+
+  /** How far the native file has been read. Equals the copy's size until the harness
+   * rewrites its file; after that, copying goes on from the file's new end.
+   */
+  get sourcePosition(): number { return this.sourceOffset + (this.manifest.sourceShift ?? 0); }
+
+  /** A native file is copied only if it is this harness's file for this session: it
+   * starts with a JSON object, and none of its first lines names another session. A
+   * damaged line further in is not a different file; it becomes its own gap when copied.
+   */
+  private checkSource(source: string): string | undefined {
+    const fd = fs.openSync(source, 'r');
+    let text: string;
+    try {
+      const bytes = Buffer.alloc(Math.min(fs.fstatSync(fd).size, 1024 * 1024));
+      text = bytes.subarray(0, fs.readSync(fd, bytes, 0, bytes.length, 0)).toString('utf8');
+    } finally { fs.closeSync(fd); }
+    const harness = adapter(this.manifest.harness);
+    const lines = text.split('\n').slice(0, -1).slice(0, 200);
+    for (const [index, line] of lines.entries()) {
+      let entry: any;
+      try { entry = JSON.parse(line); } catch { entry = undefined; }
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        if (index === 0) return 'its first line is not a JSON object';
+        continue;
+      }
+      const session = harness.nativeSession(entry);
+      if (session && session !== this.manifest.sessionId) return `line ${index + 1} belongs to session ${session}`;
+    }
+    return undefined;
+  }
 
   listRecords(): LedgerRecord[] {
     return this.database.records('capture_id=?', [this.manifest.captureId], 'ORDER BY seq');
@@ -99,25 +131,47 @@ export class Ledger {
     } finally { fs.closeSync(fd); }
   }
 
+  /** The harness moved this session's file (Claude Code does on entering a worktree).
+   * Copying goes on from the same position in the new file, after the usual check.
+   */
+  moveSource(source: string): void {
+    const from = this.manifest.source;
+    this.manifest.source = source; this.sourceChecked = false; this.saveManifest();
+    this.append({ type: 'source_moved', summary: `Native file moved from ${from} to ${source}; copying continues at byte ${this.sourcePosition}.` });
+  }
+
   /** Preserve native bytes. No line parser that treats Unicode separators as newlines. */
   /** Mirror new native lines. `stopBefore` leaves the first matching line (and all
    * after it) for a later sync, so it is linked to evidence recorded in between.
+   * `prompts` records each typed prompt as an input first: only for lines no hook saw.
    */
-  syncSource(stopBefore?: (entry: NativeEntry) => boolean): void {
+  syncSource(stopBefore?: (entry: NativeEntry) => boolean, prompts = false): void {
     const source = this.manifest.source;
     if (!source || !fs.existsSync(source) || this.sourceStopped) return;
     const size = fs.statSync(source).size;
-    if (size < this.sourceOffset) {
-      this.sourceStopped = true;
-      this.gap('source-rewritten', 'Native source became smaller; further mirroring stopped.'); return;
+    const position = this.sourcePosition;
+    if (!size) return;
+    if (!this.sourceChecked || size < position) {
+      const problem = this.checkSource(source);
+      if (problem) {
+        this.sourceStopped = true;
+        this.gap('source-incompatible', `Native file is not this ${this.manifest.harness} session (${problem}); copying stopped.`); return;
+      }
+      this.sourceChecked = true;
     }
-    if (size === this.sourceOffset) return;
+    if (size < position) {
+      // The harness rewrote its file. What it rewrote is not copied again; the copy keeps
+      // every byte read before, and lines added after the rewrite are copied as usual.
+      this.manifest.sourceShift = size - this.sourceOffset; this.saveManifest();
+      this.gap('source-rewritten', `Native file shrank from ${position} to ${size} bytes; copying continues from its new end.`); return;
+    }
+    if (size === position) return;
     const fd = fs.openSync(source, 'r');
     try {
       // Bound each poll; subsequent polls drain a large backlog. A native line
       // larger than this bound is an explicit gap, not silent truncation.
-      const bytes = Buffer.alloc(Math.min(size - this.sourceOffset, 32 * 1024 * 1024));
-      const count = fs.readSync(fd, bytes, 0, bytes.length, this.sourceOffset);
+      const bytes = Buffer.alloc(Math.min(size - position, 32 * 1024 * 1024));
+      const count = fs.readSync(fd, bytes, 0, bytes.length, position);
       let start = 0;
       for (let end = bytes.subarray(0, count).indexOf(10); end >= 0;
         end = bytes.subarray(0, count).indexOf(10, start)) {
@@ -128,7 +182,7 @@ export class Ledger {
           if (entry && stopBefore(entry)) break;
         }
         fs.appendFileSync(this.mirror, line);
-        this.recordSourceLine(line, this.sourceOffset + start);
+        this.recordSourceLine(line, this.sourceOffset + start, prompts);
         start = end + 1;
       }
       this.sourceOffset += start;
@@ -155,13 +209,19 @@ export class Ledger {
   }
 
 
-  private recordSourceLine(line: Buffer, offset: number): void {
+  private recordSourceLine(line: Buffer, offset: number, prompts = false): void {
     try {
-      const entry = adapter(this.manifest.harness).nativeEntry(JSON.parse(line.toString('utf8')));
+      const raw = JSON.parse(line.toString('utf8'));
+      const harness = adapter(this.manifest.harness);
+      const entry = harness.nativeEntry(raw);
       if (entry.turnId) this.sourceTurnId = entry.turnId;
       if (entry.model) this.sourceModel = entry.model;
       const source = { sourceEntryId: entry.id ?? `byte:${offset}:${hash(line)}`, sourceParentId: entry.parentId, sourceTimestamp: entry.timestamp,
         turnId: this.sourceTurnId, sourceOffset: offset, sourceLength: line.length };
+      // The prompt opens a turn before its own line is recorded, so that line belongs to it.
+      const prompt = prompts ? harness.nativePrompt(raw) : undefined;
+      if (prompt) this.append({ type: 'input', inputBasis: 'session-file', summary: preview(prompt), dataRef: this.payload({ text: prompt }),
+        turnId: this.sourceTurnId, sourceEntryId: source.sourceEntryId, sourceTimestamp: entry.timestamp });
       if (!entry.messages.length) this.append({ type: 'source_record', summary: preview(entry.kind), ...source });
       this.recordUsage(entry, { ...source, sourceModel: this.sourceModel });
       // One native line can hold several messages, such as parallel tool results.

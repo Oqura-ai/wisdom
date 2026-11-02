@@ -169,6 +169,9 @@ function tokens(records: LedgerRecord[]): { total: number; cost?: number } {
   return { total, cost: sessionCost ?? cost };
 }
 
+/** A prompt read from the session file because no hook reported it says so. */
+const inLabel = (turn: LedgerRecord) => turn.inputBasis === 'session-file' ? 'in (from session file)' : 'in';
+
 function inputText(context: Context, record: LedgerRecord): string {
   const data = json(context, record);
   if (data === undefined) return `[input body unavailable · ${record.summary}]`;
@@ -219,15 +222,29 @@ function glance(context: Context, from?: number): string {
       plural(agents.length, 'subagent'), `${number(t.total)} tokens`, t.cost === undefined ? '' : `$${t.cost.toFixed(4)} reported`].filter(Boolean).join(' · '),
   ];
   if (!fs.existsSync(ledger.dir)) lines.push('evidence folder missing: inputs, outputs and patches cannot be read');
+  // A kind that repeats three or more times is one line with its count, first and last.
+  // Every gap stays a record; only the glance line is shared.
   const gaps = records.filter(r => r.type === 'gap');
-  for (const gap of gaps) lines.push(`not recorded  ${gap.summary} (seq ${gap.seq})`);
+  const byKind = new Map<string, LedgerRecord[]>();
+  for (const gap of gaps) {
+    const kind = gap.summary.split(':', 1)[0];
+    byKind.set(kind, [...byKind.get(kind) ?? [], gap]);
+  }
+  for (const same of byKind.values()) {
+    if (same.length < 3) for (const gap of same) lines.push(`not recorded  ${gap.summary} (seq ${gap.seq})`);
+    else {
+      const [first, last] = [same[0], same.at(-1)!];
+      const detail = (gap: LedgerRecord) => gap.summary.slice(gap.summary.indexOf(':') + 1);
+      lines.push(`not recorded  ${first.summary.split(':', 1)[0]} ×${same.length} · first (seq ${first.seq}): ${detail(first)} · last (seq ${last.seq}): ${detail(last)}`);
+    }
+  }
   for (const gap of ledger.recoveryGaps) lines.push(`not recorded  ${gap}`);
 
   const byTurn = (id: string) => main.filter(r => r.requestId === id);
   turns.forEach((turn, index) => {
     const own = byTurn(turn.id);
     lines.push('');
-    block(lines, INDENT, 'in', inputText(context, turn), `t${index + 1}`.padEnd(4));
+    block(lines, INDENT, inLabel(turn), inputText(context, turn), `t${index + 1}`.padEnd(4));
     const out = lastReply(context, own);
     if (out) lines.push(`${INDENT}out       ${out}`);
     lines.push(`${INDENT}${[callFacts(own, recording), changeFacts(own)].join(' · ')}`);
@@ -268,7 +285,7 @@ function open(context: Context, position: string, from?: number): string {
     const header = `t${index + 1} · session ${short(context.manifest.captureId)} · version ${context.version} · ${number(view.tokens.total)} tokens`;
     const lines = [header];
     // A single call is opened to read its bodies; the turn's input is one glance away.
-    if (call === undefined) { block(lines, '', 'in', inputText(context, turn)); lines.push(''); }
+    if (call === undefined) { block(lines, '', inLabel(turn), inputText(context, turn)); lines.push(''); }
     const body = renderItems(context, s, view.items, `t${index + 1}`, call);
     if (!body.length) body.push('Nothing else is recorded in this turn yet: no thinking, replies, tool calls or changes.');
     return respond(lines.concat(body, issueLines(view.issues)), from, next);

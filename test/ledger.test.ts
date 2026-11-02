@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { applyPatch } from 'diff';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
+import { closeSession, observeSession, openSession } from './session.js';
 import { Ledger } from '../src/ledger.js';
 import { LedgerDatabase } from '../src/database.js';
 import { scope } from '../src/workspace.js';
@@ -28,9 +29,9 @@ test('live reads show pending calls, exact patches, failed side effects, and who
   const daemon = await startDaemon(box.data, 0);
   try {
     const connection = daemon.connection;
-    const capture = await call(connection, '/captures', { harness: 'pi', sessionId: 'test-session', workspaceRoot: box.workspace, source: null });
+    const capture = await openSession(connection, { harness: 'pi', sessionId: 'test-session', workspaceRoot: box.workspace, source: null });
     const id = capture.captureId;
-    const send = (record: unknown) => call(connection, `/captures/${id}/observe`, record);
+    const send = (record: unknown) => observeSession(connection, id, record);
     const read = async (request: object): Promise<string> => (await call(connection, '/ledger', { capture: id, ...request })).text;
     await send(obs('input', { data: { text: 'Change greeting without changing the API.' } }));
     const start = obs('tool_started', { toolCallId: 't1', toolName: 'edit', data: { input: { path: 'auth.ts' } } });
@@ -59,7 +60,7 @@ test('live reads show pending calls, exact patches, failed side effects, and who
     // A 16,000-character output is under the ceiling, so it arrives whole: no rule cuts tool output.
     assert(after.replace(/\n⤷ /g, '').includes('failure '.repeat(2000).trimEnd()));
     assert.match(after, /\ncomplete · \d+ lines · lines over 2,000 characters are split; ⤷ marks a continued piece$/);
-    await call(connection, `/captures/${id}/close`, { reason: 'test' });
+    await closeSession(connection, id, 'test');
   } finally { await daemon.close(); fs.rmSync(box.root, { recursive: true, force: true }); }
 });
 
@@ -68,9 +69,9 @@ test('a limited response continues from the same snapshot; external edits, renam
   const daemon = await startDaemon(box.data, 0);
   try {
     const c = daemon.connection;
-    const manifest = await call(c, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
+    const manifest = await openSession(c, { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
     const id = manifest.captureId;
-    const send = (record: unknown) => call(c, `/captures/${id}/observe`, record);
+    const send = (record: unknown) => observeSession(c, id, record);
     const read = async (request: object): Promise<string> => (await call(c, '/ledger', { capture: id, ...request })).text;
     await send(obs('input', { data: { text: 'Print a lot' } }));
     await send(obs('tool_started', { toolCallId: 'big', toolName: 'bash', data: { input: { command: 'yes' } } }));
@@ -121,8 +122,8 @@ test('ledger requests that cannot be answered say what to send instead', async (
   try {
     const c = daemon.connection;
     await assert.rejects(call(c, '/ledger', { glance: true, capture: 'latest' }), /No sessions are recorded yet/);
-    const { captureId } = await call(c, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
-    await call(c, `/captures/${captureId}/observe`, obs('input', { data: { text: 'hello' } }));
+    const { captureId } = await openSession(c, { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
+    await observeSession(c, captureId, obs('input', { data: { text: 'hello' } }));
     const version = daemon.captures.database.revision;
     for (const [request, message] of [
       [{}, /exactly one of glance or open/], [{ glance: true, open: 't1', capture: captureId }, /exactly one of glance or open/],
@@ -165,8 +166,8 @@ test('MCP serves the same read-only ledger and captures survive daemon restart',
   const box = sandbox();
   let daemon = await startDaemon(box.data, 0);
   try {
-    const manifest = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
-    await call(daemon.connection, `/captures/${manifest.captureId}/observe`, obs('input', { data: { text: 'Preserve this intent.' } }));
+    const manifest = await openSession(daemon.connection, { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
+    await observeSession(daemon.connection, manifest.captureId, obs('input', { data: { text: 'Preserve this intent.' } }));
     const server = createLedgerMcp(daemon.connection);
     const client = new Client({ name: 'test', version: '1' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -199,8 +200,8 @@ test('nested operations do not duplicate patches or imply exclusive attribution'
   const box = sandbox();
   const daemon = await startDaemon(box.data, 0);
   try {
-    const m = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
-    const send = (record: unknown) => call(daemon.connection, `/captures/${m.captureId}/observe`, record);
+    const m = await openSession(daemon.connection, { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: null });
+    const send = (record: unknown) => observeSession(daemon.connection, m.captureId, record);
     await send(obs('tool_started', { toolCallId: 'parent', toolName: 'custom' }));
     await send(obs('tool_started', { toolCallId: 'parent/1', parentToolCallId: 'parent', toolName: 'write', data: { input: { path: 'nested.txt' } } }));
     fs.writeFileSync(path.join(box.workspace, 'nested.txt'), 'nested');
@@ -218,10 +219,10 @@ test('relative native source paths resolve against Pi cwd and do not become code
   try {
     const source = path.join(box.workspace, 'native.jsonl');
     fs.writeFileSync(source, JSON.stringify({ type: 'session', id: 's' }) + '\n');
-    const manifest = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: 'native.jsonl' });
-    assert.equal(manifest.source, source);
+    const manifest = await openSession(daemon.connection, { harness: 'pi', sessionId: 's', workspaceRoot: box.workspace, source: 'native.jsonl' });
+    assert.equal(daemon.captures.get(manifest.captureId).manifest.source, source);
     fs.appendFileSync(source, JSON.stringify({ type: 'message', id: 'm', parentId: null, message: { role: 'user', content: 'hello' } }) + '\n');
-    await call(daemon.connection, `/captures/${manifest.captureId}/close`, { reason: 'test' });
+    await closeSession(daemon.connection, manifest.captureId, 'test');
     const ledger = daemon.captures.get(manifest.captureId);
     assert(ledger.listRecords().some(r => r.role === 'user'));
     assert.equal(ledger.listRecords().filter(r => r.type === 'file_change').length, 0);

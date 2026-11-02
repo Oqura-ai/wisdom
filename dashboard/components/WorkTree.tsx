@@ -26,9 +26,8 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
   const [onlyProblems, setOnlyProblems] = useState(false);
   const [view, setView] = useView();
   const [copied, setCopied] = useState(false);
-  // The command as typed in this project's terminal; Windows PowerShell needs npm.cmd.
-  const npm = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent) ? 'npm.cmd' : 'npm';
-  const resume = `${npm} run wisdom -- resume ${session.captureId}`;
+  // Ready to paste in any terminal: it sets the session's folder and its harness home.
+  const resume = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent) ? session.resume.powershell : session.resume.posix;
   const copyResume = () => void navigator.clipboard.writeText(resume).then(() => {
     setCopied(true); setTimeout(() => setCopied(false), 1500);
   });
@@ -77,7 +76,7 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
       </div>
       <div className="resume-line">
         <span className="label">resume</span>
-        <code title="Continues this session with recording">{resume}</code>
+        <code title="Continues this session with recording. The home stays set in this terminal, so harness commands run there also use this project.">{resume}</code>
         <button onClick={copyResume} title="Copy the command">{copied ? 'copied' : 'copy'}</button>
       </div>
       <div className="session-metrics">

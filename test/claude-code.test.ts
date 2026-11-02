@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { startDaemon } from '../src/daemon.js';
-import { call } from '../src/client.js';
+import { call, connectionAt } from '../src/client.js';
 import { observation } from '../src/harnesses/claude-code/hook.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 
@@ -55,10 +55,9 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
   const daemon = await startDaemon(data, 0);
   try {
     const c = daemon.connection;
-    const { launchId } = await call(c, '/launches', { harness: 'claude-code', harnessVersion: '2.1.306 (Claude Code)', workspaceRoot: workspace });
     // As the hook process does: every event names its session; a subagent's names its parent's.
-    const hook = (event: Record<string, unknown>) => call(c, `/launches/${launchId}/observe`, { observationId: randomUUID(),
-      sessionId: common.session_id, ...(event.agent_id ? {} : { source: native }), ...observation({ ...common, ...event })! });
+    const hook = (event: Record<string, unknown>) => call(c, '/observe', { harness: 'claude-code', harnessVersion: '2.1.306 (Claude Code)', cwd: workspace,
+      observation: { observationId: randomUUID(), sessionId: common.session_id, ...(event.agent_id ? {} : { source: native }), ...observation({ ...common, ...event })! } });
     const { captureId } = await hook({ hook_event_name: 'SessionStart', transcript_path: native, source: 'resume' });
     await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'Edit existing.txt' });
     fs.appendFileSync(native, line({ type: 'user', uuid: 'u0', message: { role: 'user', content: 'Edit existing.txt' } }));
@@ -79,7 +78,7 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Glob', tool_use_id: 'toolu_g', agent_id: 'a1', tool_response: { filenames: [] } });
     await hook({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: subTranscript });
     await hook({ hook_event_name: 'Stop', last_assistant_message: 'Done' });
-    await call(c, `/launches/${launchId}/close`, { reason: 'exit-0' });
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
 
     const ledger = daemon.captures.get(captureId);
     assert.equal(ledger.dir, path.join(data, 'harnesses', 'claude-code', captureId));
@@ -109,18 +108,28 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('a Claude Code hook blocks the tool when Wisdom cannot record it', async () => {
+test('with its daemon down, a Claude Code hook keeps the event, starts the daemon and never blocks', async () => {
   const { spawnSync } = await import('node:child_process');
   const hook = path.resolve('integrations', 'claude-code', 'hook.mjs');
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-nodaemon-'));
-  const run = (event: unknown, env: Record<string, string>) => spawnSync(process.execPath, [hook],
-    { input: JSON.stringify(event), encoding: 'utf8', env: { ...process.env, WISDOM_DATA_DIR: empty, ...env } });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-nodaemon-'));
+  const data = path.join(root, 'data');
+  const run = (event: unknown) => spawnSync(process.execPath, [hook, data], { input: JSON.stringify(event), encoding: 'utf8' });
+  const kept = run({ ...common, cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'while down' });
+  assert.equal(kept.status, 1, 'exit code 1 warns; 2 would block'); assert.match(kept.stderr, /Wisdom kept this UserPromptSubmit/);
+  const connection = connectionAt(data);
   try {
-    const blocked = run({ ...common, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't', tool_input: {} }, { WISDOM_LAUNCH_ID: 'x' });
-    assert.equal(blocked.status, 2); assert.match(blocked.stderr, /work stays paused/);
-    // Without Wisdom's launcher there is no capture, so the hook stays out of the way.
-    const unmanaged = spawnSync(process.execPath, [hook], { input: JSON.stringify({ hook_event_name: 'PreToolUse' }), encoding: 'utf8',
-      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'WISDOM_LAUNCH_ID')) as Record<string, string> });
-    assert.equal(unmanaged.status, 0);
-  } finally { fs.rmSync(empty, { recursive: true, force: true }); }
+    // The daemon the hook started reads the spool on its first poll.
+    let text = '';
+    for (let i = 0; i < 100 && !/while down/.test(text); i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      text = (await call(connection, '/ledger', { capture: common.session_id, glance: true }).catch(() => ({ text: '' }))).text;
+    }
+    assert.match(text, /^t1  in {8}while down$/m);
+    const live = run({ ...common, cwd: root, hook_event_name: 'Stop', last_assistant_message: 'ok' });
+    assert.equal(live.status, 0); assert.equal(live.stderr, '');
+  } finally {
+    await call(connection, '/stop', {});
+    for (let i = 0; i < 100 && fs.existsSync(path.join(data, 'daemon.json')); i++) await new Promise(resolve => setTimeout(resolve, 100));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

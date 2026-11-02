@@ -1,4 +1,5 @@
-import { count, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
+import path from 'node:path';
+import { contentText, count, jsonlFiles, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
 
 // Claude Code calls this format internal, so this reader is best-effort; hooks
 // remain the primary evidence. Verified against Claude Code 2.1.306.
@@ -44,10 +45,23 @@ function usage(entry: any): NeutralUsage[] {
 
 export const claudeCode: HarnessAdapter = {
   name: 'claude-code',
+  homeEnv: 'CLAUDE_CONFIG_DIR',
+  resume: sessionId => ['claude', '--resume', sessionId],
   toolTarget: (_toolName, input) => typeof input?.file_path === 'string' ? input.file_path
     : typeof input?.notebook_path === 'string' ? input.notebook_path : undefined,
   isDirectFileTool: toolName => direct.has(toolName),
   toolView: toolName => ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName) ? 'patch' : toolName === 'Read' ? 'file' : 'full',
+  nativeSession: entry => typeof entry?.sessionId === 'string' ? entry.sessionId : undefined,
+  nativeCwd: entry => typeof entry?.cwd === 'string' ? entry.cwd : undefined,
+  // A typed prompt, not a tool result, a meta line, a compaction summary or a slash
+  // command's own lines (those start no turn under hooks either).
+  nativePrompt: entry => {
+    if (entry?.type !== 'user' || entry.isMeta || entry.isCompactSummary || entry.toolUseResult !== undefined) return undefined;
+    const text = contentText(entry.message?.content)?.trim();
+    return text && !/^<(?:command-|local-command-)/.test(text) ? text : undefined;
+  },
+  // projects/<folder>/<session>.jsonl; subagent files sit one folder deeper.
+  sessionFiles: home => jsonlFiles(path.join(home, 'projects'), 1),
   nativeEntry: entry => ({ id: entry?.uuid, parentId: entry?.parentUuid, timestamp: entry?.timestamp,
     kind: String(entry?.type ?? 'unknown'), messages: messages(entry), usage: usage(entry) }),
 };

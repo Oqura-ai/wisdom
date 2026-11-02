@@ -1,17 +1,12 @@
-// Codex runs this for each hook event. The logic lives in Wisdom's build.
-// If the build cannot load, Codex would treat a crash as "Failed" and run the
-// tool, so this shim blocks prompts and tools itself (verified on Codex 0.147.0).
+// Codex runs this for each hook event, with Wisdom's data folder as its argument. The
+// logic lives in Wisdom's build. If the build cannot load, the event cannot be kept:
+// say so, and answer `{}` so Codex goes on (Wisdom never stops the harness).
 let hook;
 try { hook = await import('../../dist/src/harnesses/codex/hook.js'); }
 catch (error) {
-  let input = '';
-  for await (const chunk of process.stdin) input += chunk;
-  const name = /"hook_event_name"\s*:\s*"(\w+)"/.exec(input)?.[1];
-  const reason = `Wisdom's Codex hook could not load (${error?.message ?? error}). Run npm run build in Wisdom; work stays paused.`;
-  if (!process.env.WISDOM_LAUNCH_ID) process.stdout.write('{}');
-  else if (name === 'PreToolUse') process.stdout.write(JSON.stringify({ hookSpecificOutput: {
-    hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
-  else if (name === 'UserPromptSubmit') process.stdout.write(JSON.stringify({ decision: 'block', reason }));
-  else { process.stderr.write(reason + '\n'); process.exitCode = 1; }
+  for await (const _ of process.stdin) { /* drain */ }
+  process.stderr.write(`Wisdom's Codex hook could not load (${error?.message ?? error}). Run npm run build in Wisdom; this event is not recorded.\n`);
+  process.stdout.write('{}');
+  process.exitCode = 1;
 }
-if (hook) await hook.main();
+if (hook) await hook.main(process.argv[2]);

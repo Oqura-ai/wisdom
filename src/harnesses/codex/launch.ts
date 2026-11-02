@@ -2,19 +2,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
-import { harnessHome, type Launch } from '../launch.js';
+import { home, hookCommand, readSettings, saveSettings, withHooks, type Launch } from '../launch.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
   'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact'] as const;
 
-export function hookSettings(): { command: string; args: string[] } {
-  const file = fileURLToPath(new URL('../../../../integrations/codex/hook.mjs', import.meta.url)).replaceAll('\\', '/');
-  if (/["\r\n]/.test(file)) throw new Error('Wisdom hook path cannot contain quotes or newlines');
-  const command = `node "${file}"`;
-  const args = ['-c', 'features.hooks=true'];
-  for (const event of hookEvents) args.push('-c', `hooks.${event}=[{hooks=[{type="command",command=${JSON.stringify(command)},timeout=${event === 'SessionEnd' ? 3 : 40}}]}]`);
-  return { command, args };
+/** Write Wisdom's hooks to `hooks.json` in Codex's home in Wisdom's folder (verified on
+ * Codex CLI 0.164.0: listed as user hooks, enabled, untrusted until reviewed in /hooks).
+ * Every Codex process that uses this home loads them; ~/.codex is never touched.
+ */
+export function installCodex(dataDir: string): { home: string; command: string } {
+  const folder = home(dataDir, 'codex');
+  const file = path.join(folder, 'hooks.json');
+  const settings = readSettings(file);
+  const command = hookCommand('codex', dataDir);
+  settings.hooks = withHooks(settings.hooks, hookEvents, command, () => ({}),
+    event => ({ timeout: event === 'SessionEnd' ? 3 : 40 }));
+  saveSettings(file, settings);
+  return { home: folder, command };
 }
 
 /** Read hook metadata only. No thread is started and no model is called. */
@@ -54,7 +59,7 @@ export function requireTrustedHooks(result: any, command: string, allowUntrusted
   }
   const missing = hookEvents.filter(event => !entries[0].hooks?.some((hook: any) =>
     hook.command === command && hook.eventName === event[0].toLowerCase() + event.slice(1)
-    && hook.source === 'sessionFlags' && hook.enabled && (allowUntrusted || hook.trustStatus === 'trusted')));
+    && hook.source === 'user' && hook.enabled && (allowUntrusted || hook.trustStatus === 'trusted')));
   if (missing.length) throw new Error('Wisdom hooks are missing, disabled, or untrusted. Run `wisdom track codex --setup-hooks` '
     + 'with the same --cwd, review Wisdom hooks in /hooks, then quit and retry. Required: ' + missing.join(', '));
 }
@@ -104,17 +109,17 @@ export async function launchCodex(options: {
   try { version = execFileSync(command, ['--version'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
   catch { throw new Error(`Cannot run Codex (${command}). Install it or pass --codex-bin.`); }
   const match = /codex-cli (\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!match || Number(match[1]) === 0 && Number(match[2]) < 147) throw new Error('Codex CLI 0.147.0 or newer is required.');
-  // Codex keeps its sessions, login and hook trust in Wisdom's folder, not in ~/.codex.
-  const env = { CODEX_HOME: harnessHome(options.dataDir, 'codex') };
-  const settings = hookSettings();
+  if (!match || Number(match[1]) === 0 && Number(match[2]) < 164) throw new Error('Codex CLI 0.164.0 or newer is required.');
+  // Codex keeps its sessions, login, hooks and hook trust in Wisdom's folder, not in ~/.codex.
+  const installed = installCodex(options.dataDir);
+  const env = { CODEX_HOME: installed.home };
   const overrides = inspectionArgs(options.args);
   if (options.setupHooks) {
     if (options.args.length) throw new Error('--setup-hooks does not accept Codex arguments');
     if (options.trustAllHooks) throw new Error('--setup-hooks and --trust-all-hooks are alternatives; choose one');
-    return { command, env, args: ['-C', options.cwd, ...settings.args], setupOnly: true };
+    return { command, env, args: ['-C', options.cwd], setupOnly: true };
   }
-  requireTrustedHooks(await inspectHooks(command, [...settings.args, ...overrides], options.cwd, { ...process.env, ...env }), settings.command, options.trustAllHooks);
+  requireTrustedHooks(await inspectHooks(command, overrides, options.cwd, { ...process.env, ...env }), installed.command, options.trustAllHooks);
   if (options.trustAllHooks) console.error(trustAllWarning);
   const configFile = path.join(env.CODEX_HOME, 'config.toml');
   if (nodeReplEnabled(fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : '', overrides)) {
@@ -123,7 +128,6 @@ export async function launchCodex(options: {
   }
   const mcp = ['-c', `mcp_servers.wisdom.command=${JSON.stringify(process.execPath)}`, '-c',
     `mcp_servers.wisdom.args=${JSON.stringify([options.cliPath, 'mcp', '--data', options.dataDir])}`];
-  return { command, env, args: ['-C', options.cwd, ...settings.args, ...mcp,
-    ...(options.trustAllHooks ? ['--dangerously-bypass-hook-trust'] : []), ...options.args],
-    launch: { harness: 'codex', harnessVersion: version } };
+  return { command, env, args: ['-C', options.cwd, ...mcp,
+    ...(options.trustAllHooks ? ['--dangerously-bypass-hook-trust'] : []), ...options.args] };
 }

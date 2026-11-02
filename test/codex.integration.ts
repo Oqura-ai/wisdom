@@ -3,16 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { hookEvents, hookSettings, inspectHooks, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
+import { hookEvents, inspectHooks, installCodex, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
 
-test('installed Codex loads invocation-scoped Wisdom hooks and requires trust (no model call)', async () => {
+test('installed Codex loads the Wisdom hooks from its home in the data folder and requires trust (no model call)', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-codex-installed-'));
-  const homeDir = path.join(root, 'home'); fs.mkdirSync(homeDir);
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
   try {
-    const settings = hookSettings();
-    const result = await inspectHooks(process.env.WISDOM_CODEX_BIN ?? 'codex', settings.args, workspace,
-      { ...process.env, CODEX_HOME: homeDir });
+    const settings = installCodex(path.join(root, 'data'));
+    const result = await inspectHooks(process.env.WISDOM_CODEX_BIN ?? 'codex', [], workspace,
+      { ...process.env, CODEX_HOME: settings.home });
     assert.deepEqual(result.data[0].errors, []);
     const hooks = result.data[0].hooks.filter((hook: any) => hook.command === settings.command);
     assert.equal(hooks.length, hookEvents.length);

@@ -12,7 +12,7 @@ export interface Project { workspaceRoot: string; captures: number; harnesses: s
 export interface Tokens { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null }
 export interface HarnessTotals { harness: string; captures: number; recording: number; requests: number; replies: number; tools: number;
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens }
-export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string;
+export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string; resume: { powershell: string; posix: string };
   endReason?: string; startedAt: string; endedAt?: string; lastObservedAt: string; requests: number; replies: number; tools: number;
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens; evidenceMissing?: boolean }
 export interface ProjectStats { readVersion: number; workspaceRoot: string; harnesses: HarnessTotals[]; sessions: Session[];

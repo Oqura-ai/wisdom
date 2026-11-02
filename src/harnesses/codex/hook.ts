@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { call, connectionAt, defaultDataDir } from '../../client.js';
+import { deliver } from '../../client.js';
 import { exitEnvelope } from './adapter.js';
 
 /** Unknown tool outcomes stay unknown. A PostToolUse is not proof of success. */
@@ -12,19 +12,8 @@ export function toolError(toolName: string, response: any): boolean | undefined 
   return exitEnvelope(response);
 }
 
-/** The only failure output Codex honours. Verified on Codex CLI 0.147.0: exit code 2
- * and crashes are logged as "Failed" and the tool still runs; this JSON blocks it.
- * Other events cannot undo work, so they get no decision.
- */
-export function failureDecision(eventName: unknown, reason: string): string | undefined {
-  if (eventName === 'PreToolUse') return JSON.stringify({ hookSpecificOutput: {
-    hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
-  if (eventName === 'UserPromptSubmit') return JSON.stringify({ decision: 'block', reason });
-  return undefined;
-}
-
-// Codex kills a hook at its 40 s timeout and then runs the tool, so Wisdom must
-// answer well inside that window.
+// Codex kills a hook at its 40 s timeout, so delivery (10 s) plus starting the daemon
+// (up to 10 s) stays well inside that window.
 const daemonTimeoutMs = 10000;
 
 /** A spawned subagent's ID, from Codex spawn_agent's result. */
@@ -60,9 +49,11 @@ export function observation(event: any): Record<string, unknown> | undefined {
   }
 }
 
-export async function main(): Promise<void> {
-  const launchId = process.env.WISDOM_LAUNCH_ID;
-  if (!launchId) { process.stdout.write('{}'); return; } // Hook trust setup, not recording.
+/** Runs for every hook of every Codex process that uses Wisdom's home. It never stops
+ * Codex: an event the daemon cannot take is kept in the spool. It always answers `{}`
+ * (Stop and SubagentStop require JSON); a warning goes to stderr with exit code 1.
+ */
+export async function main(dataDir = process.argv[2]): Promise<void> {
   let event: any;
   let input = '';
   try {
@@ -73,24 +64,24 @@ export async function main(): Promise<void> {
     event = JSON.parse(input);
     const mapped = observation(event);
     if (mapped) {
-      const connection = connectionAt(process.env.WISDOM_DATA_DIR ?? defaultDataDir);
+      if (!dataDir) throw new Error('the hook names no Wisdom data folder; run wisdom init again');
       // A subagent's events name its own rollout file; that is not the session transcript
       // switching. Its transcript is copied separately at SubagentStop.
       const identity = { sessionId: event.session_id, ...(typeof event.agent_id === 'string' ? {} : { source: event.transcript_path }) };
       if (typeof identity.sessionId !== 'string' || !identity.sessionId) throw new Error('Codex hook has no session_id');
       // One request: the neutral observation plus the exact received JSON object,
       // kept as a separate record so it never enters clean conversation output.
-      await call(connection, `/launches/${launchId}/observe`, { observationId: randomUUID(), ...identity, ...mapped,
-        harnessEvent: event }, daemonTimeoutMs);
+      const { spooled } = await deliver(dataDir, { harness: 'codex', cwd: typeof event.cwd === 'string' ? event.cwd : process.cwd(),
+        observation: { observationId: randomUUID(), ...identity, ...mapped, harnessEvent: event } as any }, daemonTimeoutMs);
+      if (spooled) {
+        process.stderr.write(`Wisdom kept this ${event.hook_event_name} to record when its daemon is back (${spooled}). File changes meanwhile are not observed.\n`);
+        process.exitCode = 1;
+      }
     }
-    process.stdout.write('{}'); // Stop and SubagentStop require JSON, not plain text.
   } catch (error) {
     const name = event?.hook_event_name ?? /"hook_event_name"\s*:\s*"(\w+)"/.exec(input)?.[1];
-    const reason = `Wisdom cannot record this ${name ?? 'hook'}: ${String(error instanceof Error ? error.message : error).replace(/\.$/, '')}. `
-      + 'Restart the Wisdom daemon and start a new tracked Codex session; work stays paused until recording works.';
-    const decision = failureDecision(name, reason);
-    // Blocking events exit 0 with a decision: a non-zero exit would let the tool run.
-    if (decision) process.stdout.write(decision);
-    else { process.stderr.write(reason + '\n'); process.exitCode = 1; }
+    process.stderr.write(`Wisdom could not record or keep this ${name ?? 'hook'}: ${String(error instanceof Error ? error.message : error)}.\n`);
+    process.exitCode = 1;
   }
+  process.stdout.write('{}');
 }

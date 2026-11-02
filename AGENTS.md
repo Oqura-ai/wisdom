@@ -19,7 +19,8 @@ Use Node.js 24 or newer. On restricted PowerShell installations, replace `npm` w
 - `npm run test:pi`: build and run the installed-Pi integration test; set `WISDOM_PI_ENTRY` for a custom Pi entry point.
 - `npm run test:codex`: check installed Codex hook discovery without model calls.
 - `npm run wisdom -- daemon run`: run the daemon in the foreground.
-- `npm run wisdom -- track claude --cwd <project>`: launch a tracked session; use `pi` for Pi.
+- `npm run wisdom -- init --cwd <project>`: make a project a Wisdom project (`.wisdom/`, hooks in each harness home, daemon).
+- `npm run wisdom -- track claude --cwd <project>`: start a harness with its home in `.wisdom/`; use `pi` or `codex` for the others.
 
 ## Coding Style & Naming Conventions
 Follow existing TypeScript style: two-space indentation, single-quoted strings, semicolons, camelCase functions/variables, and PascalCase types/classes. Use descriptive lowercase, hyphenated filenames where appropriate, such as `claude-code/`. Keep `.js` extensions in relative imports for NodeNext ESM resolution. Strict TypeScript checking is enabled; no formatter or linter is configured.

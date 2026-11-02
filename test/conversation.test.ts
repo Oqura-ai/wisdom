@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
+import { closeSession, observeSession, openSession } from './session.js';
 import { cleanOutput, conversation } from '../src/conversation.js';
 
 const line = (entry: unknown) => JSON.stringify(entry) + '\n';
@@ -19,9 +20,9 @@ test('a turn reads as prompt, thinking, replies, tools, changes and a nested sub
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { harness: 'claude-code', sessionId: 's', workspaceRoot: workspace, source: null });
-    const send = (body: Record<string, unknown>) => call(c, `/captures/${captureId}/observe`, { observationId: randomUUID(), ...body });
-    await send({ type: 'session_started', data: { sessionId: 's', source: transcript } });
+    const { captureId } = await openSession(c, { harness: 'claude-code', sessionId: 's', workspaceRoot: workspace, source: null });
+    const send = (body: Record<string, unknown>) => observeSession(c, captureId, { observationId: randomUUID(), ...body });
+    await send({ type: 'session_started', source: transcript, data: { sessionId: 's', source: transcript } });
     await send({ type: 'input', data: { text: 'Write a file and delegate a count' } });
     // Claude Code: thinking recorded without text, then a reply, as separate entries.
     fs.appendFileSync(transcript, line({ type: 'assistant', uuid: 'a1', timestamp: stamp(0), thinkingDurationMs: 750,
@@ -80,8 +81,8 @@ test('a turn falls back to the hook reply and reads transcript-only results', as
   const daemon = await startDaemon(path.join(root, 'data'), 0);
   try {
     const c = daemon.connection;
-    const { captureId } = await call(c, '/captures', { harness: 'codex', sessionId: 'pending-start', workspaceRoot: workspace, source: null });
-    const send = (body: Record<string, unknown>) => call(c, `/captures/${captureId}/observe`, { observationId: randomUUID(), sessionId: 's', ...body });
+    const { captureId } = await openSession(c, { harness: 'codex', sessionId: 'pending-start', workspaceRoot: workspace, source: null });
+    const send = (body: Record<string, unknown>) => observeSession(c, captureId, { observationId: randomUUID(), sessionId: 's', ...body });
     await send({ type: 'input', data: { text: 'Run it' } });
     await send({ type: 'tool_started', toolCallId: 'b', toolName: 'Bash', data: { input: { command: 'false' } } });
     await send({ type: 'agent_settled', data: { lastAssistantMessage: 'It failed.' } });

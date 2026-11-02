@@ -37,7 +37,7 @@ other evidence.
 
 | Text | Meaning |
 | --- | --- |
-| `in` | The user's input, in full. A subagent's input is shown as `task`. |
+| `in` | The user's input, in full. A subagent's input is shown as `task`. `in (from session file)` when no hook reported it and it was read from the harness's own session file. |
 | `out` | In a glance: the start (240 characters, whitespace joined) of the turn's last assistant reply. `(from hook)` when the harness's final-reply hook is the only copy. |
 | `reply` | An assistant reply, whole, as recorded. `reply (from hook)` when only the hook has it. |
 | `thinking  redacted · 1.1 s` | The harness recorded that thinking happened, not its text (Claude Code omits it; Codex encrypts it). |
@@ -80,7 +80,7 @@ tool is shown in full. Unknown tools are always shown in full.
 | --- | --- | --- |
 | Workspace | Canonical project directory | Windows casing is normalized. |
 | Harness | The coding agent recorded (`pi`, `claude-code`, `codex`) | |
-| Session | The harness's logical conversation (`sessionId`) | One session can have several captures. |
+| Session | The harness's logical conversation (`sessionId`) | One session has one capture; a resume or a pause continues it. |
 | Capture | The record of one harness session, named by that session's ID | A resume continues it; `/clear` or `/new` starts another. |
 | Record | One immutable observation | `seq` orders records within a capture. |
 | Version | Global SQLite append revision | Fixes the evidence a read sees. It is not a filesystem snapshot. |
@@ -89,7 +89,7 @@ tool is shown in full. Unknown tools are always shown in full.
 | Patch | UTF-8 unified diff of an observed creation, modification or deletion | Creation and deletion diff from or to empty, so contents are visible. Binary or non-UTF-8 files have no patch (`patch not recorded: binary-or-non-utf8`). Renames are a delete and a create. |
 | Payload | An exact stored hook body or patch | SHA-256 addressed, inside the capture directory. |
 | Usage | Tokens and cost one model response reported | Counted once per response; history from before a capture is excluded; cost only where the harness reports it. |
-| Gap | A known missing or limited observation | Listed as `not recorded`. |
+| Gap | A known missing or limited observation | Listed as `not recorded`; three or more of one kind share a line: `<kind> ×N · first (seq a): … · last (seq b): …`. |
 
 `observed during c1` (record value `observed-during-tool`) means the change was seen while
 that call ran. Other active calls and external writers may have contributed; overlapping

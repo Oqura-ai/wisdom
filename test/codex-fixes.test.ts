@@ -8,8 +8,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
-import { failureDecision, observation } from '../src/harnesses/codex/hook.js';
-import { hookEvents, hookSettings, nodeReplEnabled, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
+import { observation } from '../src/harnesses/codex/hook.js';
+import { hookEvents, nodeReplEnabled, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
 
 const line = (type: string, payload: unknown) => JSON.stringify({ timestamp: '2026-10-23T00:00:00Z', type, payload }) + '\n';
 
@@ -18,39 +18,29 @@ async function capture() {
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
   const source = path.join(root, 'rollout.jsonl'); fs.writeFileSync(source, '');
   const daemon = await startDaemon(path.join(root, 'data'), 0);
-  const { launchId } = await call(daemon.connection, '/launches', { harness: 'codex', workspaceRoot: workspace });
-  const hook = (event: any) => call(daemon.connection, `/launches/${launchId}/observe`, {
-    observationId: randomUUID(), sessionId: 'codex-session', source, ...observation(event) });
+  const hook = (event: any) => call(daemon.connection, '/observe', { harness: 'codex', cwd: workspace,
+    observation: { observationId: randomUUID(), sessionId: 'codex-session', source, ...observation(event) } });
   const { captureId } = await hook({ hook_event_name: 'SessionStart', session_id: 'codex-session', transcript_path: source, source: 'startup' });
   const done = async () => { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); };
   return { daemon, captureId, hook, source, workspace, done };
 }
 
-test('Codex failure output is the JSON decision Codex honours, never an exit code', () => {
-  assert.equal(JSON.parse(failureDecision('PreToolUse', 'r')!).hookSpecificOutput.permissionDecision, 'deny');
-  assert.deepEqual(JSON.parse(failureDecision('UserPromptSubmit', 'r')!), { decision: 'block', reason: 'r' });
-  // Stop/SubagentStop "block" means "keep going", so non-blocking events get no decision.
-  for (const event of ['Stop', 'SubagentStop', 'PostToolUse', 'SessionStart', undefined]) assert.equal(failureDecision(event, 'r'), undefined);
-});
-
-test('the Codex hook shim blocks tools even when Wisdom\'s build cannot load', async () => {
+test('the Codex hook shim answers {} and warns when the Wisdom build cannot load; it never blocks', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-codex-shim-'));
   // A copy two levels deep has no ../../dist beside it, like a missing build.
   const shim = path.join(root, 'a', 'b', 'hook.mjs'); fs.mkdirSync(path.dirname(shim), { recursive: true });
   fs.copyFileSync(fileURLToPath(new URL('../../integrations/codex/hook.mjs', import.meta.url)), shim);
-  const run = (input: string, launchId: string) => new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [shim], { env: { ...process.env, WISDOM_LAUNCH_ID: launchId }, windowsHide: true });
-    let stdout = ''; child.stdout.on('data', bytes => { stdout += bytes; });
-    child.stdin.end(input); child.once('error', reject); child.once('close', code => resolve({ code, stdout }));
+  const run = (input: string) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, [shim, root], { windowsHide: true });
+    let stdout = '', stderr = ''; child.stdout.on('data', bytes => { stdout += bytes; }); child.stderr.on('data', bytes => { stderr += bytes; });
+    child.stdin.end(input); child.once('error', reject); child.once('close', code => resolve({ code, stdout, stderr }));
   });
   try {
-    const denied = await run(JSON.stringify({ hook_event_name: 'PreToolUse' }), 'capture');
-    assert.equal(denied.code, 0);
-    assert.equal(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision, 'deny');
-    assert.equal(JSON.parse((await run(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }), 'capture')).stdout).decision, 'block');
-    assert.equal((await run(JSON.stringify({ hook_event_name: 'Stop' }), 'capture')).code, 1);
-    // Untracked Codex runs (hook trust setup) are never blocked.
-    assert.deepEqual(JSON.parse((await run(JSON.stringify({ hook_event_name: 'PreToolUse' }), '')).stdout), {});
+    for (const name of ['PreToolUse', 'UserPromptSubmit', 'Stop']) {
+      const result = await run(JSON.stringify({ hook_event_name: name }));
+      assert.deepEqual(JSON.parse(result.stdout), {});
+      assert.equal(result.code, 1); assert.match(result.stderr, /could not load/);
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -69,7 +59,7 @@ test('a tool with no result hook is finished from the native transcript at turn 
     assert.match(turn, /^c1  Bash · outcome not recorded · result from transcript · → p1\n {4}input {5}\{"command":"apply_patch \.\.\."\}\n {4}output\n {8}Success\. Updated the following files:$/m);
     // A result hook arriving late is evidence, not a missing-start gap.
     await hook({ hook_event_name: 'PostToolUse', turn_id: 't', tool_name: 'Bash', tool_use_id: 'patch', tool_response: 'late' });
-    await call(daemon.connection, `/captures/${captureId}/close`, {});
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
     const ledger = daemon.captures.get(captureId);
     const records = ledger.listRecords();
     const finished = records.find(r => r.type === 'tool_finished' && r.resultBasis === 'native-transcript')!;
@@ -86,7 +76,7 @@ test('a tool still open at turn end without transcript evidence stays visibly un
   try {
     await hook({ hook_event_name: 'PreToolUse', turn_id: 't', tool_name: 'Bash', tool_use_id: 'lost', tool_input: { command: 'x' } });
     await hook({ hook_event_name: 'Stop', turn_id: 't' });
-    await call(daemon.connection, `/captures/${captureId}/close`, {});
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
     const ledger = daemon.captures.get(captureId);
     assert(ledger.listRecords().some(r => r.type === 'gap' && r.summary.includes('unfinished-tools-at-settle')));
     assert.equal(ledger.manifest.status, 'interrupted');
@@ -113,8 +103,8 @@ test('opening a spawned Codex subagent reaches everything it did', async () => {
 
 test('subagent events keep the session transcript; failed commands are errors from the transcript', async () => {
   const { daemon, captureId, hook, source, done } = await capture();
-  const send = (event: any) => call(daemon.connection, `/captures/${captureId}/observe`, {
-    observationId: randomUUID(), sessionId: 'codex-session', ...observation(event) });
+  const send = (event: any) => call(daemon.connection, '/observe', { harness: 'codex', cwd: daemon.captures.get(captureId).manifest.workspaceRoot,
+    observation: { observationId: randomUUID(), sessionId: 'codex-session', ...observation(event) } });
   try {
     // Real Codex: a subagent's events carry its own rollout path. The hook omits it.
     await send({ hook_event_name: 'SubagentStart', agent_id: 'kid', agent_type: 'default' });
@@ -141,8 +131,8 @@ test('node_repl detection and opt-in trust bypass behave as documented', () => {
   assert.equal(nodeReplEnabled(config, ['-c', 'mcp_servers.node_repl.enabled=false']), false);
   assert.equal(nodeReplEnabled(config.replace('command', 'enabled = false\ncommand'), []), false);
   assert.equal(nodeReplEnabled('[mcp_servers.other]\ncommand = "x"\n', []), false);
-  const settings = hookSettings();
-  const untrusted = hookEvents.map(event => ({ command: settings.command, source: 'sessionFlags',
+  const settings = { command: 'node "hook.mjs" "data"' };
+  const untrusted = hookEvents.map(event => ({ command: settings.command, source: 'user',
     eventName: event[0].toLowerCase() + event.slice(1), enabled: true, trustStatus: 'untrusted' }));
   assert.throws(() => requireTrustedHooks({ data: [{ hooks: untrusted, errors: [] }] }, settings.command), /untrusted/);
   requireTrustedHooks({ data: [{ hooks: untrusted, errors: [] }] }, settings.command, true);

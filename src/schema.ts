@@ -24,21 +24,6 @@ export const viewSchema = z.discriminatedUnion('view', [
 ]);
 export type ViewRequest = z.infer<typeof viewSchema>;
 
-export const openSchema = z.object({
-  harness: z.enum(harnessNames),
-  sessionId: z.string().min(1),
-  harnessVersion: z.string().optional(),
-  workspaceRoot: z.string().min(1),
-  source: z.string().nullable(),
-}).strict();
-
-/** A tracked harness process. Its session is named later, by the harness's own hooks. */
-export const launchSchema = z.object({
-  harness: z.enum(harnessNames),
-  harnessVersion: z.string().optional(),
-  workspaceRoot: z.string().min(1),
-}).strict();
-
 export const observationSchema = z.object({
   observationId: z.string().min(1),
   type: z.enum(['tool_started', 'tool_finished', 'input', 'message', 'agent_settled', 'session_tree', 'session_compact', 'gap',
@@ -60,6 +45,19 @@ export const observationSchema = z.object({
 }).strict();
 export type Observation = z.infer<typeof observationSchema>;
 
+/** What every hook or extension sends: the session it names picks the record, so no
+ * launcher is needed. `cwd` is where the harness runs; `late` marks an event kept in the
+ * spool while the daemon was down, delivered after it came back.
+ */
+export const hookSchema = z.object({
+  harness: z.enum(harnessNames),
+  harnessVersion: z.string().optional(),
+  cwd: z.string().min(1),
+  late: z.object({ spooledAt: z.string() }).strict().optional(),
+  observation: observationSchema.extend({ sessionId: z.string().min(1) }),
+}).strict();
+export type HookEvent = z.infer<typeof hookSchema>;
+
 export interface Manifest {
   schemaVersion: 1;
   captureId: string;
@@ -72,6 +70,9 @@ export interface Manifest {
   endedAt?: string;
   status: 'recording' | 'closed' | 'interrupted' | 'degraded';
   endReason?: string;
+  /** Where the native file is read, minus where the copy is written. Non-zero once the
+   * harness rewrote its file: copying went on from the file's new end. */
+  sourceShift?: number;
   scope: { excludedDirectories: string[]; excludedPaths: string[]; maxFileBytes: number; maxFiles: number; maxTotalBytes: number };
 }
 
@@ -103,6 +104,10 @@ export interface LedgerRecord {
   beforeCapture?: boolean;
   /** A harness's own helper agent (Claude Code prompt suggestions, recaps): no task, no transcript. */
   internalAgent?: boolean;
+  /** An input read from the harness's session file because no hook reported it. */
+  inputBasis?: 'session-file';
+  /** Kept in the spool while the daemon was down; recorded when it came back. */
+  spooledAt?: string;
   sourceEntryId?: string;
   sourceParentId?: string | null;
   sourceTimestamp?: string;

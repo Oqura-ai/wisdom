@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import type { Captures } from './captures.js';
 import { workspaceKey } from './database.js';
+import { resumeCommands } from './harnesses/index.js';
 
 export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null }
 const emptyTokens = (): TokenTotals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null });
@@ -91,6 +92,7 @@ export function stats(captures: Captures, request: { workspaceRoot?: string }) {
     const row: any = counts.get(manifest.captureId) ?? {};
     return { captureId: manifest.captureId, harness: manifest.harness,
       harnessVersion: manifest.harnessVersion, status: manifest.status, endReason: manifest.endReason,
+      resume: resumeCommands(captures.dataDir, manifest.harness, manifest.captureId, manifest.workspaceRoot),
       startedAt: manifest.startedAt, endedAt: manifest.endedAt, lastObservedAt: row.lastObservedAt ?? manifest.startedAt,
       requests: number(row.requests), replies: number(row.replies), tools: number(row.tools), failures: number(row.failures),
       changes: number(row.changes), gaps: number(row.gaps), subagents: number(row.subagents),

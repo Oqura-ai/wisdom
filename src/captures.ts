@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { Ledger } from './ledger.js';
 import { LedgerDatabase } from './database.js';
 import { Workspace, scope } from './workspace.js';
-import { preview, type Observation, type Manifest, type LedgerRecord } from './schema.js';
-import { adapter } from './harnesses/index.js';
+import { hookSchema, preview, type HookEvent, type Observation, type Manifest, type LedgerRecord } from './schema.js';
+import { adapter, harnessNames } from './harnesses/index.js';
+import type { NativeEntry } from './harnesses/types.js';
 import { surfaceText } from './content.js';
+import { spoolDir } from './paths.js';
 
 interface RunningCapture {
   ledger: Ledger;
@@ -20,23 +21,23 @@ interface RunningCapture {
   lastReconcile: number;
 }
 
-/** One `wisdom track` process. It may visit several native sessions (/clear, /resume);
- * each session is its own capture, and only the current one records.
- */
-interface Launch {
-  harness: string;
-  harnessVersion?: string;
-  workspaceRoot: string;
-  current?: string;
-  lastSeen: number;
-}
+/** A session with no event for this long, and no tool running, stops being watched.
+ * Its next event continues it. Hooks have no heartbeat, so silence is the only signal. */
+const IDLE_MS = 10 * 60_000;
+/** A session file unchanged this long, with no record, is a session nobody reported. */
+const QUIET_MS = 2 * 60_000;
+const SCAN_MS = 10_000;
 
-/** Owns session lifecycle. Closed captures remain queryable; only live ones watch files. */
+/** Owns session lifecycle. Every harness session inside Wisdom's homes gets one record:
+ * from its hooks while they report, and from its own file when they did not.
+ */
 export class Captures {
   readonly ledgers = new Map<string, Ledger>();
   readonly database: LedgerDatabase;
   private running = new Map<string, RunningCapture>();
-  private launches = new Map<string, Launch>();
+  private lastScan = 0;
+  /** Session files that name no session (a subagent's or helper's own file). */
+  private notSessions = new Set<string>();
 
   constructor(readonly dataDir: string) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -58,18 +59,41 @@ export class Captures {
     return path.join(this.dataDir, 'harnesses', manifest.harness, manifest.captureId);
   }
 
-  /** One native session is one capture. Opening a session that already has a capture
-   * (a resume, or Pi's /reload) continues that capture with a new visit.
+  private find(harness: string, sessionId: string): Ledger | undefined {
+    return [...this.ledgers.values()].find(ledger => ledger.manifest.harness === harness && ledger.manifest.sessionId === sessionId);
+  }
+
+  /** The one entry point for hooks and the Pi extension. The session an event names is
+   * its record: the first event opens it, an event after a pause continues it. Nothing
+   * depends on how the harness was started or how many sessions one process visits.
    */
-  open(input: { harness: string; sessionId: string; harnessVersion?: string; workspaceRoot: string; source: string | null }): Manifest {
+  route(event: HookEvent): LedgerRecord | undefined {
+    const { harness, observation } = event;
+    if (!event.late) this.drainSpool(harness, observation.sessionId);
+    let ledger = this.find(harness, observation.sessionId);
+    if (!ledger || !this.running.has(ledger.manifest.captureId)) {
+      // Codex ends every session it opened when it quits; one not being watched has nothing to close.
+      if (observation.type === 'session_ended') return undefined;
+      ledger = ledger ? this.resume(ledger, event) : this.open({ harness, sessionId: observation.sessionId,
+        harnessVersion: event.harnessVersion, workspaceRoot: event.cwd, source: observation.source ?? null });
+    }
+    const id = ledger.manifest.captureId;
+    const record = this.observe(id, observation, event);
+    if (observation.type === 'session_ended' && this.running.has(id)) {
+      const reason = (observation.data as any)?.reason;
+      this.close(id, typeof reason === 'string' && reason ? `session-ended: ${reason}` : 'session-ended');
+    }
+    return record;
+  }
+
+  /** One native session is one record, named by the harness's own session ID. A session
+   * found only in its file is read from it whole and never watched.
+   */
+  private open(input: { harness: string; sessionId: string; harnessVersion?: string; workspaceRoot: string; source: string | null }, found = false): Ledger {
     // A harness can report a relative session path (Pi does with a relative --session-dir).
     // Resolve it against the harness's workspace, never the daemon's working directory.
     input = { ...input, workspaceRoot: path.resolve(input.workspaceRoot),
       source: input.source ? path.resolve(input.workspaceRoot, input.source) : null };
-    const existing = [...this.ledgers.values()].find(ledger =>
-      ledger.manifest.harness === input.harness && ledger.manifest.sessionId === input.sessionId);
-    if (existing) return this.resume(existing, input);
-    // The harness's own session ID is the capture's ID: there is no second ID to learn.
     if (!/^[A-Za-z0-9_-]+$/.test(input.sessionId)) throw new Error(`Unsupported session ID: ${input.sessionId}`);
     if (this.ledgers.has(input.sessionId)) throw new Error(`Session ${input.sessionId} is already recorded for another harness.`);
     const id = input.sessionId;
@@ -88,11 +112,19 @@ export class Captures {
       const sourceRelative = path.relative(fs.realpathSync(input.workspaceRoot), input.source).replaceAll('\\', '/');
       if (sourceRelative && !sourceRelative.startsWith('../') && !path.isAbsolute(sourceRelative)) excludedPaths.push(sourceRelative);
     }
+    const now = new Date().toISOString();
     const manifest: Manifest = { schemaVersion: 1, captureId: id, ...input,
-      workspaceRoot: fs.realpathSync(input.workspaceRoot), startedAt: new Date().toISOString(), status: 'recording',
+      workspaceRoot: fs.realpathSync(input.workspaceRoot), startedAt: now, status: found ? 'closed' : 'recording',
+      ...(found ? { endedAt: now, endReason: 'found-in-session-file' } : {}),
       scope: { ...scope, excludedPaths } };
     const ledger = new Ledger(this.captureDir(manifest), manifest, this.database, true);
     this.ledgers.set(id, ledger);
+    if (found) {
+      ledger.append({ type: 'capture_started', summary: 'Found in the harness\'s session file; Wisdom did not see this session live.' });
+      ledger.gap('not-recorded-live', 'Read from the harness\'s own session file: no hook events and no observed file changes.');
+      this.drain(ledger, true);
+      return ledger;
+    }
     try {
       this.watch(ledger);
       ledger.append({ type: 'capture_started', summary: 'Live capture started; file baseline is in memory.' });
@@ -100,83 +132,43 @@ export class Captures {
       if (input.harness === 'codex') ledger.gap('codex-hook-coverage',
         'Hosted/specialized tools may bypass hooks; transcript parsing is best-effort. Subagent tool identity is only available when supplied by Codex.');
       ledger.syncSource();
-      return manifest;
+      return ledger;
     } catch (error) {
       this.degrade(id, error); throw error;
     }
   }
 
-  private resume(ledger: Ledger, input: { harnessVersion?: string; workspaceRoot: string; source: string | null }): Manifest {
+  /** Continue a record that was not being watched: after /resume, a pause, a restart or a
+   * failure. Lines the harness wrote meanwhile are read from its file, prompts included,
+   * unless the events that cover them are arriving from the spool.
+   */
+  private resume(ledger: Ledger, event: HookEvent): Ledger {
     const { manifest } = ledger;
-    if (this.running.has(manifest.captureId)) throw new Error(`Session ${manifest.sessionId} is already being recorded by another Wisdom launch.`);
-    if (fs.realpathSync(input.workspaceRoot) !== manifest.workspaceRoot) {
-      throw new Error(`Session ${manifest.sessionId} was recorded in ${manifest.workspaceRoot}; resume it with that --cwd.`);
-    }
     const ended = manifest.endedAt;
-    manifest.status = 'recording'; manifest.harnessVersion = input.harnessVersion ?? manifest.harnessVersion;
+    manifest.status = 'recording'; manifest.harnessVersion = event.harnessVersion ?? manifest.harnessVersion;
     delete manifest.endedAt; delete manifest.endReason;
     ledger.saveManifest();
     try {
+      if (event.observation.source) this.followSource(ledger, event.observation.source);
+      if (!event.late) this.drain(ledger, true, promptLine(event.observation));
       this.watch(ledger);
       ledger.append({ type: 'capture_started', summary: 'Capture resumed; file baseline is in memory.' });
       ledger.gap('not-recording-between-visits', `File changes from ${ended ?? 'the last visit'} until this resume were not observed.`);
-      if (input.source) this.attachSource(ledger, { source: input.source });
-      ledger.syncSource();
-      return manifest;
+      return ledger;
     } catch (error) {
       this.degrade(manifest.captureId, error); throw error;
     }
   }
 
+  /** Copy the whole backlog, each read bounded. */
+  private drain(ledger: Ledger, prompts = false, stopBefore?: (entry: NativeEntry) => boolean): void {
+    let previous = -1;
+    while (previous !== ledger.lastSeq) { previous = ledger.lastSeq; ledger.syncSource(stopBefore, prompts); }
+  }
+
   private watch(ledger: Ledger): void {
     this.running.set(ledger.manifest.captureId, { ledger, workspace: new Workspace(ledger), active: new Map(), turns: new Map(),
       transcriptFinished: new Set(), lastSeen: Date.now(), lastReconcile: Date.now() });
-  }
-
-  /** A launch knows its harness and workspace, not yet its session: the harness names
-   * it in its first hook. A launch that never names one records nothing.
-   */
-  launch(input: { harness: string; harnessVersion?: string; workspaceRoot: string }): string {
-    const id = randomUUID();
-    this.launches.set(id, { ...input, workspaceRoot: fs.realpathSync(input.workspaceRoot), lastSeen: Date.now() });
-    return id;
-  }
-
-  private launchOf(id: string): Launch {
-    const launch = this.launches.get(id);
-    if (!launch) throw new Error('Unknown Wisdom launch. Start the harness again with wisdom track.');
-    launch.lastSeen = Date.now();
-    return launch;
-  }
-
-  /** Route a hook to the capture of the session it names. Switching session (/clear,
-   * /new, /resume) closes the previous capture; a later visit to it continues it.
-   */
-  observeLaunch(id: string, observation: Observation): LedgerRecord | undefined {
-    const launch = this.launchOf(id);
-    const sessionId = observation.sessionId;
-    if (!sessionId) throw new Error('The hook did not name its session.');
-    const current = launch.current ? this.ledgers.get(launch.current) : undefined;
-    if (current?.manifest.sessionId === sessionId) return this.observe(current.manifest.captureId, observation);
-    // Codex ends every session it opened when it quits; only the current one is recording.
-    if (observation.type === 'session_ended') return undefined;
-    if (current && this.running.has(current.manifest.captureId)) this.close(current.manifest.captureId, 'session-switched');
-    launch.current = this.open({ harness: launch.harness, sessionId, harnessVersion: launch.harnessVersion,
-      workspaceRoot: launch.workspaceRoot, source: observation.source ?? null }).captureId;
-    return this.observe(launch.current, observation);
-  }
-
-  heartbeatLaunch(id: string): void {
-    const launch = this.launchOf(id);
-    if (launch.current && this.running.has(launch.current)) this.heartbeat(launch.current);
-  }
-
-  closeLaunch(id: string, reason: string): Manifest | undefined {
-    const launch = this.launchOf(id);
-    this.launches.delete(id);
-    if (!launch.current) return undefined;
-    this.close(launch.current, reason);
-    return this.get(launch.current).manifest;
   }
 
   get(id: string): Ledger {
@@ -185,48 +177,51 @@ export class Captures {
     return ledger;
   }
 
-  heartbeat(id: string): void {
-    const capture = this.running.get(id);
-    if (!capture) throw new Error('Capture is not recording. Start a new capture with wisdom track, or /reload in Pi.');
-    capture.lastSeen = Date.now();
+  /** A harness may name a new file for the same session (Claude Code moves it into a
+   * worktree's project folder). The copy follows; the file check still applies.
+   */
+  private followSource(ledger: Ledger, reported: string): void {
+    const source = path.resolve(ledger.manifest.workspaceRoot, reported);
+    if (!ledger.manifest.source) this.attachSource(ledger, { source });
+    else if (source !== ledger.manifest.source) ledger.moveSource(source);
   }
 
-  observe(id: string, observation: Observation): LedgerRecord | undefined {
-    this.heartbeat(id);
-    const capture = this.running.get(id)!;
+  observe(id: string, observation: Observation, context: { cwd?: string; late?: { spooledAt: string } } = {}): LedgerRecord | undefined {
+    const capture = this.running.get(id);
+    if (!capture) throw new Error(`Session ${id} is not being recorded.`);
+    capture.lastSeen = Date.now();
     const { ledger, workspace, active } = capture;
     if (ledger.hasObservation(observation.observationId)) return undefined;
     const data = observation.data as any;
     const harness = adapter(ledger.manifest.harness);
+    // A spooled event arrives after its moment: the files no longer show what it saw.
+    const live = !context.late;
     try {
-      if (observation.sessionId) {
-        if (observation.source && ledger.manifest.source
-          && path.resolve(ledger.manifest.workspaceRoot, observation.source) !== ledger.manifest.source) {
-          throw new Error('Native transcript changed; start a new tracked capture before continuing.');
-        }
-        this.attachSource(ledger, { source: observation.source });
+      if (observation.source) this.followSource(ledger, observation.source);
+      if (context.cwd && outside(ledger.manifest.workspaceRoot, context.cwd)) {
+        ledger.gap('outside-watched-folder', `The harness worked in ${context.cwd}; only ${ledger.manifest.workspaceRoot} is watched for file changes.`);
       }
-      if (observation.type === 'session_started') this.attachSource(ledger, data);
+      if (context.late) ledger.gap('delivered-late', 'Events kept while the daemon was down were recorded when it came back; file changes in that time were not observed.');
       // Transcript lines written before this event belong before it: mirror them first,
       // so a reply is linked to the request it answered, not to the next prompt. A
       // harness may write the new prompt itself first; that copy belongs to the new input.
-      const prompt = observation.type === 'input' && typeof data?.text === 'string' ? data.text.trim() : '';
-      ledger.syncSource(prompt ? entry => entry.messages.some(message => message.role === 'user'
-        && surfaceText(message).trim().includes(prompt)) : undefined);
+      ledger.syncSource(promptLine(observation));
       // Claude Code's own helper agents (prompt suggestions, recaps) stop without a
       // type or transcript. They are recorded, but they are not task subagents.
       const internalAgent = observation.type === 'subagent_stopped' && !data?.agentType && ledger.manifest.harness === 'claude-code';
       if (observation.type === 'subagent_stopped' && !internalAgent) this.copySubagentTranscript(ledger, observation.agentId, data?.transcriptPath);
       if (observation.type === 'tool_started') {
         if (!observation.toolCallId || !observation.toolName) throw new Error('Tool start requires toolCallId and toolName');
-        workspace.flush(active.size ? { toolCallId: [...active.keys()][0], activeToolCallIds: [...active.keys()] } : {});
-        // Explicit file targets are inspected synchronously before the hook returns.
-        const target = harness.toolTarget(observation.toolName, data?.input);
-        if (target) workspace.observe(target, active.size ? { toolCallId: [...active.keys()][0], activeToolCallIds: [...active.keys()] } : {});
+        if (live) {
+          workspace.flush(active.size ? { toolCallId: [...active.keys()][0], activeToolCallIds: [...active.keys()] } : {});
+          // Explicit file targets are inspected synchronously before the hook returns.
+          const target = harness.toolTarget(observation.toolName, data?.input);
+          if (target) workspace.observe(target, active.size ? { toolCallId: [...active.keys()][0], activeToolCallIds: [...active.keys()] } : {});
+        }
       }
       const { data: payload, sessionId: _sessionId, source: _source, harnessEvent, ...metadata } = observation;
       const turnKey = `${observation.agentId ?? ''}:${observation.turnId}`;
-      const record = ledger.append({ ...metadata,
+      const record = ledger.append({ ...metadata, spooledAt: context.late?.spooledAt,
         role: observation.type === 'message' && typeof data?.role === 'string' ? data.role : undefined,
         // A result belongs to its original start even if another input arrived
         // while it ran. Do not move a long-running tool to the newest request.
@@ -255,12 +250,13 @@ export class Captures {
         if (!active.has(observation.toolCallId!) && !capture.transcriptFinished.has(observation.toolCallId!)) {
           ledger.gap('missing-tool-start', observation.toolCallId ?? 'unknown');
         }
-        this.settleTool(capture, observation.toolCallId!);
+        if (live) this.settleTool(capture, observation.toolCallId!);
+        else active.delete(observation.toolCallId!);
       }
       if (observation.type === 'agent_settled') {
         this.finishFromTranscript(capture);
         if (active.size) ledger.gap('unfinished-tools-at-settle', [...active.keys()].join(','));
-        workspace.flush();
+        if (live) workspace.flush();
       }
       ledger.syncSource();
       return record;
@@ -302,10 +298,10 @@ export class Captures {
   }
 
   poll(): void {
-    for (const [id, launch] of this.launches) if (Date.now() - launch.lastSeen > 30000) this.launches.delete(id);
+    this.drainSpool();
     for (const [id, capture] of this.running) {
       try {
-        if (Date.now() - capture.lastSeen > 30000) { this.close(id, 'extension-heartbeat-lost', true); continue; }
+        if (!capture.active.size && Date.now() - capture.lastSeen > IDLE_MS) { this.close(id, 'idle'); continue; }
         capture.ledger.syncSource();
         if (!capture.active.size) {
           capture.workspace.flush();
@@ -314,6 +310,69 @@ export class Captures {
           }
         }
       } catch (error) { this.degrade(id, error); }
+    }
+    if (Date.now() - this.lastScan > SCAN_MS) { this.lastScan = Date.now(); this.scan(); }
+  }
+
+  /** Events a hook kept while the daemon was down, in the order they were kept. One
+   * session's events are recorded before any newer event of that session.
+   */
+  drainSpool(harness?: string, sessionId?: string): void {
+    const root = spoolDir(this.dataDir);
+    const folders = harness && sessionId ? [path.join(root, harness, sessionId)]
+      : listDirs(root).flatMap(h => listDirs(path.join(root, h)).map(s => path.join(root, h, s)));
+    for (const folder of folders) {
+      let names: string[];
+      try { names = fs.readdirSync(folder).filter(name => name.endsWith('.json')).sort(); } catch { continue; }
+      for (const name of names) {
+        const file = path.join(folder, name);
+        try {
+          const event = hookSchema.parse(JSON.parse(fs.readFileSync(file, 'utf8')));
+          if (!event.late) throw new Error('A spooled event must say when it was kept.');
+          this.route(event);
+          fs.rmSync(file);
+        } catch (error) {
+          // Kept beside the spool for a person to read; never retried in a loop.
+          console.error(`Spooled event ${file} could not be recorded: ${String(error)}`);
+          try { fs.renameSync(file, file + '.failed'); } catch { /* already moved */ }
+        }
+      }
+      for (const empty of [folder, path.dirname(folder)]) try { fs.rmdirSync(empty); } catch { /* not empty, or gone */ }
+    }
+  }
+
+  /** The safety net: every session file in Wisdom's homes gets a record, whether or not
+   * its hooks ran. A quiet file with no record is read whole; lines a session gained while
+   * nothing was recording are read when it goes quiet again.
+   */
+  scan(): void {
+    const bySource = new Map([...this.ledgers.values()].filter(l => l.manifest.source).map(l => [l.manifest.source!, l]));
+    for (const harness of harnessNames) {
+      const home = path.join(this.dataDir, 'harnesses', harness, 'home');
+      if (!fs.existsSync(home)) continue;
+      for (const file of adapter(harness).sessionFiles(home)) {
+        try {
+          if (this.notSessions.has(file)) continue;
+          const stat = fs.statSync(file);
+          if (Date.now() - stat.mtimeMs < QUIET_MS) continue;
+          const known = bySource.get(file);
+          if (known) {
+            if (this.running.has(known.manifest.captureId) || stat.size <= known.sourcePosition) continue;
+            known.gap('not-recorded-live', 'Lines the session file gained while nothing was recording were read from it; no hooks reported them.');
+            this.drain(known, true);
+            continue;
+          }
+          const { sessionId, cwd } = header(harness, file);
+          if (!sessionId) { this.notSessions.add(file); continue; }
+          // A record that copies another file of this session (a moved file) is left as it is.
+          if (this.find(harness, sessionId)) { this.notSessions.add(file); continue; }
+          const workspaceRoot = cwd && fs.existsSync(cwd) ? cwd : path.dirname(this.dataDir);
+          this.open({ harness, sessionId, workspaceRoot, source: file }, true);
+        } catch (error) {
+          this.notSessions.add(file);
+          console.error(`Session file ${file} could not be read: ${String(error)}`);
+        }
+      }
     }
   }
 
@@ -325,17 +384,15 @@ export class Captures {
       if (ledger.manifest.harness === 'codex' && (!ledger.manifest.source || !fs.existsSync(ledger.manifest.source))) {
         ledger.gap('native-session-unavailable', 'Codex transcript unavailable; hook evidence remains available.');
       }
-      // Drain the source backlog before closing. Each read is bounded.
-      let previous = -1;
-      while (previous !== ledger.lastSeq) { previous = ledger.lastSeq; ledger.syncSource(); }
+      this.drain(ledger);
       this.finishFromTranscript(capture);
       workspace.reconcile(active.size ? { toolCallId: [...active.keys()][0], activeToolCallIds: [...active.keys()] } : {});
       ledger.append({ type: 'capture_closed', summary: reason,
         dataRef: ledger.payload({ pendingToolCallIds: [...active.keys()] }) });
       if (ledger.manifest.source && fs.existsSync(ledger.manifest.source)) {
         const originalBytes = fs.statSync(ledger.manifest.source).size;
-        const copiedBytes = fs.statSync(ledger.mirror).size;
-        if (originalBytes !== copiedBytes) ledger.gap('source-copy-incomplete', `Source has ${originalBytes} bytes; mirror has ${copiedBytes}.`);
+        const copiedBytes = ledger.sourcePosition;
+        if (originalBytes !== copiedBytes) ledger.gap('source-copy-incomplete', `Source has ${originalBytes} bytes; ${copiedBytes} were read.`);
       }
       ledger.manifest.status = interrupted || active.size > 0 ? 'interrupted' : 'closed';
       ledger.manifest.endedAt = new Date().toISOString(); ledger.manifest.endReason = reason;
@@ -374,10 +431,12 @@ export class Captures {
     }
   }
 
+  /** One failure stops watching this session; its next event continues it with a gap. */
   private degrade(id: string, error: unknown): void {
     const ledger = this.ledgers.get(id);
     if (ledger) {
       ledger.manifest.status = 'degraded'; ledger.manifest.endReason = String(error);
+      ledger.manifest.endedAt = new Date().toISOString();
       try { ledger.saveManifest(); ledger.gap('capture-error', String(error)); } catch { /* Disk failure may prevent recording itself. */ }
     }
     this.running.get(id)?.workspace.close(); this.running.delete(id);
@@ -389,4 +448,42 @@ export class Captures {
       try { this.close(id, 'daemon-stopped', true); } catch (error) { this.degrade(id, error); }
     }
   }
+}
+
+/** For an input event: the native line holding that prompt, which belongs to the input. */
+function promptLine(observation: Observation): ((entry: NativeEntry) => boolean) | undefined {
+  const data = observation.data as any;
+  const prompt = observation.type === 'input' && typeof data?.text === 'string' ? data.text.trim() : '';
+  return prompt ? entry => entry.messages.some(message => message.role === 'user' && surfaceText(message).trim().includes(prompt)) : undefined;
+}
+
+function outside(root: string, folder: string): boolean {
+  let real: string;
+  try { real = fs.realpathSync(folder); } catch { real = path.resolve(folder); }
+  const relative = path.relative(root, real);
+  return relative.startsWith('..') || path.isAbsolute(relative);
+}
+
+function listDirs(dir: string): string[] {
+  try { return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch { return []; }
+}
+
+/** The session and folder a native file names in its first lines. */
+function header(harness: string, file: string): { sessionId?: string; cwd?: string } {
+  const fd = fs.openSync(file, 'r');
+  let text: string;
+  try {
+    const bytes = Buffer.alloc(Math.min(fs.fstatSync(fd).size, 256 * 1024));
+    text = bytes.subarray(0, fs.readSync(fd, bytes, 0, bytes.length, 0)).toString('utf8');
+  } finally { fs.closeSync(fd); }
+  const reader = adapter(harness);
+  let sessionId: string | undefined, cwd: string | undefined;
+  for (const line of text.split('\n').slice(0, 50)) {
+    let entry: any;
+    try { entry = JSON.parse(line); } catch { continue; }
+    sessionId ??= reader.nativeSession(entry);
+    cwd ??= reader.nativeCwd(entry);
+    if (sessionId && cwd) break;
+  }
+  return { sessionId, cwd };
 }

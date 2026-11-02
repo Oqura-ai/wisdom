@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
+import { closeSession, observeSession, openSession } from './session.js';
 import { pi } from '../src/harnesses/pi/adapter.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 import { codex } from '../src/harnesses/codex/adapter.js';
@@ -43,9 +44,9 @@ test('stats count each response once, include subagents, exclude resumed history
         usage: { input_tokens: input, cache_read_input_tokens: 100, cache_creation_input_tokens: 10, output_tokens: 5 } } });
     // Resumed history (before the capture) and one response written twice (two content blocks).
     fs.writeFileSync(transcript, lines(assistant('old', '2000-01-01T00:00:00.000Z', 999)));
-    const { captureId } = await call(c, '/captures', { harness: 'claude-code', sessionId: 's', workspaceRoot: workspace, source: null });
-    const send = (body: Record<string, unknown>) => call(c, `/captures/${captureId}/observe`, { observationId: randomUUID(), ...body });
-    await send({ type: 'session_started', data: { sessionId: 's', source: transcript } });
+    const { captureId } = await openSession(c, { harness: 'claude-code', sessionId: 's', workspaceRoot: workspace, source: null });
+    const send = (body: Record<string, unknown>) => observeSession(c, captureId, { observationId: randomUUID(), ...body });
+    await send({ type: 'session_started', source: transcript, data: { sessionId: 's', source: transcript } });
     await send({ type: 'input', data: { text: 'go' } });
     const now = new Date().toISOString();
     fs.appendFileSync(transcript, lines(assistant('new', now, 3), assistant('new', now, 3), { type: 'cost-state', totalCostUSD: 0.01 }));
@@ -54,7 +55,7 @@ test('stats count each response once, include subagents, exclude resumed history
     // A Claude Code helper: no type, no transcript. Recorded, but no gap and not a subagent.
     await send({ type: 'subagent_stopped', agentId: 'helper', data: { agentType: '', transcriptPath: path.join(root, 'none.jsonl'), lastAssistantMessage: 'commit this' } });
     await send({ type: 'agent_settled', data: { lastAssistantMessage: 'done' } });
-    await call(c, `/captures/${captureId}/close`, {});
+    await closeSession(c, captureId);
 
     const stats = await call(c, '/view', { view: 'project', workspaceRoot: workspace });
     const tokens = stats.sessions[0].tokens;
@@ -85,8 +86,8 @@ test('usage is indexed live, linked to its requests, and not indexed again after
   const data = path.join(root, 'data');
   let daemon = await startDaemon(data, 0);
   try {
-    const { captureId } = await call(daemon.connection, '/captures', { harness: 'pi', sessionId: 's', workspaceRoot: workspace, source: transcript });
-    const send = (body: Record<string, unknown>) => call(daemon.connection, `/captures/${captureId}/observe`, { observationId: randomUUID(), ...body });
+    const { captureId } = await openSession(daemon.connection, { harness: 'pi', sessionId: 's', workspaceRoot: workspace, source: transcript });
+    const send = (body: Record<string, unknown>) => observeSession(daemon.connection, captureId, { observationId: randomUUID(), ...body });
     const reply = (id: string, input: number) => ({ type: 'message', id, parentId: null, timestamp: new Date().toISOString(),
       message: { role: 'assistant', model: 'm', content: [{ type: 'text', text: id }], usage: { input, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } } } });
     await send({ type: 'input', data: { text: 'first' } });
@@ -94,7 +95,7 @@ test('usage is indexed live, linked to its requests, and not indexed again after
     await send({ type: 'input', data: { text: 'second' } });
     fs.appendFileSync(transcript, lines(reply('b', 20)));
     await send({ type: 'agent_settled' });
-    await call(daemon.connection, `/captures/${captureId}/close`, {});
+    await closeSession(daemon.connection, captureId);
     const records = daemon.captures.get(captureId).listRecords();
     const inputs = records.filter(r => r.type === 'input');
     assert.deepEqual(records.filter(r => r.type === 'usage').map(r => [r.usage!.input, r.requestId]), [[10, inputs[0].id], [20, inputs[1].id]]);

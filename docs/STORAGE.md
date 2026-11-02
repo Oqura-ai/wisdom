@@ -14,7 +14,9 @@ Harness adapters (Pi extension, Claude Code/Codex hooks) + native JSONL + worksp
                      |
      HTTP /ledger: CLI, MCP    HTTP /view: dashboard
 
-.wisdom/harnesses/<harness>/home/                             (the harness's own files: native sessions, the source of truth)
+.wisdom/wisdom.json                                           (marks the project; written by wisdom init)
+.wisdom/spool/<harness>/<session>/<event>.json                (events a hook kept while the daemon was down)
+.wisdom/harnesses/<harness>/home/                             (the harness's own files: settings with Wisdom's hooks, login, native sessions, the source of truth)
 .wisdom/harnesses/<harness>/<capture>/native-session.jsonl    (native evidence)
 .wisdom/harnesses/<harness>/<capture>/payloads/<sha256>       (hook bodies / patches)
 .wisdom/harnesses/claude-code/<capture>/subagents/agent-<id>.jsonl
@@ -34,6 +36,13 @@ is the database layout version; record `schemaVersion=1` and the daemon's
 
 Constraints enforce `(capture_id,seq)` and `(capture_id,observation_id)` uniqueness.
 Repeated observation IDs are acknowledged without recording another hook event.
+
+Wisdom copies a native file only if it is that harness's file for that session: its
+first line is a JSON object and none of its first 200 lines names another session
+(`source-incompatible` otherwise). If the harness rewrites its file shorter, the copy
+keeps every byte already read, a `source-rewritten` gap is recorded, and copying goes on
+from the file's new end; the manifest's `sourceShift` holds the difference between the
+read position and the copy's size, so it survives a restart.
 Indexes support workspace/session selection and capture-scoped type, tool,
 request, parent, source, and path traversal. `is_error` uses nullable 0/1.
 The JSON envelope holds `dataRef`, `patchRef`, native byte offsets/lengths,
@@ -51,9 +60,7 @@ payloads appear as `unreadable` when read. Do not infer complete evidence after 
 ## Storage and backup
 
 SQLite is authoritative. New captures store metadata only in the database, and
-write native mirrors and payload files under their capture directory. Historical
-Wisdom manifests and event/change JSONL are ignored and left untouched; there is
-no importer or metadata dual-write. The ledger reads records as they are; a
+write native mirrors and payload files under their capture directory. The ledger reads records as they are; a
 change to how evidence is shown never rewrites stored evidence.
 
 Stop the daemon before copying the **whole data directory** for a coherent backup.
@@ -63,7 +70,7 @@ database is not a rebuild strategy.
 
 Recording captures become interrupted after daemon restart because the in-memory
 workspace baseline cannot be safely reconstructed as if no time had passed.
-Continue recording with `wisdom resume <session>` (or `/reload` in Pi). Old captures remain readable.
+The session's next hook event continues it, with a gap for the time in between; events kept in the spool meanwhile are recorded first. Old captures remain readable.
 
 ## Reading the implementation
 
@@ -82,7 +89,7 @@ Continue recording with `wisdom resume <session>` (or `/reload` in Pi). Old capt
 | [daemon.ts](../src/daemon.ts) | Local authenticated HTTP and lifecycle. |
 | [harnesses/types.ts](../src/harnesses/types.ts) | The adapter contract: tool targets, direct file tools, how each tool is shown (`toolView`), and native-line reading. |
 | [harnesses/pi/](../src/harnesses/pi/) | Pi adapter, extension and launcher. |
-| [harnesses/claude-code/](../src/harnesses/claude-code/) | Claude Code adapter, hook mapping and launcher; the plugin lives in [integrations/claude-code/](../integrations/claude-code/). |
+| [harnesses/claude-code/](../src/harnesses/claude-code/) | Claude Code adapter, hook mapping, and the installer that writes its hooks (run by [integrations/claude-code/hook.mjs](../integrations/claude-code/hook.mjs)) into its home. |
 | [harnesses/codex/](../src/harnesses/codex/) | Codex adapter, hook mapping, trust preflight and launcher. See [Codex recording](CODEX.md). |
 | [client.ts](../src/client.ts) | Daemon descriptor lookup, authenticated calls and background startup. |
 | [mcp.ts](../src/mcp.ts) / [cli.ts](../src/cli.ts) | Two clients of the same ledger; both return its text unchanged. |

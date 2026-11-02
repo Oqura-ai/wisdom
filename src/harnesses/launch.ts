@@ -1,23 +1,56 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { harnessHome } from '../paths.js';
+import { writeJson } from '../ledger.js';
 
-/** The folder a harness keeps its own files in when Wisdom launches it. Its sessions
- * never reach the user's global harness folders, so they are not listed or resumed outside Wisdom.
- */
-export function harnessHome(dataDir: string, harness: string): string {
-  const home = path.join(dataDir, 'harnesses', harness, 'home');
-  fs.mkdirSync(home, { recursive: true });
-  return home;
-}
-
-/** What `wisdom track <harness>` runs. A launcher whose hooks report to the daemon
- * sets `launch`; otherwise (Pi) the harness opens its own captures.
+/** What `wisdom track <harness>` runs: the harness with its home set to Wisdom's folder.
+ * Recording does not depend on it; the hooks live in that home.
  */
 export interface Launch {
   command: string;
   args: string[];
   env?: Record<string, string>;
-  /** Interactive hook review only; do not start the recorder or MCP. */
+  /** Interactive hook review only; do not start the MCP server. */
   setupOnly?: boolean;
-  launch?: { harness: string; harnessVersion?: string };
 }
+
+/** `node "<integrations/<harness>/hook.mjs>" "<data folder>"`: the hook needs nothing else. */
+export function hookCommand(harness: string, dataDir: string): string {
+  const file = fileURLToPath(new URL(`../../../integrations/${harness}/hook.mjs`, import.meta.url)).replaceAll('\\', '/');
+  const data = path.resolve(dataDir).replaceAll('\\', '/');
+  if (/["\r\n]/.test(file + data)) throw new Error('Wisdom and its data folder cannot have quotes or newlines in their paths');
+  return `node "${file}" "${data}"`;
+}
+
+/** A harness home, created on first use. */
+export function home(dataDir: string, harness: string): string {
+  const folder = harnessHome(dataDir, harness);
+  fs.mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
+/** Read a harness's JSON settings, or none. */
+export function readSettings(file: string): Record<string, any> {
+  if (!fs.existsSync(file)) return {};
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${file} is not a JSON object`);
+  return value;
+}
+
+/** Put Wisdom's hook under each event of a Claude-style `hooks` object, replacing an
+ * earlier Wisdom hook (a moved install) and keeping every other hook as it was.
+ */
+export function withHooks(hooks: Record<string, any[]> | undefined, events: readonly string[], command: string,
+  entry: (event: string) => Record<string, unknown>, hook: (event: string) => Record<string, unknown> = () => ({})): Record<string, any[]> {
+  const result = { ...hooks };
+  const ours = (item: any) => Array.isArray(item?.hooks) && item.hooks.some((h: any) => typeof h?.command === 'string'
+    && /integrations\/(?:claude-code|codex)\/hook\.mjs/.test(h.command.replaceAll('\\', '/')));
+  for (const event of events) {
+    result[event] = [...(result[event] ?? []).filter(item => !ours(item)),
+      { ...entry(event), hooks: [{ type: 'command', command, ...hook(event) }] }];
+  }
+  return result;
+}
+
+export function saveSettings(file: string, value: unknown): void { writeJson(file, value); }
