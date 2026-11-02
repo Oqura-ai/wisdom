@@ -106,6 +106,8 @@ export interface LedgerRecord {
   internalAgent?: boolean;
   /** An input read from the harness's session file because no hook reported it. */
   inputBasis?: 'session-file';
+  /** An input the harness wrote itself to wake the agent, not a person's words. */
+  notice?: boolean;
   /** Kept in the spool while the daemon was down; recorded when it came back. */
   spooledAt?: string;
   sourceEntryId?: string;
@@ -117,6 +119,9 @@ export interface LedgerRecord {
   path?: string;
   operation?: 'create' | 'modify' | 'delete';
   attribution?: 'observed-during-tool' | 'external-or-unknown';
+  /** A change in a linked git worktree: `path` is relative to it. */
+  worktree?: string;
+  branch?: string;
   activeToolCallIds?: string[];
   beforeHash?: string | null;
   afterHash?: string | null;

@@ -53,7 +53,7 @@ npm.cmd run wisdom -- open a1 --capture 0f3c8a1e     # a subagent, with the same
 npm.cmd run wisdom -- open outside --capture latest  # changes and calls outside any turn
 ```
 
-A recorded session is named by the harness's own session ID, a unique prefix of 8 or more characters, or `latest`. The reply is plain text, the same for the CLI, HTTP (`POST /ledger`) and MCP:
+A recorded session is named by the harness's own session ID, a unique prefix of 8 or more characters, or `latest` (the newest session with a turn). The reply is plain text, the same for the CLI, HTTP (`POST /ledger`) and MCP:
 
 ```text
 session 0f3c8a1e-… · claude-code · closed (exit-0) · version 55
@@ -156,9 +156,21 @@ SQLite is authoritative. Native harness JSONL remains source evidence. For backu
 the whole data directory, including payloads and native mirrors. See
 [storage details](docs/STORAGE.md).
 
-A previously recording capture becomes interrupted after daemon restart; it does not silently resume with a missing file baseline. The session's next event continues it, with a gap for the time in between.
+A previously recording capture becomes interrupted after daemon restart; it does not silently resume with a missing file baseline. The session's next event continues it, with a gap for the time in between. A turn that had not settled stays open, so its calls and reply stay in it.
+
+## Keeping it private, and moving it
+
+`.wisdom/` holds each harness's login (`.wisdom/harnesses/claude-code/home/.credentials.json`) and unredacted sessions. `wisdom init` adds it to `.gitignore`, but that only keeps it out of git: leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.
+
+To move a project or the Wisdom checkout, stop the daemon first (`wisdom daemon stop`). Then:
+
+- **The project moved:** recording goes on, because each hook reports to the home it runs in. When the daemon next starts, recorded sessions follow the project, with a `project-moved` gap, since older records still name the old folder.
+- **The Wisdom checkout moved:** hooks cannot run, because their file is gone. Run `wisdom init` in the project; `track` and `resume` also repair them, and other commands warn until then. Sessions from that time are read from their files, marked `not-recorded-live`.
+- **Codex in either case:** a changed hook command must be reviewed in `/hooks` again.
 
 ## Capture scope and honest limits
+
+**Linked git worktrees.** A session started in a worktree belongs to its main project. Each session watches its project and any worktree it works in, and records those changes with the worktree's name and branch and paths relative to it. A worktree gets its baseline when the session first works there, so checking it out is not logged as changes, and a `worktree-entered` gap marks what came before. Files changing in a worktree the session never worked in get one `other-worktree` gap and no diffs: a tool that writes there from another folder, such as a shell `cd`, is recorded that way.
 
 - Native session mirroring and idle watcher processing run every 500 ms. Before a tool runs, the harness waits for its start observation to be delivered (or kept in the spool). File changes are observed at tool boundaries, not after every internal filesystem write.
 - Direct file tools (Pi `read`/`edit`/`write`; Claude Code `Read`/`Edit`/`Write`/`NotebookEdit` and read-only tools) inspect their named target and watcher hints. Shell/custom calls reconcile the tracked workspace afterward. An idle reconciliation also runs every 30 seconds as a watcher fallback.

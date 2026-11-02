@@ -112,13 +112,13 @@ test('with its daemon down, a Claude Code hook keeps the event, starts the daemo
   const { spawnSync } = await import('node:child_process');
   const hook = path.resolve('integrations', 'claude-code', 'hook.mjs');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-nodaemon-'));
-  const data = path.join(root, 'data');
+  const data = path.join(root, 'data'); fs.mkdirSync(data);
   const run = (event: unknown) => spawnSync(process.execPath, [hook, data], { input: JSON.stringify(event), encoding: 'utf8' });
   const kept = run({ ...common, cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'while down' });
   assert.equal(kept.status, 1, 'exit code 1 warns; 2 would block'); assert.match(kept.stderr, /Wisdom kept this UserPromptSubmit/);
   const connection = connectionAt(data);
   try {
-    // The daemon the hook started reads the spool on its first poll.
+    // The daemon the hook started has read the spool by the time the hook returns.
     let text = '';
     for (let i = 0; i < 100 && !/while down/.test(text); i++) {
       await new Promise(resolve => setTimeout(resolve, 100));

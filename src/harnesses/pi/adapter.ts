@@ -22,6 +22,11 @@ export const pi: HarnessAdapter = {
   toolView: toolName => ['edit', 'write'].includes(toolName) ? 'patch' : toolName === 'read' ? 'file' : 'full',
   nativeSession: entry => entry?.type === 'session' && typeof entry.id === 'string' ? entry.id : undefined,
   nativeCwd: entry => entry?.type === 'session' && typeof entry.cwd === 'string' ? entry.cwd : undefined,
+  // A fork's header is dated when it was made, before its copied lines' dates say otherwise.
+  nativeForkedFrom: () => undefined,
+  isNotice: () => false,
+  // The header's `version` is its file format. The extension reports Pi's own version.
+  nativeVersion: () => undefined,
   nativePrompt: entry => entry?.type === 'message' && entry.message?.role === 'user'
     ? contentText(entry.message.content)?.trim() || undefined : undefined,
   // sessions/<folder>/<time>_<session>.jsonl

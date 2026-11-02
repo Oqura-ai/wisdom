@@ -138,7 +138,7 @@ function NodeRow({ node, depth, open, selected, tokenTotal, onToggle, onSelect }
   const icon = { request: '▸', reply: '❝', tool: '⚙', change: r.operation === 'create' ? '+' : r.operation === 'delete' ? '−' : '±', subagent: '⑂', gap: '!', note: '·' }[node.kind];
   const label = node.kind === 'request' ? r.summary || '(empty request)'
     : node.kind === 'tool' ? r.toolName
-    : node.kind === 'change' ? r.path
+    : node.kind === 'change' ? `${r.path}${r.worktree ? ` · worktree ${r.worktree}` : ''}`
     : node.kind === 'subagent' ? `subagent ${node.agentId?.slice(-8)}`
     : r.type === 'subagent_stopped' ? (r.summary && r.summary !== 'subagent_stopped' ? `returned: ${r.summary}` : 'subagent finished')
     : r.summary;

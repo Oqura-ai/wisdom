@@ -131,6 +131,11 @@ export class Ledger {
     } finally { fs.closeSync(fd); }
   }
 
+  /** Lines of a found session's file that an older session wrote: they keep their bytes
+   * here, but its prompts are that session's turns.
+   */
+  copiedEntries = new Set<string>();
+
   /** The harness moved this session's file (Claude Code does on entering a worktree).
    * Copying goes on from the same position in the new file, after the usual check.
    */
@@ -216,11 +221,13 @@ export class Ledger {
       const entry = harness.nativeEntry(raw);
       if (entry.turnId) this.sourceTurnId = entry.turnId;
       if (entry.model) this.sourceModel = entry.model;
+      const version = harness.nativeVersion(raw);
+      if (version && version !== this.manifest.harnessVersion) { this.manifest.harnessVersion = version; this.saveManifest(); }
       const source = { sourceEntryId: entry.id ?? `byte:${offset}:${hash(line)}`, sourceParentId: entry.parentId, sourceTimestamp: entry.timestamp,
         turnId: this.sourceTurnId, sourceOffset: offset, sourceLength: line.length };
       // The prompt opens a turn before its own line is recorded, so that line belongs to it.
-      const prompt = prompts ? harness.nativePrompt(raw) : undefined;
-      if (prompt) this.append({ type: 'input', inputBasis: 'session-file', summary: preview(prompt), dataRef: this.payload({ text: prompt }),
+      const prompt = prompts && !(entry.id && this.copiedEntries.has(entry.id)) ? harness.nativePrompt(raw) : undefined;
+      if (prompt) this.append({ type: 'input', inputBasis: 'session-file', notice: harness.isNotice(prompt) || undefined, summary: preview(prompt), dataRef: this.payload({ text: prompt }),
         turnId: this.sourceTurnId, sourceEntryId: source.sourceEntryId, sourceTimestamp: entry.timestamp });
       if (!entry.messages.length) this.append({ type: 'source_record', summary: preview(entry.kind), ...source });
       this.recordUsage(entry, { ...source, sourceModel: this.sourceModel });

@@ -9,7 +9,7 @@ import { Face, HarnessIcon, UserAvatar, harnessLabel, tokens as fmtTokens } from
 import { TokenBar } from './TokenBar';
 
 interface Body { text: string; truncated?: true; totalChars?: number; recordId?: string }
-interface Change { kind: 'change'; id: string; at: string; path?: string; operation?: string; attribution?: string; patch?: Body; patchUnavailable?: string }
+interface Change { kind: 'change'; id: string; at: string; path?: string; operation?: string; attribution?: string; worktree?: string; branch?: string; patch?: Body; patchUnavailable?: string }
 interface Subagent { agentId: string; agentType?: string; task?: Body; items: Item[]; report?: Body }
 type Item =
   | { kind: 'text'; id: string; at: string; text: Body; source: string }
@@ -188,6 +188,7 @@ function ChangeView({ change }: { change: Change }) {
   return (
     <details className="fold change">
       <summary><span className="glyph add-glyph">{sign}</span><span className="mono">{change.path}</span>
+        {change.worktree && <span className="tag" title={change.branch ? `Branch ${change.branch}` : undefined}>worktree {change.worktree}</span>}
         <span className="spacer" /><span className={`tag ${change.attribution === 'observed-during-tool' ? '' : 'warn'}`}>{change.attribution === 'observed-during-tool' ? 'during tool' : 'external/unknown'}</span></summary>
       {change.patch ? <Diff body={change.patch} /> : <p className="muted small">{change.patchUnavailable ?? 'No patch recorded.'}</p>}
     </details>

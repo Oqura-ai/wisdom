@@ -31,7 +31,7 @@ export function cleanOutput(body: any): any {
 
 /** Clipped body: long text keeps its size and the record to inspect for the rest. */
 export interface Body { text: string; truncated?: true; totalChars?: number; recordId?: string }
-export interface Change { kind: 'change'; id: string; at: string; path?: string; operation?: string; attribution?: string;
+export interface Change { kind: 'change'; id: string; at: string; path?: string; operation?: string; attribution?: string; worktree?: string; branch?: string;
   patch?: Body; patchUnavailable?: string }
 export interface Subagent { agentId: string; agentType?: string; task?: Body; items: TurnItem[]; report?: Body }
 export type TurnItem =
@@ -134,7 +134,7 @@ export function conversation(captures: Captures, request: TurnRequest) {
       bucket(record.agentId).push(item);
     } else if (record.type === 'file_change') {
       const change: Change = { kind: 'change', id: record.id, at: at(record), path: record.path, operation: record.operation,
-        attribution: record.attribution, patchUnavailable: record.patchUnavailable };
+        attribution: record.attribution, worktree: record.worktree, branch: record.branch, patchUnavailable: record.patchUnavailable };
       try { const patch = reader.read(record, 'patch'); if (patch) change.patch = clip(patch, record.id); }
       catch (error) { issues.push({ id: record.id, reason: String(error) }); }
       const owner = record.toolCallId ? tools.get(record.toolCallId) : undefined;

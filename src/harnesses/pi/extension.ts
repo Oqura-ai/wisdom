@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { deliver } from '../../client.js';
@@ -20,6 +21,20 @@ function dataFolder(): string | undefined {
   return path.resolve(harnessHome(data, 'pi')) === path.resolve(agentDir) ? data : undefined;
 }
 
+/** The version of the Pi that is running, from its own package. */
+function piVersion(): string | undefined {
+  try {
+    for (let dir = path.dirname(fs.realpathSync(process.argv[1]!)); ; dir = path.dirname(dir)) {
+      const file = path.join(dir, 'package.json');
+      if (fs.existsSync(file)) {
+        const { name, version } = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (/pi-coding-agent$/.test(name) && typeof version === 'string') return version;
+      }
+      if (path.dirname(dir) === dir) return undefined;
+    }
+  } catch { return undefined; }
+}
+
 /** Loaded from the settings of Pi's home in Wisdom's folder. Every event names its
  * session, so /new, /fork, /clone and /resume reach the right record. It never blocks Pi:
  * an event the daemon cannot take is kept in the spool.
@@ -30,6 +45,7 @@ export default function wisdomTracking(pi: PiAPI): void {
   let session: { sessionId: string; source: string | null; cwd: string } | undefined;
   let warning: string | undefined;
   let queue = Promise.resolve();
+  const harnessVersion = piVersion();
 
   // Serial delivery preserves this extension's observation order. The tool_call
   // handler awaits it, so the before-image exists before execution.
@@ -37,7 +53,7 @@ export default function wisdomTracking(pi: PiAPI): void {
     const current = session;
     const task = queue.then(async () => {
       if (!current) return;
-      const { spooled } = await deliver(dataDir, { harness: 'pi', cwd: current.cwd,
+      const { spooled } = await deliver(dataDir, { harness: 'pi', harnessVersion, cwd: current.cwd,
         observation: { observationId: randomUUID(), sessionId: current.sessionId, source: current.source, ...data } as any });
       if (spooled && !warning) {
         warning = `Wisdom is keeping events to record when its daemon is back (${spooled}).`;

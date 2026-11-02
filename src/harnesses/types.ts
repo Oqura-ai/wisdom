@@ -73,6 +73,12 @@ export interface HarnessAdapter {
   nativeSession(entry: any): string | undefined;
   /** The folder the harness ran in, when a native line says so. */
   nativeCwd(entry: any): string | undefined;
+  /** The harness's own version, when a native line states it. */
+  nativeVersion(entry: any): string | undefined;
+  /** The session this native line says it was copied from, when it says so. */
+  nativeForkedFrom(entry: any): string | undefined;
+  /** Whether prompt text is a notice the harness wrote itself rather than a person's words. */
+  isNotice(text: string): boolean;
   /** The text a person typed, when this native line is their prompt. Read only for
    * sessions found in their file, which had no prompt hook. */
   nativePrompt(entry: any): string | undefined;

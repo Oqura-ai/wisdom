@@ -48,7 +48,7 @@ export class LedgerDatabase {
 
   saveManifest(manifest: Manifest): void {
     this.sql.prepare(`INSERT INTO captures(id, session_id, workspace_root, manifest) VALUES(?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET manifest=excluded.manifest, session_id=excluded.session_id`).run(
+      ON CONFLICT(id) DO UPDATE SET manifest=excluded.manifest, session_id=excluded.session_id, workspace_root=excluded.workspace_root`).run(
       manifest.captureId, manifest.sessionId, workspaceKey(manifest.workspaceRoot), JSON.stringify(manifest));
   }
 

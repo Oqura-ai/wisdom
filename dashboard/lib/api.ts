@@ -9,7 +9,7 @@ export async function view<T = any>(request: unknown): Promise<T> {
 
 export interface Project { workspaceRoot: string; captures: number; harnesses: string[]; lastStartedAt: string; recording: number }
 /** Additive token buckets: total = input + cacheRead + cacheWrite + output; reasoning is part of output. */
-export interface Tokens { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null }
+export interface Tokens { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean }
 export interface HarnessTotals { harness: string; captures: number; recording: number; requests: number; replies: number; tools: number;
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens }
 export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string; resume: { powershell: string; posix: string };
@@ -17,13 +17,13 @@ export interface Session { captureId: string; harness: string; harnessVersion?: 
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens; evidenceMissing?: boolean }
 export interface ProjectStats { readVersion: number; workspaceRoot: string; harnesses: HarnessTotals[]; sessions: Session[];
   toolUsage: { harness: string; toolName: string; calls: number; failures: number }[];
-  files: { path: string; changes: number; captures: number; lastChangedAt: string }[];
+  files: { path: string; worktree?: string; changes: number; captures: number; lastChangedAt: string }[];
   models: (Tokens & { harness: string; model: string })[] }
 
 export interface EventRecord {
   id: string; seq: number; observedAt: string; type: string; summary?: string; parentId?: string; requestId?: string;
   toolCallId?: string; toolName?: string; isError?: boolean; agentId?: string; childAgentId?: string; resultBasis?: string;
-  path?: string; operation?: string; attribution?: string; status?: string; role?: string; sourceTimestamp?: string;
+  path?: string; worktree?: string; branch?: string; notice?: boolean; operation?: string; attribution?: string; status?: string; role?: string; sourceTimestamp?: string;
   internalAgent?: boolean; model?: string; usageKey?: string; usageScope?: string; beforeCapture?: boolean;
   usage?: { input: number; cacheRead: number; cacheWrite: number; output: number; reasoning?: number; costUsd?: number };
 }

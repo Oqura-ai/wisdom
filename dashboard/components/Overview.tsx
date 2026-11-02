@@ -105,8 +105,8 @@ export function Overview({ stats, harness, onOpen }: { stats: ProjectStats; harn
               <h2>Most changed files</h2>
               <ul className="bars">
                 {files.map(f => (
-                  <li key={f.path}>
-                    <span className="label mono" title={f.path}>{f.path}</span>
+                  <li key={`${f.worktree ?? ''}:${f.path}`}>
+                    <span className="label mono" title={f.worktree ? `${f.path} in worktree ${f.worktree}` : f.path}>{f.path}{f.worktree ? ` · ${f.worktree}` : ''}</span>
                     <span className="bar"><span className="fill neutral" style={{ width: `${(f.changes / maxFile) * 100}%` }} /></span>
                     <span className="num">{f.changes}<em className="muted"> · {f.captures} sess</em></span>
                   </li>
@@ -131,7 +131,7 @@ export function Overview({ stats, harness, onOpen }: { stats: ProjectStats; harn
                 <td>{duration(s.startedAt, s.endedAt ?? (s.status === 'recording' ? undefined : s.lastObservedAt))}</td>
                 <td>{s.requests}</td><td>{s.tools}</td><td className={s.failures ? 'bad' : ''}>{s.failures}</td>
                 <td>{s.changes}</td><td>{s.subagents || ''}</td>
-                <td>{s.tokens.total ? tokens(s.tokens.total) : ''}</td><td className="small">{s.tokens.costUsd === null ? '' : cost(s.tokens.costUsd)}</td>
+                <td>{s.tokens.total ? tokens(s.tokens.total) : ''}</td><td className="small" title={s.tokens.costBehind ? 'The harness last reported this before its latest model responses' : undefined}>{s.tokens.costUsd === null ? '' : `${cost(s.tokens.costUsd)}${s.tokens.costBehind ? ' so far' : ''}`}</td>
                 <td className="muted small">{s.evidenceMissing ? <span className="bad">evidence missing</span> : s.status === 'recording' ? 'recording' : s.endReason ?? s.status}</td>
               </tr>
             ))}

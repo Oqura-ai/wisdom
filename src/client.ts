@@ -14,12 +14,18 @@ export function connectionAt(dataDir: string): Connection {
 }
 
 export async function call(connection: Connection, route: string, input?: unknown, timeoutMs = 30000): Promise<any> {
-  const response = await fetch(connection.url + route, {
-    method: input === undefined ? 'GET' : 'POST',
-    headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
-    body: input === undefined ? undefined : JSON.stringify(input),
-    signal: AbortSignal.timeout(timeoutMs)
-  });
+  let response: Response;
+  try {
+    response = await fetch(connection.url + route, {
+      method: input === undefined ? 'GET' : 'POST',
+      headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
+      body: input === undefined ? undefined : JSON.stringify(input),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (error: any) {
+    if (error?.name === 'TimeoutError') throw error;
+    throw new Error(`Wisdom daemon is not answering at ${connection.url}. Run: wisdom daemon start`);
+  }
   const result = await response.json() as any;
   if (!response.ok) throw new Error(result.error ?? `Daemon returned HTTP ${response.status}`);
   return result;

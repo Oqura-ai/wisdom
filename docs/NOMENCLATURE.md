@@ -12,7 +12,7 @@ One tool (`ledger` over MCP, `POST /ledger` over HTTP, `glance`/`open` in the CL
 | --- | --- |
 | `glance: true` | Without `capture`: recorded sessions, newest first. With `capture`: the session's shape and one entry per turn. |
 | `open` | A position, returned whole (see below). |
-| `capture` | A session ID, a unique prefix of 8 or more characters, or `latest` (most recently started). Required with `open`. |
+| `capture` | A session ID, a unique prefix of 8 or more characters, or `latest` (the most recently started session with a turn; if none has one, the most recently started). Required with `open`. |
 | `from` | Line to continue from, as a limited response's last line states. |
 | `at` | Read version to pin. Every response states its version. |
 
@@ -37,7 +37,7 @@ other evidence.
 
 | Text | Meaning |
 | --- | --- |
-| `in` | The user's input, in full. A subagent's input is shown as `task`. `in (from session file)` when no hook reported it and it was read from the harness's own session file. |
+| `in` | The user's input, in full. A subagent's input is shown as `task`. `in (from session file)` when no hook reported it and it was read from the harness's own session file. `in (harness notice)` when the harness wrote it to wake the agent, such as a finished background command; the agent's work after it is a turn, but it is not a person's prompt. |
 | `out` | In a glance: the start (240 characters, whitespace joined) of the turn's last assistant reply. `(from hook)` when the harness's final-reply hook is the only copy. |
 | `reply` | An assistant reply, whole, as recorded. `reply (from hook)` when only the hook has it. |
 | `thinking  redacted · 1.1 s` | The harness recorded that thinking happened, not its text (Claude Code omits it; Codex encrypts it). |

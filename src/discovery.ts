@@ -28,15 +28,21 @@ export function ledger(captures: Captures, input: unknown): string {
   const version = evidenceVersion(captures, request.at);
   if (request.glance && !request.capture) return sessions(captures, version, request.from);
   if (!request.capture) throw new Error('open needs capture: an ID from glance, or "latest".');
-  const manifest = resolveCapture(captures, request.capture);
+  const manifest = resolveCapture(captures, request.capture, version);
   const context: Context = { captures, version, manifest, reader: new EvidenceReader(captures) };
   return request.glance ? glance(context, request.from) : open(context, request.open!, request.from);
 }
 
-function resolveCapture(captures: Captures, ref: string): Manifest {
+function resolveCapture(captures: Captures, ref: string, version: number): Manifest {
   const manifests = captures.database.manifests();
   if (!manifests.length) throw new Error('No sessions are recorded yet.');
-  if (ref === 'latest') return manifests.reduce((a, b) => b.startedAt > a.startedAt ? b : a);
+  if (ref === 'latest') {
+    // A session nobody prompted has nothing to read; it stays listed by a plain glance.
+    const prompted = new Set(captures.database.sql.prepare(`SELECT DISTINCT capture_id AS id FROM records
+      WHERE type='input' AND json_extract(body,'$.agentId') IS NULL AND revision<=?`).all(version).map(row => String(row.id)));
+    const candidates = manifests.filter(m => prompted.has(m.captureId));
+    return (candidates.length ? candidates : manifests).reduce((a, b) => b.startedAt > a.startedAt ? b : a);
+  }
   const exact = manifests.find(m => m.captureId === ref);
   if (exact) return exact;
   const matches = ref.length >= 8 ? manifests.filter(m => m.captureId.startsWith(ref)) : [];
@@ -142,7 +148,7 @@ function calls(records: LedgerRecord[]) {
 function changeFacts(records: LedgerRecord[]): string {
   const changes = records.filter(r => r.type === 'file_change');
   if (!changes.length) return 'no changes';
-  const paths = [...new Set(changes.map(c => c.path ?? '?'))];
+  const paths = [...new Set(changes.map(c => c.worktree ? `${c.path ?? '?'} in worktree ${c.worktree}` : c.path ?? '?'))];
   const outside = changes.filter(c => c.attribution === 'external-or-unknown').length;
   return `changed ${paths.join(', ')}${outside ? ` (${plural(outside, 'change')} outside any tool call)` : ''}`;
 }
@@ -154,23 +160,34 @@ function callFacts(records: LedgerRecord[], recording: boolean): string {
 }
 
 /** Tokens once per model response; native history from before the capture is excluded. */
-function tokens(records: LedgerRecord[]): { total: number; cost?: number } {
+function tokens(records: LedgerRecord[]): { total: number; cost?: number; callsAfterCost: number } {
   const seen = new Set<string>();
-  let total = 0, cost: number | undefined, sessionCost: number | undefined;
+  let total = 0, cost: number | undefined, sessionCost: number | undefined, callsAfterCost = 0;
   for (const r of records) {
     if (r.type !== 'usage' || !r.usage || r.beforeCapture) continue;
-    if (r.usageScope === 'session-total') { sessionCost = r.usage.costUsd; continue; }
+    if (r.usageScope === 'session-total') { sessionCost = r.usage.costUsd; callsAfterCost = 0; continue; }
     const key = `${r.agentId ?? ''}:${r.usageKey}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // A subagent's usage is indexed when it stops, so its place in the records is not its time.
+    if (!r.agentId) callsAfterCost++;
     total += r.usage.input + r.usage.cacheRead + r.usage.cacheWrite + r.usage.output;
     if (typeof r.usage.costUsd === 'number') cost = (cost ?? 0) + r.usage.costUsd;
   }
-  return { total, cost: sessionCost ?? cost };
+  // A harness's running total is only as new as its last report.
+  return { total, cost: sessionCost ?? cost, callsAfterCost: sessionCost === undefined ? 0 : callsAfterCost };
 }
 
-/** A prompt read from the session file because no hook reported it says so. */
-const inLabel = (turn: LedgerRecord) => turn.inputBasis === 'session-file' ? 'in (from session file)' : 'in';
+/** An input says so when it is not a person's prompt seen live: a notice the harness wrote,
+ * or a prompt read from the session file because no hook reported it. */
+const inLabel = (turn: LedgerRecord) => {
+  const notes = [turn.notice ? 'harness notice' : '', turn.inputBasis === 'session-file' ? 'from session file' : ''].filter(Boolean);
+  return notes.length ? `in (${notes.join(', ')})` : 'in';
+};
+
+/** Where a change happened, when that is a linked worktree: its path is relative to it. */
+const place = (change: { path?: string; worktree?: string; branch?: string }) =>
+  `${change.path ?? '?'}${change.worktree ? ` in worktree ${change.worktree}${change.branch ? ` (branch ${change.branch})` : ''}` : ''}`;
 
 function inputText(context: Context, record: LedgerRecord): string {
   const data = json(context, record);
@@ -219,7 +236,7 @@ function glance(context: Context, from?: number): string {
     `workspace ${manifest.workspaceRoot}`,
     `started ${minute(manifest.startedAt)}${manifest.endedAt ? ` · ended ${minute(manifest.endedAt)}` : ''}`,
     [plural(turns.length, 'turn'), callFacts(records, recording), plural(records.filter(r => r.type === 'file_change').length, 'change'),
-      plural(agents.length, 'subagent'), `${number(t.total)} tokens`, t.cost === undefined ? '' : `$${t.cost.toFixed(4)} reported`].filter(Boolean).join(' · '),
+      plural(agents.length, 'subagent'), `${number(t.total)} tokens`, t.cost === undefined ? '' : `$${t.cost.toFixed(4)} reported${t.callsAfterCost ? ` before the last ${plural(t.callsAfterCost, 'model call')}` : ''}`].filter(Boolean).join(' · '),
   ];
   if (!fs.existsSync(ledger.dir)) lines.push('evidence folder missing: inputs, outputs and patches cannot be read');
   // A kind that repeats three or more times is one line with its count, first and last.
@@ -345,7 +362,7 @@ function renderItems(context: Context, s: Shape, items: TurnItem[], scope: strin
       if (item.redacted || !item.text.text) lines.push(`thinking  redacted${item.durationMs ? ` · ${ms(item.durationMs)}` : ''} (it happened; its text was not recorded)`);
       else block(lines, '', `thinking${item.durationMs ? ` · ${ms(item.durationMs)}` : ''}`, item.text.text);
     } else if (item.kind === 'change') {
-      lines.push(`change    ${item.path} · ${patchRef(item)} · not made by a recorded tool call`);
+      lines.push(`change    ${place(item)} · ${patchRef(item)} · not made by a recorded tool call`);
     } else if (item.kind === 'subagent') {
       const n = s.agents.indexOf(item.subagent.agentId) + 1;
       lines.push(`subagent  a${n}${item.subagent.agentType ? ` (${item.subagent.agentType})` : ''} · not linked to a call · open a${n}`);
@@ -377,7 +394,7 @@ function renderItems(context: Context, s: Shape, items: TurnItem[], scope: strin
   patches.forEach(({ change, owner }, i) => {
     const stat = diffStat(change.patch?.text);
     const basis = change.attribution === 'observed-during-tool' && owner ? `observed during ${owner}` : change.attribution ?? 'attribution unknown';
-    lines.push([`p${i + 1}  ${change.path}`, change.operation, stat, basis].filter(Boolean).join(' · '));
+    lines.push([`p${i + 1}  ${place(change)}`, change.operation, stat, basis].filter(Boolean).join(' · '));
     if (change.patch) for (const line of change.patch.text.replace(/\n$/, '').split(/\r?\n/)) {
       if (!/^Index: /.test(line) && !/^=+$/.test(line)) lines.push(INDENT + line);
     } else lines.push(`${INDENT}patch not recorded${change.patchUnavailable ? `: ${change.patchUnavailable}` : ''}`);
@@ -398,7 +415,7 @@ function renderOutside(context: Context): string[] {
   changes.forEach((r, i) => {
     let patch: string | undefined;
     try { patch = context.reader.read(r, 'patch'); } catch (error) { patch = undefined; lines.push(`unreadable  record ${r.id}: ${error}`); }
-    lines.push([`p${i + 1}  ${r.path}`, r.operation, diffStat(patch), r.attribution ?? 'attribution unknown', `seq ${r.seq}`].filter(Boolean).join(' · '));
+    lines.push([`p${i + 1}  ${place(r)}`, r.operation, diffStat(patch), r.attribution ?? 'attribution unknown', `seq ${r.seq}`].filter(Boolean).join(' · '));
     if (patch) for (const line of patch.replace(/\n$/, '').split(/\r?\n/)) { if (!/^Index: /.test(line) && !/^=+$/.test(line)) lines.push(INDENT + line); }
     else lines.push(`${INDENT}patch not recorded${r.patchUnavailable ? `: ${r.patchUnavailable}` : ''}`);
   });

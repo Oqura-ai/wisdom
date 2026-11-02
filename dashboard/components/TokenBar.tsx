@@ -26,7 +26,7 @@ export function TokenBar({ tokens: t, compact }: { tokens: Tokens; compact?: boo
         ))}
         {t.reasoning > 0 && <span title="Part of output">reasoning <b>{tokens(t.reasoning)}</b></span>}
         <span title="Share of input served from cache">cache hit <b>{Math.round(cacheShare * 100)}%</b></span>
-        <span title="Only cost reported by the harness itself">cost <b>{cost(t.costUsd)}</b></span>
+        <span title={t.costBehind ? 'The harness last reported this before its latest model responses' : 'Only cost reported by the harness itself'}>cost <b>{cost(t.costUsd)}{t.costBehind ? ' so far' : ''}</b></span>
       </div>
     </div>
   );

@@ -13,7 +13,7 @@ Use the `ledger` MCP tool when available. The CLI prints the same text:
 ## Two moves
 
 1. **Glance.** `{glance:true}` lists sessions, newest first. `{capture:"latest"|"<id or 8+ characters>", glance:true}`
-   shows one session: its shape, then each turn `t1`, `t2`, … with the user's input in full,
+   (`latest` is the newest session with a turn) shows one session: its shape, then each turn `t1`, `t2`, … with the user's input in full,
    the start of the turn's last reply, and facts: tool calls, failures, pending results,
    changed files, subagents `a1`, `a2`, … Read the inputs: they set the stakes.
 2. **Open.** `{capture, open:"t3"}` returns the whole turn in recorded order: thinking,
@@ -38,6 +38,9 @@ smallest proof, compare the final reply's claims with the evidence, and stop.
 - `thinking  redacted` means thinking happened but its text was not recorded.
   `not recorded` lists recording gaps. `no result recorded` and `outcome not recorded`
   mean exactly that; do not read them as success.
+- `in worktree bp3 (branch x)` on a change: its path is relative to that linked git worktree, not the project.
+- `in (harness notice)` is a message the harness wrote to wake the agent, not something a person asked.
+- A cost `reported before the last 3 model calls` is the harness's last report, so it is lower than the real cost.
 - `observed during c1` means the change happened while that call ran: timing, not proof of
   authorship. `external-or-unknown` means no tool call was running.
 

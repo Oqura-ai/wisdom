@@ -3,13 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { installPi, launchPi } from '../src/harnesses/pi/launch.js';
+import { staleHooks } from '../src/harnesses/launch.js';
 import { installClaudeCode, launchClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installCodex } from '../src/harnesses/codex/launch.js';
 import { startDaemon } from '../src/daemon.js';
 import { call, spool } from '../src/client.js';
-import { findDataDir } from '../src/paths.js';
+import { findDataDir, hookDataDir, marker } from '../src/paths.js';
 
 const temp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `wisdom-${name}-`));
 
@@ -121,6 +125,45 @@ test('events kept while the daemon was down are recorded in order when it comes 
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a daemon restart mid-turn keeps the turn, its calls, its reply and the diff of a tool that runs after', async () => {
+  const root = temp('restart');
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const file = path.join(workspace, 'a.txt'); fs.writeFileSync(file, 'before\n');
+  const data = path.join(root, 'data');
+  const event = (type: string, extra: Record<string, unknown> = {}) => ({ harness: 'claude-code' as const, cwd: workspace,
+    observation: { observationId: randomUUID(), sessionId: 'mid', type: type as any, ...extra } });
+  const edit = { toolName: 'Edit', toolCallId: 'e1' };
+  let daemon = await startDaemon(data, 0);
+  await call(daemon.connection, '/observe', event('input', { data: { text: 'change it' } }));
+  await daemon.close();
+  // The hook keeps the tool start and starts the daemon; the tool runs once the hook returns.
+  spool(data, event('tool_started', { ...edit, data: { input: { file_path: file } } }));
+  // A port another project's daemon holds must not cost the kept event or its baseline.
+  const holder = http.createServer().listen(0, '127.0.0.1');
+  await once(holder, 'listening');
+  await assert.rejects(startDaemon(data, (holder.address() as { port: number }).port), /EADDRINUSE/);
+  holder.close();
+  daemon = await startDaemon(data, 0);
+  try {
+    fs.writeFileSync(file, 'after\n');
+    await call(daemon.connection, '/observe', event('tool_finished', { ...edit, isError: false, data: { response: 'ok' } }));
+    await call(daemon.connection, '/observe', event('agent_settled', { data: { lastAssistantMessage: 'Changed it.' } }));
+    const read = async (request: object) => (await call(daemon.connection, '/ledger', { capture: 'mid', ...request })).text;
+    const glance = await read({ glance: true });
+    assert.match(glance, /^ {4}out {7}Changed it\. \(from hook\)$/m);
+    assert.match(glance, /^ {4}1 tool call · changed a\.txt$/m);
+    assert.doesNotMatch(glance, /missing-tool-start/);
+    assert.match(await read({ open: 't1' }), /^p1  a\.txt · modify · \+1 −1 · observed during c1$/m);
+    assert.match(await read({ open: 'outside' }), /Nothing was recorded outside a turn/);
+
+    // A settled turn is not reopened by a later restart.
+    await daemon.close();
+    daemon = await startDaemon(data, 0);
+    await call(daemon.connection, '/observe', event('tool_started', { toolName: 'Bash', toolCallId: 'b1', data: { input: { command: 'ls' } } }));
+    assert.match(await read({ open: 'outside' }), /^call {2}Bash/m);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('a session file nobody reported becomes a record read from it, its prompts marked as from the file', async () => {
   const root = temp('scan');
   const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
@@ -129,9 +172,11 @@ test('a session file nobody reported becomes a record read from it, its prompts 
   fs.mkdirSync(path.join(folder, 'abc', 'subagents'), { recursive: true });
   const line = (value: object) => JSON.stringify({ sessionId: 'abc', cwd: workspace, ...value }) + '\n';
   const file = path.join(folder, 'abc.jsonl');
+  const answered = new Date(Date.now() - 9 * 60_000).toISOString();
   fs.writeFileSync(file, line({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'fix the bug' } })
     + line({ type: 'user', uuid: 'u0', isMeta: true, message: { role: 'user', content: 'not typed' } })
-    + line({ type: 'assistant', uuid: 'a1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Fixed it.' }] } })
+    + line({ type: 'assistant', uuid: 'a1', timestamp: answered,
+      message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Fixed it.' }], usage: { input_tokens: 10, output_tokens: 5 } } })
     + line({ type: 'user', uuid: 'u2', toolUseResult: {}, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } }));
   // A subagent's file is not a session.
   fs.writeFileSync(path.join(folder, 'abc', 'subagents', 'agent-1.jsonl'), line({ type: 'user', message: { role: 'user', content: 'task' } }));
@@ -145,7 +190,10 @@ test('a session file nobody reported becomes a record read from it, its prompts 
     assert.equal(manifest.status, 'closed');
     assert.equal(manifest.endReason, 'found-in-session-file');
     assert.equal(manifest.workspaceRoot, fs.realpathSync(workspace));
+    // Dated from its file's first dated line, not from when the scan reached it, so its usage counts.
+    assert.equal(manifest.startedAt, answered);
     const glance = (await call(daemon.connection, '/ledger', { capture: 'abc', glance: true })).text;
+    assert.match(glance, /· 15 tokens/);
     assert.match(glance, /^t1  in \(from session file\)  fix the bug$/m);
     assert.match(glance, /^ {4}out {7}Fixed it\.$/m);
     assert.doesNotMatch(glance, /not typed/);
@@ -196,5 +244,281 @@ test('resume finds a session only by its full ID', async () => {
     }
     const glance = (await call(c, '/ledger', { capture: '01a1836b-aaaa', glance: true })).text;
     assert.match(glance, /^resume with: wisdom resume 01a1836b-aaaa$/m);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a found fork does not count its parent\'s copied prompts as its own turns', async () => {
+  const root = temp('fork');
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const data = path.join(root, 'data');
+  const folder = path.join(data, 'harnesses', 'claude-code', 'home', 'projects', 'project');
+  fs.mkdirSync(folder, { recursive: true });
+  const user = (session: string, uuid: string, content: string, timestamp: string) => JSON.stringify({ type: 'user', sessionId: session, cwd: workspace, uuid, timestamp, version: '9.8.7', message: { role: 'user', content } }) + '\n';
+  const quiet = new Date(Date.now() - 10 * 60_000);
+  const write = (name: string, text: string) => { fs.writeFileSync(path.join(folder, name), text); fs.utimesSync(path.join(folder, name), quiet, quiet); };
+  const first = user('parent', 'u1', 'parent prompt', '2026-01-01T10:00:00.000Z');
+  write('parent.jsonl', first + user('parent', 'u2', 'parent later', '2026-01-01T10:10:00.000Z'));
+  // Claude Code's first dated line in a fork is newer than the history it then copies.
+  write('fork.jsonl', JSON.stringify({ type: 'queue-operation', sessionId: 'fork', timestamp: '2026-01-01T10:05:00.000Z' }) + '\n' + first.replaceAll('"parent"', '"fork"')
+    + JSON.stringify({ type: 'user', sessionId: 'fork', uuid: 'u9', timestamp: '2026-01-01T10:05:00.100Z', queueTranscriptOnly: true, message: { role: 'user', content: '<task-notification><fork-source>began as a fork</fork-source></task-notification>' } }) + '\n'
+    + user('fork', 'u3', 'fork prompt', '2026-01-01T10:06:00.000Z'));
+  const daemon = await startDaemon(data, 0);
+  try {
+    daemon.captures.scan();
+    const glance = async (capture: string) => (await call(daemon.connection, '/ledger', { capture, glance: true })).text;
+    const fork = await glance('fork');
+    assert.match(fork, /^t1  in \(from session file\)  fork prompt$/m);
+    assert.doesNotMatch(fork, /^t\d+ +in.*parent prompt$/m);
+    assert.doesNotMatch(fork, /^t2 /m);
+    assert.match(fork, /history-from-another-session:1 prompt at the start of this file also appear in parent/);
+    assert.match(await glance('parent'), /^t1  in \(from session file\)  parent prompt$/m, 'the older session keeps its own turns');
+    assert.equal(daemon.captures.get('fork').manifest.startedAt, '2026-01-01T10:05:00.000Z');
+    assert.equal(daemon.captures.get('fork').manifest.harnessVersion, '9.8.7');
+    assert.match(fork, /^session fork · claude-code 9\.8\.7 · /m);
+    assert(fs.readFileSync(path.join(daemon.captures.get('fork').dir, 'native-session.jsonl'), 'utf8').includes('parent prompt'), 'copied lines stay in the byte copy');
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('latest is the newest session with a turn; a session nobody prompted stays listed', async () => {
+  const root = temp('latest');
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const daemon = await startDaemon(path.join(root, 'data'), 0);
+  try {
+    const c = daemon.connection;
+    const send = (sessionId: string, type: string, data?: unknown) => call(c, '/observe', { harness: 'claude-code', cwd: workspace, observation: { observationId: randomUUID(), sessionId, type, data } });
+    await send('empty-one', 'session_started');
+    assert.match((await call(c, '/ledger', { capture: 'latest', glance: true })).text, /^session empty-one /m, 'with no turns anywhere, the newest session');
+    await send('real', 'input', { text: 'hello' });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await send('empty-two', 'session_started');
+    assert.match((await call(c, '/ledger', { capture: 'latest', glance: true })).text, /^session real /m);
+    assert.match((await call(c, '/ledger', { glance: true })).text, /^empty-two /m);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a moved project keeps recording: sessions follow it and say so; no second project appears', async () => {
+  const root = temp('moved');
+  const before = path.join(root, 'before'), after = path.join(root, 'after');
+  fs.mkdirSync(path.join(before, '.wisdom'), { recursive: true });
+  fs.writeFileSync(path.join(before, '.wisdom', marker), JSON.stringify({ project: before, createdAt: 'then' }));
+  fs.writeFileSync(path.join(before, 'a.txt'), 'one\n');
+  const send = (daemon: any, cwd: string, type: string, extra = {}) => call(daemon.connection, '/observe', { harness: 'claude-code', cwd, observation: { observationId: randomUUID(), sessionId: 's', type, ...extra } });
+  let daemon = await startDaemon(path.join(before, '.wisdom'), 0);
+  await send(daemon, before, 'input', { data: { text: 'first' } });
+  await daemon.close();
+  fs.renameSync(before, after);
+  daemon = await startDaemon(path.join(after, '.wisdom'), 0);
+  try {
+    const manifest = daemon.captures.get('s').manifest;
+    assert.equal(manifest.workspaceRoot, fs.realpathSync(after));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(after, '.wisdom', marker), 'utf8')).project, path.resolve(after));
+    await send(daemon, after, 'input', { data: { text: 'second' } });
+    const started = { toolCallId: 'k', toolName: 'Write', data: { input: { file_path: path.join(after, 'a.txt') } } };
+    await send(daemon, after, 'tool_started', started);
+    fs.writeFileSync(path.join(after, 'a.txt'), 'two\n');
+    await send(daemon, after, 'tool_finished', { ...started, isError: false });
+    const glance = (await call(daemon.connection, '/ledger', { capture: 's', glance: true })).text;
+    assert.match(glance, /project-moved:The project moved/);
+    assert.match(glance, /^t2  in {8}second$/m);
+    assert.match(glance, /1 tool call · changed a\.txt/);
+    assert.doesNotMatch(glance, /outside-watched-folder/);
+    assert.equal((await call(daemon.connection, '/view', { view: 'project', workspaceRoot: after })).sessions.length, 1);
+  } finally { await daemon.close(); }
+
+  // The hook names the old folder. The home it runs in wins, and the old folder is never recreated.
+  const home = path.join(after, '.wisdom', 'harnesses', 'claude-code', 'home');
+  assert.equal(hookDataDir('claude-code', home, before + '/.wisdom'), path.join(after, '.wisdom'));
+  assert.throws(() => hookDataDir('claude-code', undefined, before + '/.wisdom'), /no longer exists/);
+  assert.equal(hookDataDir('claude-code', os.homedir() + '/.claude', after + '/.wisdom'), after + '/.wisdom', 'a home outside any project changes nothing');
+  const hook = path.resolve('integrations', 'claude-code', 'hook.mjs');
+  const run = spawnSync(process.execPath, [hook, path.join(before, '.wisdom')], { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: '' },
+    input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: after, prompt: 'x' }) });
+  assert.equal(run.status, 1); assert.match(run.stderr, /no longer exists/);
+  assert(!fs.existsSync(before), 'a moved project leaves nothing behind at the old path');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('hooks pointing at a build that has moved are named; ones that exist are not', () => {
+  const data = temp('stale');
+  try {
+    assert.deepEqual(staleHooks(data), []);
+    installClaudeCode(data); installPi(data);
+    assert.deepEqual(staleHooks(data), []);
+    const file = path.join(data, 'harnesses', 'claude-code', 'home', 'settings.json');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replaceAll('integrations/claude-code/hook.mjs', 'gone/integrations/claude-code/hook.mjs'));
+    assert.deepEqual(staleHooks(data), ['claude-code']);
+  } finally { fs.rmSync(data, { recursive: true, force: true }); }
+});
+
+test('forks that start at their parent\'s first line are still told apart', async () => {
+  const root = temp('tie');
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const data = path.join(root, 'data');
+  const folder = path.join(data, 'harnesses', 'claude-code', 'home', 'projects', 'project');
+  fs.mkdirSync(folder, { recursive: true });
+  const user = (session: string, uuid: string, content: string, timestamp: string, extra = {}) => JSON.stringify({ type: 'user', sessionId: session, cwd: workspace, uuid, timestamp, ...extra, message: { role: 'user', content } }) + '\n';
+  const answer = (session: string, id: string, timestamp: string) => JSON.stringify({ type: 'assistant', sessionId: session, uuid: id, timestamp, message: { id, role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, output_tokens: 5 } } }) + '\n';
+  const quiet = new Date(Date.now() - 10 * 60_000);
+  const write = async (name: string, text: string) => { fs.writeFileSync(path.join(folder, name), text); fs.utimesSync(path.join(folder, name), quiet, quiet); await new Promise(resolve => setTimeout(resolve, 30)); };
+  const start = '2026-01-01T10:00:00.000Z';
+  // /branch names its parent; --fork-session does not, so the older file is the one made first.
+  await write('zz-parent.jsonl', user('zz-parent', 'u1', 'parent prompt', start) + answer('zz-parent', 'm1', '2026-01-01T10:00:05.000Z'));
+  const copied = (session: string, extra = {}) => user(session, 'u1', 'parent prompt', start, extra) + answer(session, 'm1', '2026-01-01T10:00:05.000Z');
+  await write('aa-branch.jsonl', copied('aa-branch', { forkedFrom: { sessionId: 'zz-parent', messageUuid: 'u1' } })
+    + user('aa-branch', 'u2', 'branch prompt', '2026-01-01T10:10:00.000Z') + answer('aa-branch', 'm2', '2026-01-01T10:10:05.000Z'));
+  await write('ab-fork.jsonl', copied('ab-fork') + user('ab-fork', 'u3', 'fork prompt', '2026-01-01T10:20:00.000Z') + answer('ab-fork', 'm3', '2026-01-01T10:20:05.000Z'));
+  const daemon = await startDaemon(data, 0);
+  try {
+    daemon.captures.scan();
+    const glance = async (capture: string) => (await call(daemon.connection, '/ledger', { capture, glance: true })).text;
+    for (const [session, prompt] of [['aa-branch', 'branch prompt'], ['ab-fork', 'fork prompt']] as const) {
+      const text = await glance(session);
+      assert.match(text, new RegExp(`^t1  in \\(from session file\\)  ${prompt}$`, 'm'));
+      assert.doesNotMatch(text, /^t2 /m);
+      assert.match(text, /· 15 tokens/, 'the copied response is the parent\'s, not counted again');
+      assert.notEqual(daemon.captures.get(session).manifest.startedAt, start, 'dated from its own first line');
+    }
+    assert.match(await glance('zz-parent'), /^t1  in \(from session file\)  parent prompt$/m);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a harness notice is a turn in both readings, says what it is, and is not a request', async () => {
+  const root = temp('notice');
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const data = path.join(root, 'data');
+  const folder = path.join(data, 'harnesses', 'claude-code', 'home', 'projects', 'project');
+  fs.mkdirSync(folder, { recursive: true });
+  const notice = '<task-notification>\n<status>completed</status>\n</task-notification>';
+  const file = path.join(folder, 'found.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ type: 'user', sessionId: 'found', cwd: workspace, uuid: 'n1', timestamp: '2026-01-01T10:00:00.000Z', message: { role: 'user', content: notice } }) + '\n');
+  const quiet = new Date(Date.now() - 10 * 60_000); fs.utimesSync(file, quiet, quiet);
+  const daemon = await startDaemon(data, 0);
+  try {
+    const c = daemon.connection;
+    const send = (text: string) => call(c, '/observe', { harness: 'claude-code', cwd: workspace, observation: { observationId: randomUUID(), sessionId: 'live', type: 'input', data: { text } } });
+    await send('a real prompt');
+    await send(notice);
+    daemon.captures.scan();
+    const live = (await call(c, '/ledger', { capture: 'live', glance: true })).text;
+    assert.match(live, /^t1  in {8}a real prompt$/m);
+    assert.match(live, /^t2  in \(harness notice\)\n/m);
+    assert.match((await call(c, '/ledger', { capture: 'found', glance: true })).text, /^t1  in \(harness notice, from session file\)\n/m);
+    const stats = await call(c, '/view', { view: 'project', workspaceRoot: workspace });
+    assert.equal(stats.sessions.find((s: any) => s.captureId === 'live').requests, 1);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a cost the harness reported before later model calls says so, and a later report clears it', async () => {
+  const root = temp('cost');
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const source = path.join(root, 'session.jsonl');
+  const now = () => new Date().toISOString();
+  const answer = (id: string) => JSON.stringify({ type: 'assistant', sessionId: 'c', uuid: id, timestamp: now(), message: { id, role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, output_tokens: 5 } } }) + '\n';
+  const cost = (value: number) => JSON.stringify({ type: 'cost-state', sessionId: 'c', totalCostUSD: value }) + '\n';
+  const daemon = await startDaemon(path.join(root, 'data'), 0);
+  try {
+    const c = daemon.connection;
+    const send = () => call(c, '/observe', { harness: 'claude-code', cwd: workspace, observation: { observationId: randomUUID(), sessionId: 'c', source, type: 'agent_settled' } });
+    const read = async () => ({ glance: (await call(c, '/ledger', { capture: 'c', glance: true })).text, tokens: (await call(c, '/view', { view: 'project', workspaceRoot: workspace })).sessions[0].tokens });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    fs.writeFileSync(source, cost(0.5));
+    await send();
+    fs.appendFileSync(source, answer('m1') + answer('m2'));
+    await send();
+    let seen = await read();
+    assert.match(seen.glance, /\$0\.5000 reported before the last 2 model calls/);
+    assert.equal(seen.tokens.costBehind, true);
+    fs.appendFileSync(source, cost(0.9));
+    await send();
+    seen = await read();
+    assert.match(seen.glance, /\$0\.9000 reported( ·|$)/m);
+    assert.equal(seen.tokens.costBehind, undefined);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+/** A linked worktree as git lays it out: a `.git` file naming the main repository. */
+function fakeWorktree(main: string, name: string, branch: string, files: Record<string, string>, root = path.join(main, '.claude', 'worktrees', name)): string {
+  const gitDir = path.join(main, '.git', 'worktrees', name);
+  fs.mkdirSync(gitDir, { recursive: true }); fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(gitDir, 'HEAD'), `ref: refs/heads/${branch}\n`);
+  fs.writeFileSync(path.join(root, '.git'), `gitdir: ${gitDir.replaceAll('\\', '/')}\n`);
+  for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(root, file), text);
+  return fs.realpathSync(root);
+}
+
+test('a session records the worktree it works in by name and branch, not its checkout; another session marks it once', async () => {
+  const root = temp('worktree');
+  const main = path.join(root, 'project');
+  fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(main, 'base.txt'), 'base\n');
+  const daemon = await startDaemon(path.join(main, '.wisdom'), 0);
+  try {
+    const c = daemon.connection;
+    const send = (sessionId: string, cwd: string, type: string, extra = {}) => call(c, '/observe', { harness: 'claude-code', cwd, observation: { observationId: randomUUID(), sessionId, type, ...extra } });
+    const glance = async (capture: string) => (await call(c, '/ledger', { capture, glance: true })).text;
+    await send('watcher', main, 'input', { data: { text: 'stay in the project' } });
+
+    // A session enters a worktree partway through, the way EnterWorktree does.
+    await send('mover', main, 'input', { data: { text: 'enter' } });
+    await send('mover', main, 'tool_started', { toolCallId: 'e', toolName: 'EnterWorktree', data: { input: { name: 'wt' } } });
+    const tree = fakeWorktree(fs.realpathSync(main), 'wt', 'worktree-wt', { 'base.txt': 'base\n' });
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await send('mover', tree, 'tool_finished', { toolCallId: 'e', toolName: 'EnterWorktree', isError: false });
+    const write = { toolCallId: 'w', toolName: 'Write', data: { input: { file_path: path.join(tree, 'w.txt') } } };
+    await send('mover', tree, 'tool_started', write);
+    fs.writeFileSync(path.join(tree, 'w.txt'), 'whiskey\n');
+    await send('mover', tree, 'tool_finished', { ...write, isError: false });
+    await new Promise(resolve => setTimeout(resolve, 700));
+
+    const mover = await glance('mover');
+    assert.match(mover, /1 change/, 'the checkout is not logged as changes');
+    assert.match(mover, /changed w\.txt in worktree wt/);
+    assert.match(mover, /worktree-entered:Watching worktree wt/);
+    assert.doesNotMatch(mover, /\.claude\/worktrees/);
+    assert.match((await call(c, '/ledger', { capture: 'mover', open: 't1' })).text, /^p1 {2}w\.txt in worktree wt \(branch worktree-wt\) · create · \+1 −0 · observed during c2$/m);
+
+    // A session started in a worktree belongs to the project; its file there has a plain path.
+    await send('starter', tree, 'input', { data: { text: 'start here' } });
+    assert.equal(daemon.captures.get('starter').manifest.workspaceRoot, fs.realpathSync(main));
+    const write2 = { toolCallId: 'h', toolName: 'Write', data: { input: { file_path: path.join(tree, 'h.txt') } } };
+    await send('starter', tree, 'tool_started', write2);
+    fs.writeFileSync(path.join(tree, 'h.txt'), 'hotel\n');
+    await send('starter', tree, 'tool_finished', { ...write2, isError: false });
+    const starter = await glance('starter');
+    assert.match(starter, /changed h\.txt in worktree wt/);
+    assert.doesNotMatch(starter, /worktree-entered|outside-watched-folder/);
+    assert.equal((await call(c, '/view', { view: 'projects' })).projects.length, 1, 'the project does not split');
+
+    // The session that stayed in the project has no diffs from there, and says files changed.
+    await new Promise(resolve => setTimeout(resolve, 700));
+    const watcher = await glance('watcher');
+    assert.match(watcher, /other-worktree:Files changed in worktree wt/);
+    assert.match(watcher, /0 changes/);
+    assert.equal(watcher.match(/other-worktree/g)!.length, 1);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a worktree outside the project folder is watched without an outside gap; a submodule stays in its project', async () => {
+  const root = temp('external');
+  const main = path.join(root, 'project');
+  fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+  // A submodule's .git file names a module, not a worktree.
+  fs.mkdirSync(path.join(main, 'sub'));
+  fs.writeFileSync(path.join(main, 'sub', '.git'), 'gitdir: ../.git/modules/sub\n');
+  const daemon = await startDaemon(path.join(main, '.wisdom'), 0);
+  try {
+    const c = daemon.connection;
+    const send = (cwd: string, type: string, extra = {}) => call(c, '/observe', { harness: 'codex', cwd, observation: { observationId: randomUUID(), sessionId: 's', type, ...extra } });
+    await send(main, 'input', { data: { text: 'go' } });
+    const tree = fakeWorktree(fs.realpathSync(main), 'away', 'away-branch', {}, path.join(root, 'away'));
+    const write = { toolCallId: 'a', toolName: 'apply_patch', data: { input: {} } };
+    await send(tree, 'tool_started', write);
+    fs.writeFileSync(path.join(tree, 'a.txt'), 'x\n');
+    fs.writeFileSync(path.join(main, 'sub', 'b.txt'), 'y\n');
+    await send(tree, 'tool_finished', { ...write, isError: false });
+    const glance = (await call(c, '/ledger', { capture: 's', glance: true })).text;
+    assert.match(glance, /a\.txt in worktree away/);
+    assert.match(glance, /sub\/b\.txt/);
+    assert.doesNotMatch(glance, /outside-watched-folder/);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

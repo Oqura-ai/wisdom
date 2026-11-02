@@ -12,7 +12,7 @@ import { startDashboard } from './dashboard.js';
 /** Bumped when the daemon's contract changes (capture opening or reading). A daemon
  * started from an older build keeps running old code in memory, so clients check this.
  */
-export const CAPTURE_API = 8;
+export const CAPTURE_API = 9;
 
 export interface Connection { url: string; token: string; pid: number }
 
@@ -91,6 +91,9 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   } catch (error) { captures.shutdown(); captures.database.close(); fs.unlinkSync(lock); throw error; }
   const address = server.address() as { port: number };
   const connection: Connection = { url: `http://127.0.0.1:${address.port}`, token, pid: process.pid };
+  // Once the port is held, and before daemon.json says so: the hook that started this daemon
+  // waits for that file, so the file baseline of a kept tool start is taken before the tool runs.
+  captures.drainSpool();
   writeJson(path.join(dataDir, 'daemon.json'), connection);
   timer = setInterval(() => captures.poll(), 500);
   // Optional viewer. Started after daemon.json exists, since it reads it to connect.

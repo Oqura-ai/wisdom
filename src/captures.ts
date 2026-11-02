@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Ledger } from './ledger.js';
+import { Ledger, writeJson } from './ledger.js';
 import { LedgerDatabase } from './database.js';
-import { Workspace, scope } from './workspace.js';
+import { SessionFiles, scope } from './workspace.js';
 import { hookSchema, preview, type HookEvent, type Observation, type Manifest, type LedgerRecord } from './schema.js';
 import { adapter, harnessNames } from './harnesses/index.js';
 import type { NativeEntry } from './harnesses/types.js';
 import { surfaceText } from './content.js';
-import { spoolDir } from './paths.js';
+import { linkedWorktree, marker, movedFrom, spoolDir } from './paths.js';
 
 interface RunningCapture {
   ledger: Ledger;
-  workspace: Workspace;
+  workspace: SessionFiles;
   active: Map<string, { toolName: string; path?: string; recordId: string; agentId?: string; turnId?: string }>;
   currentTurn?: string;
   turns: Map<string, string>;
@@ -43,15 +43,34 @@ export class Captures {
     fs.mkdirSync(dataDir, { recursive: true });
     this.database = new LedgerDatabase(path.join(dataDir, 'ledger.sqlite'));
     try {
+      const project = movedFrom(dataDir);
       for (const manifest of this.database.manifests()) {
         const ledger = new Ledger(this.captureDir(manifest), manifest, this.database);
+        if (project) this.followProject(ledger, project);
         if (manifest.status === 'recording') {
           manifest.status = 'interrupted'; manifest.endReason = 'daemon-restarted';
           manifest.endedAt = new Date().toISOString(); ledger.saveManifest();
         }
         this.ledgers.set(manifest.captureId, ledger);
       }
+      if (project) writeJson(path.join(dataDir, marker), { ...JSON.parse(fs.readFileSync(path.join(dataDir, marker), 'utf8')), project: path.dirname(path.resolve(dataDir)) });
     } catch (error) { this.database.close(); throw error; }
+  }
+
+  /** The project folder moved: its sessions are in the new place. What was recorded before
+   * still names the old folder, and the gap says so.
+   */
+  private followProject(ledger: Ledger, from: string): void {
+    const here = path.dirname(path.resolve(this.dataDir));
+    const moved = (file: string) => {
+      const relative = path.relative(from, file);
+      return relative.startsWith('..') || path.isAbsolute(relative) ? file : path.join(here, relative);
+    };
+    const { manifest } = ledger;
+    manifest.workspaceRoot = moved(manifest.workspaceRoot);
+    if (manifest.source) manifest.source = moved(manifest.source);
+    ledger.saveManifest();
+    ledger.gap('project-moved', `The project moved from ${from} to ${here}; paths recorded before this point name the old folder.`);
   }
 
   /** Each harness owns a directory, so one harness's files never mix with another's. */
@@ -75,7 +94,7 @@ export class Captures {
       // Codex ends every session it opened when it quits; one not being watched has nothing to close.
       if (observation.type === 'session_ended') return undefined;
       ledger = ledger ? this.resume(ledger, event) : this.open({ harness, sessionId: observation.sessionId,
-        harnessVersion: event.harnessVersion, workspaceRoot: event.cwd, source: observation.source ?? null });
+        harnessVersion: event.harnessVersion, workspaceRoot: event.cwd, source: observation.source ?? null }, false, event.late ? undefined : event.cwd);
     }
     const id = ledger.manifest.captureId;
     const record = this.observe(id, observation, event);
@@ -89,11 +108,14 @@ export class Captures {
   /** One native session is one record, named by the harness's own session ID. A session
    * found only in its file is read from it whole and never watched.
    */
-  private open(input: { harness: string; sessionId: string; harnessVersion?: string; workspaceRoot: string; source: string | null }, found = false): Ledger {
+  private open(input: { harness: string; sessionId: string; harnessVersion?: string; workspaceRoot: string; source: string | null }, found = false, cwd?: string): Ledger {
     // A harness can report a relative session path (Pi does with a relative --session-dir).
     // Resolve it against the harness's workspace, never the daemon's working directory.
     input = { ...input, workspaceRoot: path.resolve(input.workspaceRoot),
       source: input.source ? path.resolve(input.workspaceRoot, input.source) : null };
+    // A session started in a linked worktree belongs to its project, whichever folder it began in.
+    const main = linkedWorktree(input.workspaceRoot)?.main;
+    if (main && fs.existsSync(main)) input.workspaceRoot = main;
     if (!/^[A-Za-z0-9_-]+$/.test(input.sessionId)) throw new Error(`Unsupported session ID: ${input.sessionId}`);
     if (this.ledgers.has(input.sessionId)) throw new Error(`Session ${input.sessionId} is already recorded for another harness.`);
     const id = input.sessionId;
@@ -113,20 +135,29 @@ export class Captures {
       if (sourceRelative && !sourceRelative.startsWith('../') && !path.isAbsolute(sourceRelative)) excludedPaths.push(sourceRelative);
     }
     const now = new Date().toISOString();
+    // A found session happened when its file says, not when the scan reached it.
+    const file = found && input.source ? fs.statSync(input.source) : undefined;
+    const lines = found && input.source ? nativeLines(input.harness, input.source) : undefined;
+    const copied = lines ? this.copiedHistory(input.harness, input.source!, lines) : undefined;
     const manifest: Manifest = { schemaVersion: 1, captureId: id, ...input,
-      workspaceRoot: fs.realpathSync(input.workspaceRoot), startedAt: now, status: found ? 'closed' : 'recording',
-      ...(found ? { endedAt: now, endReason: 'found-in-session-file' } : {}),
+      workspaceRoot: fs.realpathSync(input.workspaceRoot), status: found ? 'closed' : 'recording',
+      startedAt: lines?.dated.find(([id]) => !id || !copied!.ids.has(id))?.[1] ?? (file ? new Date(Math.min(file.birthtimeMs, file.mtimeMs)).toISOString() : now),
+      ...(found ? { endedAt: file ? file.mtime.toISOString() : now, endReason: 'found-in-session-file' } : {}),
       scope: { ...scope, excludedPaths } };
     const ledger = new Ledger(this.captureDir(manifest), manifest, this.database, true);
     this.ledgers.set(id, ledger);
     if (found) {
       ledger.append({ type: 'capture_started', summary: 'Found in the harness\'s session file; Wisdom did not see this session live.' });
       ledger.gap('not-recorded-live', 'Read from the harness\'s own session file: no hook events and no observed file changes.');
+      ledger.copiedEntries = copied!.ids;
+      const prompts = [...lines!.prompts].filter(id => copied!.ids.has(id)).length;
+      if (prompts) ledger.gap('history-from-another-session',
+        `${prompts} prompt${prompts === 1 ? '' : 's'} at the start of this file also appear in ${[...copied!.from].join(', ')}, which started earlier; they are that session's turns, not this one's.`);
       this.drain(ledger, true);
       return ledger;
     }
     try {
-      this.watch(ledger);
+      this.watch(ledger, cwd);
       ledger.append({ type: 'capture_started', summary: 'Live capture started; file baseline is in memory.' });
       if (!input.source && input.harness === 'pi') ledger.gap('native-session-unavailable', 'Pi persistence is disabled; extension observations remain available.');
       if (input.harness === 'codex') ledger.gap('codex-hook-coverage',
@@ -151,7 +182,8 @@ export class Captures {
     try {
       if (event.observation.source) this.followSource(ledger, event.observation.source);
       if (!event.late) this.drain(ledger, true, promptLine(event.observation));
-      this.watch(ledger);
+      this.watch(ledger, event.late ? undefined : event.cwd);
+      this.restoreTurns(this.running.get(manifest.captureId)!);
       ledger.append({ type: 'capture_started', summary: 'Capture resumed; file baseline is in memory.' });
       ledger.gap('not-recording-between-visits', `File changes from ${ended ?? 'the last visit'} until this resume were not observed.`);
       return ledger;
@@ -160,15 +192,39 @@ export class Captures {
     }
   }
 
+  /** A fork's file starts with its parent's lines, under the same IDs. A line an older
+   * session file also holds is that session's, so its prompts are not this session's turns.
+   */
+  private copiedHistory(harness: string, source: string, own: NativeLines): { ids: Set<string>; from: Set<string> } {
+    const ids = new Set<string>(), from = new Set<string>();
+    for (const other of adapter(harness).sessionFiles(path.join(this.dataDir, 'harnesses', harness, 'home'))) {
+      if (path.resolve(other) === path.resolve(source)) continue;
+      const lines = nativeLines(harness, other);
+      if (!isOlder(lines, own)) continue;
+      for (const id of own.ids) if (lines.ids.has(id)) { ids.add(id); if (lines.sessionId) from.add(lines.sessionId); }
+    }
+    return { ids, from };
+  }
+
   /** Copy the whole backlog, each read bounded. */
   private drain(ledger: Ledger, prompts = false, stopBefore?: (entry: NativeEntry) => boolean): void {
     let previous = -1;
     while (previous !== ledger.lastSeq) { previous = ledger.lastSeq; ledger.syncSource(stopBefore, prompts); }
   }
 
-  private watch(ledger: Ledger): void {
-    this.running.set(ledger.manifest.captureId, { ledger, workspace: new Workspace(ledger), active: new Map(), turns: new Map(),
+  private watch(ledger: Ledger, cwd?: string): void {
+    this.running.set(ledger.manifest.captureId, { ledger, workspace: new SessionFiles(ledger, cwd), active: new Map(), turns: new Map(),
       transcriptFinished: new Set(), lastSeen: Date.now(), lastReconcile: Date.now() });
+  }
+
+  /** The turns a record already has, so a session continuing after a restart keeps its
+   * events in the turn they belong to. A settled turn is not reopened.
+   */
+  private restoreTurns(capture: RunningCapture): void {
+    const rows = this.database.records("capture_id=? AND type IN ('input','agent_settled')", [capture.ledger.manifest.captureId], 'ORDER BY seq');
+    for (const row of rows) if (row.type === 'input' && row.turnId) capture.turns.set(`${row.agentId ?? ''}:${row.turnId}`, row.id);
+    const last = rows.at(-1);
+    if (last?.type === 'input') capture.currentTurn = last.id;
   }
 
   get(id: string): Ledger {
@@ -198,7 +254,9 @@ export class Captures {
     const live = !context.late;
     try {
       if (observation.source) this.followSource(ledger, observation.source);
-      if (context.cwd && outside(ledger.manifest.workspaceRoot, context.cwd)) {
+      if (live && context.cwd) workspace.follow(context.cwd);
+      // A worktree outside the project folder is watched, so it is not outside.
+      if (context.cwd && outside(ledger.manifest.workspaceRoot, context.cwd) && !linkedWorktree(context.cwd)) {
         ledger.gap('outside-watched-folder', `The harness worked in ${context.cwd}; only ${ledger.manifest.workspaceRoot} is watched for file changes.`);
       }
       if (context.late) ledger.gap('delivered-late', 'Events kept while the daemon was down were recorded when it came back; file changes in that time were not observed.');
@@ -221,14 +279,17 @@ export class Captures {
       }
       const { data: payload, sessionId: _sessionId, source: _source, harnessEvent, ...metadata } = observation;
       const turnKey = `${observation.agentId ?? ''}:${observation.turnId}`;
+      // A start recorded before a daemon restart is no longer in memory, but it is recorded.
+      const started = observation.type === 'tool_finished' && observation.toolCallId
+        ? active.get(observation.toolCallId)?.recordId ?? ledger.findToolStart(observation.toolCallId)?.id : undefined;
       const record = ledger.append({ ...metadata, spooledAt: context.late?.spooledAt,
+        notice: observation.type === 'input' && typeof data?.text === 'string' && harness.isNotice(data.text) || undefined,
         role: observation.type === 'message' && typeof data?.role === 'string' ? data.role : undefined,
         // A result belongs to its original start even if another input arrived
         // while it ran. Do not move a long-running tool to the newest request.
-        parentId: observation.type === 'tool_finished' && observation.toolCallId && active.has(observation.toolCallId)
-          ? active.get(observation.toolCallId)!.recordId
-          : observation.parentToolCallId ? active.get(observation.parentToolCallId)?.recordId
-          : observation.turnId ? capture.turns.get(turnKey) : capture.currentTurn,
+        parentId: started
+          ?? (observation.parentToolCallId ? active.get(observation.parentToolCallId)?.recordId
+          : observation.turnId ? capture.turns.get(turnKey) : capture.currentTurn),
         dataRef: payload === undefined ? undefined : ledger.payload(payload),
         internalAgent: internalAgent || undefined,
         summary: observation.type === 'input' ? preview(data?.text)
@@ -247,7 +308,7 @@ export class Captures {
         recordId: record.id, agentId: observation.agentId, turnId: observation.turnId
       });
       if (observation.type === 'tool_finished') {
-        if (!active.has(observation.toolCallId!) && !capture.transcriptFinished.has(observation.toolCallId!)) {
+        if (!started) {
           ledger.gap('missing-tool-start', observation.toolCallId ?? 'unknown');
         }
         if (live) this.settleTool(capture, observation.toolCallId!);
@@ -462,6 +523,38 @@ function outside(root: string, folder: string): boolean {
   try { real = fs.realpathSync(folder); } catch { real = path.resolve(folder); }
   const relative = path.relative(root, real);
   return relative.startsWith('..') || path.isAbsolute(relative);
+}
+
+interface NativeLines { ids: Set<string>; prompts: Set<string>; dated: [string | undefined, string][]; forkedFrom: Set<string>; created: number; sessionId?: string }
+
+/** Which of two session files holding the same lines wrote them first. A fork may say so;
+ * otherwise the earlier first line; files that start with the same line, by when each was made.
+ */
+function isOlder(a: NativeLines, b: NativeLines): boolean {
+  if (a.sessionId && b.forkedFrom.has(a.sessionId)) return true;
+  if (b.sessionId && a.forkedFrom.has(b.sessionId)) return false;
+  const [first, second] = [a.dated[0]?.[1], b.dated[0]?.[1]];
+  if (!first || !second) return false;
+  return first === second ? a.created < b.created : first < second;
+}
+
+/** What a found session's file says about itself: its line IDs, their dates and what it was forked from. */
+function nativeLines(harness: string, file: string): NativeLines {
+  const reader = adapter(harness);
+  const result: NativeLines = { ids: new Set(), prompts: new Set(), dated: [], forkedFrom: new Set(), created: 0 };
+  let text: string;
+  try { text = fs.readFileSync(file, 'utf8'); result.created = fs.statSync(file).birthtimeMs; } catch { return result; }
+  for (const line of text.split('\n')) {
+    let raw: any;
+    try { raw = JSON.parse(line); } catch { continue; }
+    const entry = reader.nativeEntry(raw);
+    result.sessionId ??= reader.nativeSession(raw);
+    if (entry.timestamp) result.dated.push([entry.id, entry.timestamp]);
+    const parent = reader.nativeForkedFrom(raw);
+    if (parent) result.forkedFrom.add(parent);
+    if (entry.id) { result.ids.add(entry.id); if (reader.nativePrompt(raw)) result.prompts.add(entry.id); }
+  }
+  return result;
 }
 
 function listDirs(dir: string): string[] {

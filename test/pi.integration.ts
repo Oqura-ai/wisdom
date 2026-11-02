@@ -67,6 +67,7 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     await new Promise<void>((resolve, reject) => { child.once('exit', code => code === 0 ? resolve() : reject(new Error(stderr))); });
     const ledger = daemon.captures.get(captureId);
     assert.equal(ledger.manifest.status, 'closed');
+    assert.match(ledger.manifest.harnessVersion ?? '', /^\d+\.\d+/, 'Pi reports its own version');
     assert.equal(fs.readFileSync(path.join(workspace, 'example.txt'), 'utf8'), 'hello wisdom\n');
     const changes = ledger.listRecords().filter(r => r.type === 'file_change');
     assert(changes.some(r => r.path === 'example.txt' && r.operation === 'modify'));

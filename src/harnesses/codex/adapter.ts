@@ -65,6 +65,10 @@ export const codex: HarnessAdapter = {
   nativeSession: entry => entry?.type === 'session_meta' && typeof entry.payload?.id === 'string'
     && typeof entry.payload.source !== 'object' ? entry.payload.id : undefined,
   nativeCwd: entry => entry?.type === 'session_meta' && typeof entry.payload?.cwd === 'string' ? entry.payload.cwd : undefined,
+  // A fork points to its parent and copies no lines, so no line of it needs tracing.
+  nativeForkedFrom: () => undefined,
+  isNotice: () => false,
+  nativeVersion: entry => entry?.type === 'session_meta' && typeof entry.payload?.cli_version === 'string' ? entry.payload.cli_version : undefined,
   // Codex adds its own user-role messages (AGENTS.md, <environment_context>); they are not typed.
   nativePrompt: entry => {
     const item = entry?.payload;

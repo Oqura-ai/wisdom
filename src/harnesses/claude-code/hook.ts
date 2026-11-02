@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { deliver } from '../../client.js';
+import { hookDataDir } from '../../paths.js';
 
 /** Map one Claude Code hook payload to a neutral observation. Verified against
  * Claude Code 2.1.306 payloads; unknown events are ignored, not guessed.
@@ -31,14 +32,14 @@ export function observation(event: any): Record<string, unknown> | undefined {
  * was started. It never stops Claude Code: an event the daemon cannot take is kept in
  * the spool, and exit code 1 shows the warning without blocking.
  */
-export async function main(dataDir = process.argv[2]): Promise<void> {
+export async function main(named = process.argv[2]): Promise<void> {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const event = JSON.parse(input);
   const mapped = observation(event);
   if (!mapped) return;
   try {
-    if (!dataDir) throw new Error('the hook names no Wisdom data folder; run wisdom init again');
+    const dataDir = hookDataDir('claude-code', process.env.CLAUDE_CONFIG_DIR, named);
     // Every hook names its session, so /clear, /resume and forks reach the right record. A
     // subagent's hooks name the parent session; its transcript is copied at SubagentStop.
     if (typeof event.session_id !== 'string' || !event.session_id) throw new Error('Claude Code hook has no session_id');

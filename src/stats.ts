@@ -3,7 +3,7 @@ import type { Captures } from './captures.js';
 import { workspaceKey } from './database.js';
 import { resumeCommands } from './harnesses/index.js';
 
-export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null }
+export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean }
 const emptyTokens = (): TokenTotals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null });
 function addTokens(into: TokenTotals, from: TokenTotals): void {
   for (const field of ['calls', 'input', 'cacheRead', 'cacheWrite', 'output', 'reasoning', 'total'] as const) into[field] += from[field];
@@ -40,7 +40,7 @@ export function stats(captures: Captures, request: { workspaceRoot?: string }) {
   // agents that did work; harness-internal helpers are excluded. Replies are assistant
   // messages with text, from the transcript or, without one, from the hook.
   const counts = new Map(captures.database.sql.prepare(`SELECT r.capture_id AS id,
-      sum(r.type='input' AND ${agent} IS NULL) AS requests, sum(r.type='tool_started') AS tools,
+      sum(r.type='input' AND ${agent} IS NULL AND json_extract(r.body,'$.notice') IS NULL) AS requests, sum(r.type='tool_started') AS tools,
       sum(r.type='tool_finished' AND r.is_error=1) AS failures, sum(r.type='file_change') AS changes,
       sum(r.type='gap') AS gaps,
       count(DISTINCT CASE WHEN r.type IN ('tool_started','subagent_started','input') THEN ${agent} END) AS subagents,
@@ -82,10 +82,16 @@ export function stats(captures: Captures, request: { workspaceRoot?: string }) {
     const model = modelRows.get(modelKey) ?? { ...emptyTokens(), harness, model: String(row.model) };
     addTokens(model, tokens); modelRows.set(modelKey, model);
   }
+  // Model responses after the harness's last total: that total is older than they are.
+  const costBehind = new Set(captures.database.sql.prepare(`SELECT DISTINCT r.capture_id AS id FROM records r JOIN captures c ON c.id=r.capture_id
+    WHERE c.workspace_root=? AND r.type='usage' AND json_extract(r.body,'$.usageScope')='call' AND json_extract(r.body,'$.beforeCapture') IS NULL AND ${agent} IS NULL
+      AND r.revision > (SELECT max(t.revision) FROM records t WHERE t.capture_id=r.capture_id AND t.type='usage' AND json_extract(t.body,'$.usageScope')='session-total')`)
+    .all(key).map(row => String(row.id)));
   for (const [id, cost] of sessionCost) {
     // The harness's own session total replaces summed per-call costs for that capture.
     const tokens = tokensByCapture.get(id) ?? tokensByCapture.set(id, emptyTokens()).get(id)!;
     tokens.costUsd = cost;
+    if (costBehind.has(id)) tokens.costBehind = true;
   }
 
   const sessions = inScope.map(manifest => {
@@ -117,11 +123,11 @@ export function stats(captures: Captures, request: { workspaceRoot?: string }) {
     WHERE c.workspace_root=? AND r.type IN ('tool_started','tool_finished') AND r.tool_name IS NOT NULL
     GROUP BY harness, r.tool_name ORDER BY calls DESC LIMIT 40`).all(key)
     .map(row => ({ harness: String(row.harness), toolName: String(row.toolName), calls: number(row.calls), failures: number(row.failures) }));
-  const files = captures.database.sql.prepare(`SELECT r.path AS path, count(*) AS changes,
+  const files = captures.database.sql.prepare(`SELECT r.path AS path, json_extract(r.body,'$.worktree') AS worktree, count(*) AS changes,
       count(DISTINCT r.capture_id) AS captures, max(json_extract(r.body,'$.observedAt')) AS lastChangedAt
     FROM records r JOIN captures c ON c.id=r.capture_id WHERE c.workspace_root=? AND r.type='file_change'
-    GROUP BY r.path ORDER BY changes DESC, lastChangedAt DESC LIMIT 20`).all(key)
-    .map(row => ({ path: String(row.path), changes: number(row.changes), captures: number(row.captures), lastChangedAt: String(row.lastChangedAt) }));
+    GROUP BY r.path, worktree ORDER BY changes DESC, lastChangedAt DESC LIMIT 20`).all(key)
+    .map(row => ({ path: String(row.path), worktree: row.worktree === null ? undefined : String(row.worktree), changes: number(row.changes), captures: number(row.captures), lastChangedAt: String(row.lastChangedAt) }));
   return { readVersion, workspaceRoot: inScope[0]?.workspaceRoot ?? request.workspaceRoot,
     harnesses: [...harnesses.values()], sessions, toolUsage, files,
     models: [...modelRows.values()].sort((a, b) => b.total - a.total),

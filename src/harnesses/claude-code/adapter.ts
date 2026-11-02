@@ -53,10 +53,14 @@ export const claudeCode: HarnessAdapter = {
   toolView: toolName => ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName) ? 'patch' : toolName === 'Read' ? 'file' : 'full',
   nativeSession: entry => typeof entry?.sessionId === 'string' ? entry.sessionId : undefined,
   nativeCwd: entry => typeof entry?.cwd === 'string' ? entry.cwd : undefined,
-  // A typed prompt, not a tool result, a meta line, a compaction summary or a slash
-  // command's own lines (those start no turn under hooks either).
+  nativeVersion: entry => typeof entry?.version === 'string' ? entry.version : undefined,
+  nativeForkedFrom: entry => typeof entry?.forkedFrom?.sessionId === 'string' ? entry.forkedFrom.sessionId : undefined,
+  // A finished background command wakes the agent with this, through the prompt hook.
+  isNotice: text => /^\s*<task-notification>/.test(text),
+  // What starts a turn under hooks: not a tool result, a meta line, a compaction summary, a
+  // slash command's own lines, or a line written only to the transcript (a fork's first notice).
   nativePrompt: entry => {
-    if (entry?.type !== 'user' || entry.isMeta || entry.isCompactSummary || entry.toolUseResult !== undefined) return undefined;
+    if (entry?.type !== 'user' || entry.isMeta || entry.isCompactSummary || entry.queueTranscriptOnly || entry.toolUseResult !== undefined) return undefined;
     const text = contentText(entry.message?.content)?.trim();
     return text && !/^<(?:command-|local-command-)/.test(text) ? text : undefined;
   },

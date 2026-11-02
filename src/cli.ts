@@ -7,13 +7,13 @@ import { parseArgs } from 'node:util';
 import { call, connectionAt, ensureDaemon } from './client.js';
 import { startDaemon } from './daemon.js';
 import { serveMcp } from './mcp.js';
-import { findDataDir, marker } from './paths.js';
+import { findDataDir, marker, movedFrom } from './paths.js';
 import { writeJson } from './ledger.js';
 import { installPi, launchPi, piEntry } from './harnesses/pi/launch.js';
 import { installClaudeCode, launchClaudeCode } from './harnesses/claude-code/launch.js';
 import { installCodex, launchCodex } from './harnesses/codex/launch.js';
 import { adapter } from './harnesses/index.js';
-import type { Launch } from './harnesses/launch.js';
+import { staleHooks, type Launch } from './harnesses/launch.js';
 
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const help = `Wisdom — live evidence ledger for coding agents (Pi, Claude Code, Codex)
@@ -32,7 +32,7 @@ const help = `Wisdom — live evidence ledger for coding agents (Pi, Claude Code
 Every command finds the project's .wisdom folder from the current folder (or --cwd) upward,
 like git; --data DIR or WISDOM_DATA_DIR names it directly. Any harness process that uses
 the project's harness home records, however it was started; track is the short way.
-resume takes the full session ID. CAPTURE also takes its first 8+ characters, or latest.
+resume takes the full session ID. CAPTURE also takes its first 8+ characters, or latest (the newest session with a turn).
 POSITION is t3 (a turn), t3/c2 (a tool call), a1 (a subagent), a1/c2, or outside.
 Run: npm.cmd run wisdom -- <command>
 `;
@@ -69,6 +69,9 @@ async function main(): Promise<void> {
   const found = explicit ? path.resolve(explicit) : findDataDir(start);
   if (!found) throw new Error(`${start} is not inside a Wisdom project. Run: wisdom init`);
   const dataDir = found;
+  // track and resume write the hooks again themselves.
+  const stale = ['track', 'resume'].includes(command) ? [] : staleHooks(dataDir);
+  if (stale.length) console.error(`Wisdom's hooks for ${stale.join(', ')} point to a Wisdom build that has moved, so they cannot run. Run: wisdom init`);
   if (command === 'daemon') {
     if (first === 'run') {
       const daemon = await runDaemon(dataDir, port, !values['no-dashboard']);
@@ -109,7 +112,7 @@ async function main(): Promise<void> {
   const reading = { from: number(values.from), at: number(values.at) };
   if (command === 'open' && !first) throw new Error('Use: wisdom open POSITION --capture CAPTURE|latest');
   const input = command === 'glance' ? { capture: first, glance: true, ...reading } : { capture: values.capture, open: first, ...reading };
-  console.log((await call(connectionAt(dataDir), '/ledger', input)).text);
+  console.log((await call(await ensureDaemon(dataDir), '/ledger', input)).text);
 }
 
 /** The daemon's default port is 7434; when another project's daemon holds it, the next
@@ -137,6 +140,8 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
   if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
   console.log(`${fresh ? 'Created' : 'Found'} ${dataDir}${ignored ? '' : ' (added .wisdom/ to .gitignore)'}`);
+  const known = fresh ? undefined : movedFrom(dataDir);
+  if (known) console.log(`  This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
   const installed = (name: string, check: () => void, install: () => string, next: string) => {
     try { check(); } catch { console.log(`  ${name.padEnd(12)} not found, skipped (run wisdom init again after installing it)`); return; }
     console.log(`  ${name.padEnd(12)} hooks in ${path.relative(project, install())} · ${next}`);
@@ -149,6 +154,7 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   installed('Pi', () => { fs.accessSync(piEntry(values['pi-entry'])); }, () => installPi(dataDir),
     'first run: wisdom track pi, then log in once (/login)');
   console.log('Your global harness settings (~/.claude, ~/.codex, ~/.pi) are not touched.');
+  console.log('Keep .wisdom/ private: it holds each harness\'s login and unredacted sessions. .gitignore only keeps it out of git, so leave it out of zips, copies and synced folders.');
   const connection = await ensureDaemon(dataDir, port);
   console.log(`Daemon running at ${connection.url}`);
 }
