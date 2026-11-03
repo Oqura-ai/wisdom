@@ -12,6 +12,9 @@ dashboard/next-env.d.ts
 # Wisdom recordings: unredacted transcripts, payloads and the daemon's access token
 .wisdom/
 
+# Experiment runs: recorded sessions and every review
+experiment/runs/
+
 # Local test playground for trying tracked sessions
 wisdom-play/
 
