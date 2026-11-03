@@ -3,14 +3,20 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "A local SQLite ledger and composable query service for Pi sessions",
-  "engines": { "node": ">=24" },
+  "description": "A local SQLite evidence ledger for coding-agent sessions (Pi, Claude Code, Codex), read through two moves: glance and open",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "check": "tsc --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:pi": "npm run build && node --test dist/test/pi.integration.js",
-    "wisdom": "node dist/src/cli.js"
+    "test:codex": "npm run build && node --test dist/test/codex.integration.js",
+    "wisdom": "node dist/src/cli.js",
+    "dashboard:install": "npm --prefix dashboard ci",
+    "dashboard:build": "npm --prefix dashboard run build",
+    "dashboard:dev": "npm --prefix dashboard run dev"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

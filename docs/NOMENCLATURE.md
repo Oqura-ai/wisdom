@@ -1,188 +1,107 @@
 # Wisdom vocabulary
 
-This is the developer reference for query version 3. The runtime library is
-[src/vocabulary.ts](../src/vocabulary.ts). Run `node dist/src/cli.js vocabulary`
-without a daemon, or send `{"op":"describe"}` to the daemon/MCP for discovery.
+The words an agent reads in ledger responses, and the record names behind them.
+The ledger is implemented in [src/discovery.ts](../src/discovery.ts); its request
+schema is `ledgerSchema` in [src/schema.ts](../src/schema.ts).
 
-## Identity and evidence
+## Requests
 
-| Name | Meaning | Scope / caveat |
-| --- | --- | --- |
-| Workspace | Canonical project directory | `scope.workspaceRoot`; Windows casing is normalized. |
-| Session | Pi's logical conversation | `sessionId` in queries; `piSessionId` in manifests. One session may have multiple captures. |
-| Capture | One Wisdom recording period | `captureId`; restarting/resuming Pi opens another capture. |
-| Record / event | One immutable observation or source reference | `id`; unique across the database. |
-| `seq` | Append position within one capture | The first record has sequence 1. |
-| `readVersion` | Global SQLite append revision | Fixes all records and includes returned by a composable query. It is not a filesystem snapshot. |
-| `lastSeq` | Latest visible sequence within a capture | Summary only; `readVersion` is the read boundary. |
-| Request | Extension `input` event | This records arrival, not proof of when a queued input was consumed. |
-| `requestId` | Input associated with an observation | Check `linkBasis`. Missing means unlinked, not nonexistent. |
-| `parentId` | Immediate observed parent record | A result points to its start; a change points to the observed tool start when available. |
-| `toolCallId` | Harness call/result ID | Join using **capture + toolCallId**, never toolCallId alone. |
-| `sourceEntryId` | Entry ID in Pi's native transcript | Distinct from Wisdom's record ID. |
-| `sourceParentId` | Pi transcript branch parent | Native branch structure is preserved, but is not interpreted as a filesystem history. |
-| Patch | UTF-8 unified diff for an observed creation, modification or deletion | Creation and deletion diff from or to empty (`/dev/null`), so the file's contents are visible. Binary or non-UTF-8 sides have no patch and set `patchUnavailable`. |
-| Payload | Exact stored hook body or patch | Content-addressed SHA-256 file within the capture directory. |
-| Surface content | Recorded user/assistant text blocks | Excludes assistant thinking blocks and tool-call arguments. |
-| Intent | Surface requests and explanations | No model-inferred intent, hidden reasoning, or claim that every reason was recorded. |
-| Gap | Known missing/limited observation | Query events with `where.type="gap"`; also inspect recovery gaps. |
+One tool (`ledger` over MCP, `POST /ledger` over HTTP, `glance`/`open` in the CLI), five parameters:
 
-`linkBasis="recorded-parent"` follows the parent recorded by the hook observer.
-`linkBasis="observed-input-window"` associates native records with the most recent
-observed input at ingestion. The latter can be wrong for semantic intent after
-steering, compaction, transcript branching, or delayed persistence. It is useful
-navigation, not a causal assertion. Neither value proves the model consumed that input.
-
-File `attribution="observed-during-tool"` means the change was seen during an
-operation interval. `activeToolCallIds` preserves overlapping tools. External
-writers may also have contributed. `external-or-unknown` identifies observations
-without an active tool. This implementation does not solve parallel authorship.
-
-## Query language
-
-```json
-{
-  "find": "changes",
-  "scope": {"workspaceRoot": "C:/projects/app"},
-  "where": {"path": "src/auth.ts", "tool.isError": true},
-  "select": ["path", "operation", "patch", "attribution"],
-  "include": {
-    "request": {"select": ["content"]},
-    "outputs": {"select": ["content", "isError"]}
-  },
-  "limit": 20,
-  "maxChars": 8000
-}
-```
-
-| Property | Contract |
+| Parameter | Meaning |
 | --- | --- |
-| `find` | `requests`, `messages`, `tools`, `outputs`, `changes`, or `events`. |
-| `preset` | Named ordinary query: `intent`, `timeline`, `changes`, `failures`, `file-history`, `interaction-review`. |
-| `captureId` | Shorthand for a single capture scope. |
-| `scope` | `captureIds` and/or `sessionIds` arrays (1–100), and/or `workspaceRoot`. Supplied scope constraints intersect. At least one scope is required. |
-| `where` | AND of field conditions. Values mean equality, or use `{eq}`, `{in}`, `{contains}`, `{gte}`, `{lte}`. Multiple operators on one field also AND together. |
-| `select` | Fields to return. Identity and evidence references are always retained. An empty array selects identity only. |
-| `include` | Relations to expand. Each accepts `select`, `where`, `include`, `limit`. |
-| `limit` | Root page size 1–100, default 20. Includes default to 10, maximum 50. |
-| `readVersion` | Optional existing global revision; omitted means current evidence. |
-| `cursor` | Opaque continuation bound to the query and its original revision. Repeat the same query with this cursor. |
-| `maxChars` | Shared body-character budget, 100–32,000; default 8,000. Metadata is additional. |
-| `clean` | Conversation-only array with original content and no evidence wrappers. See below. |
+| `glance: true` | Without `capture`: recorded sessions, newest first. With `capture`: the session's shape and one entry per turn. |
+| `open` | A position, returned whole (see below). |
+| `capture` | A session ID, a unique prefix of 8 or more characters, or `latest` (the most recently started session with a turn; if none has one, the most recently started). Required with `open`. |
+| `from` | Line to continue from, as a limited response's last line states. |
+| `at` | Read version to pin. Every response states its version. |
 
-`clean:true` works with `intent`, `timeline`, `interaction-review`, or
-`find=events/requests/messages/tools/outputs`. Supply scope, optional `where`,
-and optional `readVersion`. It is a fixed presentation; select/include, cursor,
-inspection, inventory and changes presets are rejected. Filters apply to source
-records before cleaning; filtered-out call halves can therefore appear as null.
+Exactly one of `glance` and `open` is sent. Errors say what to send instead.
 
-Clean output consists of `{user: content}`, `{assistant: content}`, and
-`{tool: name, input: arguments, output: result}`. A paired tool occupies its start
-position. Only source copies linked to matching input and calls correlated by ID
-are collapsed; repeated input text alone is never deduplicated. Empty assistant
-tool-call/thinking-only messages and administrative records are omitted. Original
-text is not paraphrased. Multiple text blocks are joined by newlines; non-text
-blocks and arbitrary structured tool results remain structured. Pi's recognized
-successful/untruncated shell stdout duplicate is unwrapped, removing its timing
-and success envelope; failed/truncated structured envelopes retain their fields.
+## Positions
 
-Clean mode runs in the daemon and reads relevant SQL pages at one readVersion. Because it
-prints no continuation metadata, it errors when the final array exceeds `limit`
-(default 20, max 100) or serialized `maxChars` (default 8,000, max 32,000), instead
-of returning a partial conversation. Internal reads are capped at 10,000 relevant
-records, 4 MiB per body, and 16 MiB total source bodies. Missing evidence
-files cause an error. `output:null` means no captured result is available in the
-selection. Clean output intentionally omits coverage, attribution, IDs and patches;
-the standard response remains available for investigations requiring those facts.
+| Position | What it is |
+| --- | --- |
+| `t3` | Turn 3: the third input the user gave, in recorded order. A subagent's task is not a turn. |
+| `t3/c2` | The second tool call of turn 3, in recorded order. Opening it shows its full input and output and its patches, with no de-duplication. |
+| `a1` | The first subagent of the capture, numbered by its first recorded evidence. It opens with the same layers as a turn. |
+| `a1/c2` | The second tool call of subagent 1. |
+| (glance header) | `session <id>` is the harness's own session ID, which names the recording; `resume with: wisdom resume <full session ID>` continues it under recording. |
+| `outside` | Calls and changes recorded outside any turn (before the first input, or idle edits by other processes). |
+| `p1` | A patch, numbered within the response that shows it. It is a label, not an address: open its turn or call. |
 
-Preset filters merge with explicit `where` values; explicit values override the
-same preset key. Explicit `select` or `include` **replaces** that preset projection.
-`file-history` requires `where.path`. Prefer workspace scope for history across
-sessions, since unrelated projects can contain identical relative paths.
+Positions are stable at a version: records are append-only, so a number never moves to
+other evidence.
 
-Filters: `id`, `captureId`, `sessionId`, `seq`, `type`, `parentId`, `requestId`,
-`toolCallId`, `toolName`, `path`, `role`, `isError`, `observedAt`, `operation`,
-`attribution`, `text`, `surface`, `tool.name`, `tool.isError`.
+## Response grammar
 
-`text` searches the short deterministic summary, case-insensitively with
-`contains`. It does not search all bodies. Paths are workspace-relative; both slash styles
-are normalized to `/` in the shared filter compiler. Timestamps
-use ISO strings; comparisons are lexical. `eq:null` tests absence; `in` does not
-accept null. `surface` accepts a boolean. Relationship conditions use SQL EXISTS:
-filtering a change by `tool.isError` finds its correlated hook result. It does not
-mean every change in the same request failed.
+| Text | Meaning |
+| --- | --- |
+| `in` | The user's input, in full. A subagent's input is shown as `task`. `in (from session file)` when no hook reported it and it was read from the harness's own session file. `in (harness notice)` when the harness wrote it to wake the agent, such as a finished background command; the agent's work after it is a turn, but it is not a person's prompt. |
+| `out` | In a glance: the start (240 characters, whitespace joined) of the turn's last assistant reply. `(from hook)` when the harness's final-reply hook is the only copy. |
+| `reply` | An assistant reply, whole, as recorded. `reply (from hook)` when only the hook has it. |
+| `thinking  redacted · 1.1 s` | The harness recorded that thinking happened, not its text (Claude Code omits it; Codex encrypts it). |
+| `c1  Edit src/a.ts · ok · 61 ms · → p1` | A call: tool, target, status, duration, the patches observed while it ran, and any subagent it started (`→ a1`). |
+| `input and output repeat p1` | The tool's input and output are the change itself (an edit or write), shown once as the patch. Open the call for the raw input and output. |
+| `output  file content, N characters` | A successful file read, listed by size. Open the call to read it. |
+| `p1  path · modify · +2 −1 · observed during c1` | A patch: path, operation, line counts, attribution. The raw unified diff follows, indented. |
+| `change  path · p3 · not made by a recorded tool call` | A change inside a turn with no tool running. |
+| `not recorded  …` | A recording gap or a recovery gap, as the recorder logged it. |
+| `unreadable  record …` | A stored body could not be read; the reason follows. |
+| `⤷ ` | The continued piece of a line longer than 2,000 characters. |
+| `complete · N lines` | The whole answer. |
+| `limited · lines 1–N of M · continue: {…}` | The answer stopped at the ceiling (80,000 characters). Send the request shown. |
 
-Selectable fields are listed by `vocabulary.fields`. Most are the names above
-plus `summary`, `observedAt`, `beforeHash`, `afterHash`, `operation`, `linkBasis`,
-`activeToolCallIds`, and `patchUnavailable`. Special selections:
+Tool rules per harness ([types.ts](../src/harnesses/types.ts) `toolView`):
 
-- `content`: surface text for requests/messages; serialized recorded JSON for tool outputs.
-- `data`: original raw body, explicitly requested; may contain tool arguments and thinking blocks.
-- `patch`: recorded unified diff, or `{available:false, reason}`.
-- `status`: for tool starts, `completed`, `error`, or `pending-or-missing`. Completed means a result was recorded, not that the resulting code is correct.
-
-## Relationships
-
-| Relation | Starting from a request | Starting from a tool/output/change |
+| Harness | `patch` (input and output shown as the patch) | `file` (successful output listed by size) |
 | --- | --- | --- |
-| `request` | The request itself | Associated input via `requestId`. |
-| `messages` | Associated recorded messages | Messages associated with that input. |
-| `tools` | All starts associated with the input | Starts matching the same toolCallId. |
-| `outputs` | All finishes associated with the input | Finishes matching the same toolCallId. |
-| `changes` | All changes associated with the input | Changes matching the same toolCallId. |
-| `source` | Empty unless there is an explicit source link | Native source records with the same toolCallId. A native record without a call ID returns itself. |
-| `parent` | Recorded immediate parent, if present | Recorded immediate parent. |
-| `children` | Direct recorded children | Direct recorded children. |
+| Claude Code | `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `Read` |
+| Pi | `edit`, `write` | `read` |
+| Codex | `apply_patch` | none |
 
-When a record lacks a call ID, tools/outputs/changes fall back to its associated
-request. When it lacks both, the relation is empty. Nested operations with their
-own IDs can be reached using `children`; a request-wide include also contains
-their descendants through the stored request association. An include filter may
-not override the keys that establish its relation.
+A `patch` call with no recorded change, or one that failed, is shown in full. Every other
+tool is shown in full. Unknown tools are always shown in full.
 
-Native pre-capture history remains available through `intent`/`messages`/`events`.
-It is not manufactured into hook requests. Therefore `interaction-review`
-includes interactions recorded during tracking, not every historical native turn.
-Input hooks and native user messages may overlap; Wisdom preserves both kinds
-of evidence rather than silently treating them as identical.
+## Status words
 
-## Result and continuation vocabulary
+| Word | Meaning |
+| --- | --- |
+| `ok` / `failed` | The harness reported success or an error. A finished tool is not correct code. |
+| `outcome not recorded` | A result was recorded without a success flag. |
+| `script step` | A call that is the harness's own scripting of tools (Codex `exec`, `wait`), shown whole. The actions it ran are their own calls, such as `Bash`. Their link is only timing, and a glance counts only the actions. |
+| `reported-by-harness` | A change the harness reported for a tool when Wisdom observed none (the daemon was down, for example). The diff is the harness's claim, not an observation. |
+| `pending` | No result yet, while the session records. |
+| `no result recorded` | No result, and the session is no longer recording. |
+| `result from transcript` | No result hook arrived; the result was taken from the harness's own transcript. |
+| `seen only in transcript` | The call appears in the transcript with no hook for it. |
 
-Every root item has `id`, `captureId`, `sessionId`, and `evidence` references.
-Each included relation returns `{items, truncated, nextQuery}`. Submit a returned
-`nextQuery` directly when you need that relation's next page. Includes are capped
-at depth 3 and 500 total expanded records. When the expansion budget interrupts a
-relation mid-page, its continuation restarts that relation and says to deduplicate
-by record ID. Root pagination is independent, via `nextCursor`.
+## Records behind the text
 
-Bodies return `{available, text, totalChars, truncated}`. Truncated bodies provide
-an `inspect` request. For `content`, this opens the underlying raw evidence from
-offset zero, since extracted surface-text offsets do not match raw JSON offsets.
-For raw `data` and `patch`, the supplied offset continues after the excerpt.
-Further inspection uses `sections.*.nextOffset`. Fragments need not be valid JSON
-or whole diff hunks. Missing/unreadable evidence is reported in `issues`.
+| Name | Meaning | Caveat |
+| --- | --- | --- |
+| Workspace | Canonical project directory | Windows casing is normalized. |
+| Harness | The coding agent recorded (`pi`, `claude-code`, `codex`) | |
+| Session | The harness's logical conversation (`sessionId`) | One session has one capture; a resume or a pause continues it. |
+| Capture | The record of one harness session, named by that session's ID | A resume continues it; `/clear` or `/new` starts another. |
+| Record | One immutable observation | `seq` orders records within a capture. |
+| Version | Global SQLite append revision | Fixes the evidence a read sees. It is not a filesystem snapshot. |
+| Request (`input`) | A user input as the harness reported it | Records arrival, not when a queued input was consumed. |
+| `toolCallId` | The harness's call/result ID | Unique only within a capture. |
+| Patch | UTF-8 unified diff of an observed creation, modification or deletion | Creation and deletion diff from or to empty, so contents are visible. Binary or non-UTF-8 files have no patch (`patch not recorded: binary-or-non-utf8`). Renames are a delete and a create. |
+| Payload | An exact stored hook body or patch | SHA-256 addressed, inside the capture directory. |
+| Usage | Tokens and cost one model response reported | Counted once per response; history from before a capture is excluded; cost only where the harness reports it. |
+| Gap | A known missing or limited observation | Listed as `not recorded`; three or more of one kind share a line: `<kind> ×N · first (seq a): … · last (seq b): …`. |
 
-`coverage` covers the selected scope, **before root filters**: per-capture
-`lastSeq`, `gapCount`, `pendingToolCount`, `recoveryGaps`, and `currentStatus`.
-Only lifecycle status is live; evidence counts and includes use `readVersion`.
-Zero matches does not prove an action never happened. An unknown/empty scope
-returns zero records. Query `sessions` to check capture existence.
+`observed during c1` (record value `observed-during-tool`) means the change was seen while
+that call ran. Other active calls and external writers may have contributed; overlapping
+calls are kept in `activeToolCallIds`. `external-or-unknown` means no tool call was running.
 
-Selection, `op=inspect`, `op=sessions`, and `op=describe` have separate strict
-schemas. Unknown fields/operators and mixed operation options are errors.
-HTTP returns 400 with `error`; MCP marks the tool result as an error; the CLI exits
-nonzero. No public raw SQL endpoint, automatic LLM query translation, GraphQL,
-OR expressions, aggregates, arbitrary sort, or full-text index is implemented.
+Assistant text and native transcript lines are linked to the input that was most recent
+when they arrived, or to a recorded native turn ID. That link is temporal; after steering,
+compaction or queued input it can be wrong about intent.
 
-## Exact inspection and inventory
+## Dashboard views
 
-`{"op":"inspect","captureId":"CAPTURE","id":"RECORD","sections":["data","patch"]}`
-reads one indexed record. Optional `readVersion` fixes visibility,
-`contentOffset` defaults to 0, and `maxChars` is shared across sections.
-The response contains `id`, `captureId`, `readVersion`, and `sections`.
-Each section reports `available` and, when present, `text`, `totalChars`,
-and `nextOffset`. Inspection does not scan capture-wide coverage.
-
-`{"op":"sessions","limit":20}` lists capture manifests with `lastSeq` and
-`nextCursor`. Repeat with that cursor for the next page. Inventory is live,
-not a revision snapshot. `{"op":"describe"}` returns the query vocabulary.
+The dashboard reads `POST /view` (`projects`, `project`, `capture`, `turn`, `record`,
+`native-result`). These return records as stored, for drawing; agents use the ledger.

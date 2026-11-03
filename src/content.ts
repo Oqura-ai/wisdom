@@ -15,3 +15,12 @@ export function surfaceText(value: any): string {
   return typeof content === 'string' ? content : Array.isArray(content)
     ? content.filter(block => block?.type === 'text').map(block => block.text).join('\n') : '';
 }
+
+// The single definition of conversation surface: a new role cannot be a message in one view only.
+export const surfaceRoles = ['user', 'assistant'] as const;
+
+export function isSurfaceRecord(record: { type: string; role?: string }): boolean {
+  const surfaceRole = (surfaceRoles as readonly string[]).includes(record.role ?? '');
+  return record.type === 'input' || record.type === 'message' && (record.role === undefined || surfaceRole)
+    || record.type === 'source_record' && surfaceRole;
+}

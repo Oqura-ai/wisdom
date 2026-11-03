@@ -1,5 +1,29 @@
+# Personal notes and drafts
 private
+
+# Dependencies and build output (tests and hooks run from dist/; rebuild with npm run build)
 node_modules/
 dist/
-.wisdom/
+*.tsbuildinfo
+dashboard/.next/
+dashboard/next-env.d.ts
 .npm-cache/
+
+# Wisdom recordings: unredacted transcripts, payloads and the daemon's access token
+.wisdom/
+
+# Experiment runs: recorded sessions and every review
+experiment/runs/
+
+# Local test playground for trying tracked sessions
+wisdom-play/
+
+# Personal harness settings (shared project settings stay tracked)
+.claude/settings.local.json
+
+# Secrets, logs and OS clutter
+.env
+.env.*
+*.log
+Thumbs.db
+.DS_Store

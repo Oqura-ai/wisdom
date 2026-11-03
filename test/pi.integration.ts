@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
+import { installPi } from '../src/harnesses/pi/launch.js';
 
 test('installed Pi records real write/edit/failing/nested tools and can be queried mid-session', { timeout: 30000 }, async () => {
   const project = fileURLToPath(new URL('../../', import.meta.url));
@@ -18,14 +19,14 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
   const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
   const dataDir = path.join(root, 'data');
   const daemon = await startDaemon(dataDir, 0);
-  const child = spawn(process.execPath, [entry, '--mode', 'rpc', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
+  // As wisdom init does: Pi's agent folder in the data folder, Wisdom's extension in its settings.
+  const home = installPi(dataDir);
+  const child = spawn(process.execPath, [entry, '--mode', 'rpc', '--no-skills', '--no-prompt-templates', '--no-context-files',
     '--no-mcp', '--provider', 'wisdom-test', '--model', 'scripted', '--thinking', 'off',
-    '--extension', path.join(project, 'dist', 'src', 'pi-extension.js'),
     '--skill', path.join(project, 'skills', 'wisdom-ledger'),
-    '--extension', path.join(project, 'test', 'fixtures', 'scripted-provider.mjs'),
-    '--session-dir', path.join(root, 'native')], {
+    '--extension', path.join(project, 'test', 'fixtures', 'scripted-provider.mjs')], {
     cwd: workspace, windowsHide: true,
-    env: { ...process.env, WISDOM_DATA_DIR: dataDir, PI_CODING_AGENT_DIR: path.join(root, 'pi-home') },
+    env: { ...process.env, PI_CODING_AGENT_DIR: home },
     stdio: ['pipe', 'pipe', 'pipe']
   });
   let stderr = '', buffer = '';
@@ -59,13 +60,14 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     const captureId = [...daemon.captures.ledgers.keys()][0];
     child.stdin.write(JSON.stringify({ id: 'prompt', type: 'prompt', message: 'Run the local recording fixture.' }) + '\n');
     await waitFor(() => daemon.captures.get(captureId).listRecords().some(r => r.type === 'tool_started' && r.toolName === 'nested_writer'));
-    const live = await call(daemon.connection, '/query', { preset: 'timeline', captureId });
-    assert(live.coverage[0].pendingToolCount > 0);
+    const live = (await call(daemon.connection, '/ledger', { capture: captureId, glance: true })).text;
+    assert.match(live, / pending/, 'a running call is visible while Pi works');
     await waitFor(() => messages.some(m => m.type === 'agent_settled'));
     child.stdin.end();
     await new Promise<void>((resolve, reject) => { child.once('exit', code => code === 0 ? resolve() : reject(new Error(stderr))); });
     const ledger = daemon.captures.get(captureId);
     assert.equal(ledger.manifest.status, 'closed');
+    assert.match(ledger.manifest.harnessVersion ?? '', /^\d+\.\d+/, 'Pi reports its own version');
     assert.equal(fs.readFileSync(path.join(workspace, 'example.txt'), 'utf8'), 'hello wisdom\n');
     const changes = ledger.listRecords().filter(r => r.type === 'file_change');
     assert(changes.some(r => r.path === 'example.txt' && r.operation === 'modify'));
@@ -74,13 +76,15 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     assert(ledger.listRecords().some(r => r.type === 'tool_finished' && r.toolName === 'partial_failure' && r.isError));
     assert(ledger.listRecords().some(r => r.parentToolCallId));
     assert(ledger.listRecords().some(r => r.type === 'source_record' && r.role === 'user'));
-    assert.deepEqual(fs.readFileSync(path.join(ledger.dir, 'pi-session.jsonl')), fs.readFileSync(ledger.manifest.source!));
-    const review = await call(daemon.connection, '/query', { preset: 'interaction-review', captureId, maxChars: 32000 });
-    assert.equal(review.items.length, 1);
-    assert(review.items[0].changes.items.some((r: any) => r.path === 'example.txt' && r.patch.available));
-    assert(review.items[0].outputs.items.some((r: any) => r.toolName === 'partial_failure' && r.isError));
-    assert(review.items[0].messages.items.some((r: any) => r.role === 'assistant'));
-    console.log(`Verified installed Pi ${version}: ${changes.length} file observations, live queries, native source mirrored byte-for-byte.`);
+    assert.deepEqual(fs.readFileSync(ledger.mirror), fs.readFileSync(ledger.manifest.source!));
+    assert(ledger.manifest.source!.startsWith(path.join(home, 'sessions')), 'the session file stays in the harness home');
+    const read = async (request: object): Promise<string> => (await call(daemon.connection, '/ledger', { capture: captureId, ...request })).text;
+    assert.match(await read({ glance: true }), /^1 turn · /m);
+    const turn = await read({ open: 't1' });
+    assert.match(turn, /^p\d+  example\.txt · modify · /m);
+    assert.match(turn, /^c\d+  partial_failure · failed/m);
+    assert.match(turn, /^reply /m);
+    console.log(`Verified installed Pi ${version}: ${changes.length} file observations, live reads, native source mirrored byte-for-byte.`);
   } finally {
     if (child.exitCode === null) child.kill();
     await daemon.close();
