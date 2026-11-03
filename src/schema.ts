@@ -118,7 +118,7 @@ export interface LedgerRecord {
   role?: string;
   path?: string;
   operation?: 'create' | 'modify' | 'delete';
-  attribution?: 'observed-during-tool' | 'external-or-unknown';
+  attribution?: 'observed-during-tool' | 'external-or-unknown' | 'reported-by-harness';
   /** A change in a linked git worktree: `path` is relative to it. */
   worktree?: string;
   branch?: string;

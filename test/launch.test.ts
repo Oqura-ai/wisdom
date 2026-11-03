@@ -12,7 +12,7 @@ import { staleHooks } from '../src/harnesses/launch.js';
 import { installClaudeCode, launchClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installCodex } from '../src/harnesses/codex/launch.js';
 import { startDaemon } from '../src/daemon.js';
-import { call, spool } from '../src/client.js';
+import { call, connectionAt, spool } from '../src/client.js';
 import { findDataDir, hookDataDir, marker } from '../src/paths.js';
 
 const temp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `wisdom-${name}-`));
@@ -521,4 +521,33 @@ test('a worktree outside the project folder is watched without an outside gap; a
     assert.match(glance, /sub\/b\.txt/);
     assert.doesNotMatch(glance, /outside-watched-folder/);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('run through PowerShell with its output piped, as Codex runs it, a hook that starts the daemon returns at once and the daemon survives', { skip: process.platform !== 'win32' }, async () => {
+  const { spawn } = await import('node:child_process');
+  const root = temp('hang');
+  const data = path.join(root, 'data'); fs.mkdirSync(data);
+  const hook = path.resolve('integrations', 'codex', 'hook.mjs').replaceAll('\\', '/');
+  const started = Date.now();
+  const child = spawn('powershell.exe', ['-NoProfile', '-Command', `node "${hook}" "${data.replaceAll('\\', '/')}"`], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'hang', turn_id: 't', cwd: root, prompt: 'hi' }));
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.resume();
+  // The output pipe closing is what Codex waits for.
+  await once(child.stdout, 'end');
+  const seconds = (Date.now() - started) / 1000;
+  try {
+    assert(seconds < 10, `the hook's output stayed open for ${seconds} s`);
+    assert.equal(output, '{}');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const connection = connectionAt(data);
+    assert.equal((await call(connection, '/health')).status, 'running');
+    assert.match((await call(connection, '/ledger', { capture: 'hang', glance: true })).text, /^t1  in {8}hi$/m);
+  } finally {
+    await call(connectionAt(data), '/stop', {}).catch(() => undefined);
+    for (let i = 0; i < 100 && fs.existsSync(path.join(data, 'daemon.json')); i++) await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 500));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

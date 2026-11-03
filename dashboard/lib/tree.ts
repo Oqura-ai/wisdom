@@ -21,7 +21,8 @@ export function buildTree(events: EventRecord[]): { roots: TreeNode[]; unlinked:
     if (event.type === 'tool_finished' && event.toolCallId) {
       // A hook result beats a transcript-derived one; keep the latest of each kind.
       const prior = results.get(event.toolCallId);
-      if (!prior || prior.resultBasis || !event.resultBasis) results.set(event.toolCallId, event);
+      const outcomeDiffers = prior && typeof prior.isError === 'boolean' !== (typeof event.isError === 'boolean');
+      if (!prior || (outcomeDiffers ? typeof event.isError === 'boolean' : prior.resultBasis || !event.resultBasis)) results.set(event.toolCallId, event);
     }
   }
   const kindOf = (type: string, role?: string): NodeKind | undefined => type === 'input' ? 'request' : type === 'tool_started' ? 'tool'

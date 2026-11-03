@@ -170,6 +170,8 @@ To move a project or the Wisdom checkout, stop the daemon first (`wisdom daemon 
 
 ## Capture scope and honest limits
 
+**Codex's own report.** Codex 0.164 runs tools from a script (`exec`, polled with `wait`), so a call appears as a `script step` beside the real `Bash` or `apply_patch`, with no stated link between them. How a tool ended comes from what Codex recorded it ran, joined by ID. A change Wisdom could not observe, because its daemon was down, is taken from Codex's report and labelled `reported-by-harness`.
+
 **Linked git worktrees.** A session started in a worktree belongs to its main project. Each session watches its project and any worktree it works in, and records those changes with the worktree's name and branch and paths relative to it. A worktree gets its baseline when the session first works there, so checking it out is not logged as changes, and a `worktree-entered` gap marks what came before. Files changing in a worktree the session never worked in get one `other-worktree` gap and no diffs: a tool that writes there from another folder, such as a shell `cd`, is recorded that way.
 
 - Native session mirroring and idle watcher processing run every 500 ms. Before a tool runs, the harness waits for its start observation to be delivered (or kept in the spool). File changes are observed at tool boundaries, not after every internal filesystem write.

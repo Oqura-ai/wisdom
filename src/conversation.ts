@@ -43,6 +43,15 @@ export type TurnItem =
   | Change
   | { kind: 'subagent'; id: string; at: string; subagent: Subagent };
 
+/** Which of two results to show for a call. One that says how the call ended beats one that
+ * does not; otherwise a hook result is preferred over one established from the transcript.
+ */
+export function betterResult(prior: LedgerRecord | undefined, next: LedgerRecord): boolean {
+  if (!prior) return true;
+  if (typeof prior.isError === 'boolean' !== (typeof next.isError === 'boolean')) return typeof next.isError === 'boolean';
+  return !!prior.resultBasis || !next.resultBasis;
+}
+
 const turnTypes = ['input', 'source_record', 'message', 'tool_started', 'tool_finished', 'file_change', 'subagent_started', 'subagent_stopped', 'agent_settled'];
 
 /** One request as a conversation turn: the prompt, then thinking, replies, tool calls
@@ -95,13 +104,13 @@ export function conversation(captures: Captures, request: TurnRequest) {
   const at = (r: LedgerRecord) => r.sourceTimestamp ?? r.observedAt;
   records.sort((a, b) => at(a).localeCompare(at(b)) || a.seq - b.seq);
 
-  // Results: a hook result is preferred over one established from the transcript.
   const finishes = new Map<string, LedgerRecord>();
   for (const r of records) if (r.type === 'tool_finished' && r.toolCallId) {
     const prior = finishes.get(r.toolCallId);
-    if (!prior || prior.resultBasis || !r.resultBasis) finishes.set(r.toolCallId, r);
+    if (betterResult(prior, r)) finishes.set(r.toolCallId, r);
   }
   const nativeResults = new Map<string, unknown>();
+  const nativeOutcomes = new Map<string, boolean>();
   const hookTools = new Set(records.filter(r => r.type === 'tool_started' && r.toolCallId).map(r => r.toolCallId!));
   const buckets = new Map<string, TurnItem[]>(); // '' is the main agent
   const bucket = (agentId?: string) => buckets.get(agentId ?? '') ?? buckets.set(agentId ?? '', []).get(agentId ?? '')!;
@@ -121,6 +130,7 @@ export function conversation(captures: Captures, request: TurnRequest) {
     if (record.type === 'source_record' && record.role === 'toolResult' && record.toolCallId) {
       const message = nativeMessage(harness, reader.read(record, 'data') ?? 'null', record.toolCallId);
       nativeResults.set(record.toolCallId, cleanOutput(message?.content));
+      if (typeof record.isError === 'boolean') nativeOutcomes.set(record.toolCallId, record.isError);
     }
   }
   for (const record of records) {
@@ -155,7 +165,7 @@ export function conversation(captures: Captures, request: TurnRequest) {
           // A call only the transcript knows about (no hook fired for it).
           const item = { kind: 'tool' as const, id, at: at(record), toolCallId: block.id, name: block.name ?? 'tool', agentId: record.agentId,
             input: clip(block.arguments, record.id), output: clip(nativeResults.get(block.id), record.id),
-            status: (nativeResults.has(block.id) ? 'recorded' : 'pending') as any, changes: [] as Change[], native: true as const };
+            status: (nativeOutcomes.has(block.id) ? nativeOutcomes.get(block.id) ? 'error' : 'ok' : nativeResults.has(block.id) ? 'recorded' : 'pending') as any, changes: [] as Change[], native: true as const };
           tools.set(block.id, item); bucket(record.agentId).push(item);
         }
       });

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { CAPTURE_API, type Connection } from './daemon.js';
 import { spoolDir } from './paths.js';
 import type { HookEvent } from './schema.js';
@@ -54,6 +54,25 @@ export function spool(dataDir: string, event: HookEvent): void {
   fs.renameSync(file + '.tmp', file + '.json');
 }
 
+/** Start the daemon so it outlives whatever started it. On Windows a child of Node inherits
+ * every inheritable handle, including a hook's output pipe: Codex then waits for that pipe
+ * until its hook timeout, and kills the child. Measured with real Codex hooks on 0.164:
+ * `spawn` and `cmd /c start` hang and die; `Start-Process` returns at once and survives.
+ */
+function startDetached(args: string[], logFile: string): void {
+  if (process.platform === 'win32') {
+    const line = [process.execPath, ...args].map(arg => `"${arg}"`).join(' ') + ` >> "${logFile}" 2>&1`;
+    const script = `Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList '/d /s /c "${line.replaceAll("'", "''")}"'`;
+    const started = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+    if (started.status !== 0) throw new Error(`Could not start the daemon: ${started.stderr || started.error}`);
+    return;
+  }
+  const log = fs.openSync(logFile, 'a');
+  spawn(process.execPath, args, { detached: true, stdio: ['ignore', log, log] }).unref();
+  fs.closeSync(log);
+}
+
 export async function ensureDaemon(dataDir: string, port?: number, dashboard = true): Promise<Connection> {
   const connect = async (): Promise<{ connection: Connection; health: any } | undefined> => {
     try { const connection = connectionAt(dataDir); return { connection, health: await call(connection, '/health') }; }
@@ -66,16 +85,9 @@ export async function ensureDaemon(dataDir: string, port?: number, dashboard = t
     return existing.connection;
   }
   fs.mkdirSync(dataDir, { recursive: true });
-  const log = fs.openSync(path.join(dataDir, 'daemon.log'), 'a');
-  const child = spawn(process.execPath, [fileURLToPath(new URL('./cli.js', import.meta.url)), 'daemon', 'run', '--data', dataDir,
-    ...(port === undefined ? [] : ['--port', String(port)]), ...(dashboard ? [] : ['--no-dashboard'])], {
-    detached: true, windowsHide: true, stdio: ['ignore', log, log]
-  });
-  child.unref(); fs.closeSync(log);
-  let spawnError: Error | undefined;
-  child.once('error', error => { spawnError = error; });
+  startDetached([fileURLToPath(new URL('./cli.js', import.meta.url)), 'daemon', 'run', '--data', dataDir,
+    ...(port === undefined ? [] : ['--port', String(port)]), ...(dashboard ? [] : ['--no-dashboard'])], path.join(dataDir, 'daemon.log'));
   for (let attempt = 0; attempt < 100; attempt++) {
-    if (spawnError) throw spawnError;
     const started = await connect();
     if (started) return started.connection;
     await new Promise(resolve => setTimeout(resolve, 100));

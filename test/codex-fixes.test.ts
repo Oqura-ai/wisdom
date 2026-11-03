@@ -139,3 +139,85 @@ test('node_repl detection and opt-in trust bypass behave as documented', () => {
   // Trust bypass never excuses missing or disabled hooks.
   assert.throws(() => requireTrustedHooks({ data: [{ hooks: untrusted.slice(1), errors: [] }] }, settings.command, true));
 });
+
+/** Lines as Codex 0.164.0 wrote them in a real session: the model's exec, and what actually ran. */
+const execCall = (id: string, code: string) => line('response_item', { type: 'custom_tool_call', call_id: id, name: 'exec', input: code });
+const execOutput = (id: string, output: string) => line('response_item', { type: 'custom_tool_call_output', call_id: id, output });
+const ran = (item: Record<string, unknown>) => line('event_msg', { type: 'item_completed', turn_id: 't', item });
+
+test('on 0.164 a failed command is failed: the hook and what ran share an ID, in either order', async () => {
+  const { daemon, captureId, hook, source, done } = await capture();
+  try {
+    const read = async (request: object): Promise<string> => (await call(daemon.connection, '/ledger', { capture: captureId, ...request })).text;
+    await hook({ hook_event_name: 'UserPromptSubmit', turn_id: 't', prompt: 'run it' });
+    fs.appendFileSync(source, execCall('call_a', "await tools.exec_command({cmd:'node -e 1'})"));
+    await hook({ hook_event_name: 'PreToolUse', turn_id: 't', tool_name: 'Bash', tool_use_id: 'exec-a', tool_input: { command: 'node -e 1' } });
+    // Already in the rollout when the empty result hook arrives.
+    fs.appendFileSync(source, ran({ type: 'CommandExecution', id: 'exec-a', status: 'failed', exit_code: 1, aggregated_output: '', command: ['powershell.exe', '-Command', 'node -e 1'], parsed_cmd: [{ cmd: 'node -e 1' }] }));
+    await hook({ hook_event_name: 'PostToolUse', turn_id: 't', tool_name: 'Bash', tool_use_id: 'exec-a', tool_input: { command: 'node -e 1' }, tool_response: '' });
+    fs.appendFileSync(source, execOutput('call_a', 'Script completed'));
+    // Written after its result hook: settled at the turn's end.
+    fs.appendFileSync(source, execCall('call_b', "await tools.exec_command({cmd:'node -e 2'})"));
+    await hook({ hook_event_name: 'PreToolUse', turn_id: 't', tool_name: 'Bash', tool_use_id: 'exec-b', tool_input: { command: 'node -e 2' } });
+    await hook({ hook_event_name: 'PostToolUse', turn_id: 't', tool_name: 'Bash', tool_use_id: 'exec-b', tool_input: { command: 'node -e 2' }, tool_response: '' });
+    fs.appendFileSync(source, ran({ type: 'CommandExecution', id: 'exec-b', status: 'failed', exit_code: 2, aggregated_output: 'boom', parsed_cmd: [{ cmd: 'node -e 2' }] }));
+    fs.appendFileSync(source, line('response_item', { type: 'function_call', call_id: 'call_w', name: 'wait', arguments: '{"cell_id":"3"}' }));
+    await hook({ hook_event_name: 'Stop', turn_id: 't', last_assistant_message: 'done' });
+    const glance = await read({ glance: true });
+    assert.match(glance, /2 tool calls · 2 failed/, 'exec and wait are not actions');
+    const turn = await read({ open: 't1' });
+    assert.match(turn, /^c\d+ {2}exec · script step/m);
+    assert.match(turn, /^c\d+ {2}wait · script step/m);
+    assert.match(turn, /^c\d+ {2}Bash · failed/m);
+    assert.doesNotMatch(turn, /Bash · outcome not recorded/);
+    const stats = await call(daemon.connection, '/view', { view: 'project', workspaceRoot: daemon.captures.get(captureId).manifest.workspaceRoot });
+    assert.equal(stats.sessions[0].failures, 2, 'each failure is counted once');
+  } finally { await done(); }
+});
+
+test('a change Wisdom could not observe is kept from Codex\'s report, and says so; an observed one is not repeated', async () => {
+  const { daemon, captureId, hook, source, workspace, done } = await capture();
+  try {
+    const file = path.join(workspace, 'probe.txt');
+    await hook({ hook_event_name: 'UserPromptSubmit', turn_id: 't', prompt: 'edit' });
+    const send = (tool: string, type: string) => hook({ hook_event_name: type, turn_id: 't', tool_name: 'apply_patch', tool_use_id: tool, tool_input: { command: '*** Begin Patch' }, tool_response: 'Exit code: 0\nOutput:\nSuccess' });
+    // Observed: the file really changes while the tool runs.
+    await send('exec-seen', 'PreToolUse');
+    fs.writeFileSync(file, 'hello\n');
+    await send('exec-seen', 'PostToolUse');
+    fs.appendFileSync(source, ran({ type: 'FileChange', id: 'exec-seen', status: 'completed', stdout: 'Success', stderr: '', changes: { [file]: { type: 'add', content: 'hello\n' } } }));
+    // Not observed: the file was already changed when the tool's events arrive.
+    const quiet = path.join(workspace, 'quiet.txt');
+    await send('exec-lost', 'PreToolUse');
+    fs.appendFileSync(source, ran({ type: 'FileChange', id: 'exec-lost', status: 'completed', stdout: 'Success', stderr: '', changes: { [quiet]: { type: 'update', unified_diff: '@@ -1 +1,2 @@\n hello\n+world\n' } } }));
+    await send('exec-lost', 'PostToolUse');
+    await hook({ hook_event_name: 'Stop', turn_id: 't', last_assistant_message: 'done' });
+    const turn = (await call(daemon.connection, '/ledger', { capture: captureId, open: 't1' })).text;
+    assert.match(turn, /^p1 {2}probe\.txt · create · \+1 −0 · observed during c\d+$/m);
+    assert.match(turn, /^p2 {2}quiet\.txt · modify · \+1 −0 · reported-by-harness$/m);
+    assert.match(turn, /^ {4}\+world$/m);
+    assert.equal(turn.match(/probe\.txt · /g)!.length, 1, 'an observed change is not repeated');
+  } finally { await done(); }
+});
+
+test('a Codex session read only from its file shows what ran and how it ended', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-codex-found-'));
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const data = path.join(root, 'data');
+  const folder = path.join(data, 'harnesses', 'codex', 'home', 'sessions', '2026', '11', '02');
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, 'rollout.jsonl');
+  fs.writeFileSync(file, line('session_meta', { id: 'found-codex', cwd: workspace, source: 'cli', cli_version: '0.164.0' })
+    + line('turn_context', { turn_id: 't' })
+    + line('response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'run it' }] })
+    + execCall('call_a', 'script') + ran({ type: 'CommandExecution', id: 'exec-a', status: 'failed', exit_code: 1, aggregated_output: '', parsed_cmd: [{ cmd: 'node -e 1' }] }) + execOutput('call_a', 'Script completed'));
+  const quiet = new Date(Date.now() - 10 * 60_000); fs.utimesSync(file, quiet, quiet);
+  const daemon = await startDaemon(data, 0);
+  try {
+    daemon.captures.scan();
+    const turn = (await call(daemon.connection, '/ledger', { capture: 'found-codex', open: 't1' })).text;
+    assert.match(turn, /^c\d+ {2}exec · script step/m);
+    assert.match(turn, /^c\d+ {2}Bash · failed · seen only in transcript/m);
+    assert.match((await call(daemon.connection, '/ledger', { capture: 'found-codex', glance: true })).text, /^session found-codex · codex 0\.164\.0 · /m);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

@@ -50,6 +50,8 @@ export interface NativeEntry {
 
 export const count = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 
+export interface NativeChange { path: string; operation: 'create' | 'modify' | 'delete'; diff?: string; content?: string }
+
 export interface HarnessAdapter {
   name: string;
   /** The variable that sets the harness's home. */
@@ -79,6 +81,10 @@ export interface HarnessAdapter {
   nativeForkedFrom(entry: any): string | undefined;
   /** Whether prompt text is a notice the harness wrote itself rather than a person's words. */
   isNotice(text: string): boolean;
+  /** Files a native line says a tool changed, keyed to that tool by the line's result. */
+  nativeChanges(entry: any): NativeChange[];
+  /** A step of the harness's own scripting of tools (Codex exec, wait), not an action itself. */
+  isScriptStep(toolName: string): boolean;
   /** The text a person typed, when this native line is their prompt. Read only for
    * sessions found in their file, which had no prompt hook. */
   nativePrompt(entry: any): string | undefined;

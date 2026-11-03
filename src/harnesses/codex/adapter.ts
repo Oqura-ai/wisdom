@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { contentText, count, jsonlFiles, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
 
-/** Codex's model-facing command envelope ("Exit code: 1\nWall time: ..."). Verified in
- * 0.147.0 rollouts. Codex sends no PostToolUse for a failed command, so this is often
- * the only failure evidence. Arbitrary tool-output prose is not interpreted.
+/** Codex's command envelope ("Exit code: 1\nWall time: ..."). Verified in 0.147.0 rollouts,
+ * where a failed command sent no PostToolUse; on 0.164.0 hooks still use it for apply_patch.
+ * Arbitrary tool-output prose is not interpreted.
  */
 export function exitEnvelope(text: unknown): boolean | undefined {
   const match = typeof text === 'string'
@@ -11,11 +11,32 @@ export function exitEnvelope(text: unknown): boolean | undefined {
   return match ? Number(match[1]) !== 0 : undefined;
 }
 
+/** What actually ran, on 0.164.0: the model's `exec` script calls tools inside it, and each
+ * ends as an item whose ID is the hook's tool_use_id. An unknown status stays unknown.
+ */
+function itemFailed(item: any): boolean | undefined {
+  if (typeof item.exit_code === 'number' && item.exit_code !== 0) return true;
+  return item.status === 'failed' ? true : item.status === 'completed' ? false : undefined;
+}
+
+function itemMessages(item: any): NeutralMessage[] {
+  if (!item?.id || !['CommandExecution', 'FileChange'].includes(item.type)) return [];
+  const command = item.type === 'CommandExecution';
+  const input = command ? { command: item.parsed_cmd?.[0]?.cmd ?? item.command } : { files: Object.keys(item.changes ?? {}) };
+  return [
+    // A session read from its file has no hook, so this is the only record of the call.
+    { role: 'assistant', content: [{ type: 'toolCall', id: item.id, name: command ? 'Bash' : 'apply_patch', arguments: input }] },
+    { role: 'toolResult', toolCallId: item.id, isError: itemFailed(item),
+      content: command ? item.aggregated_output ?? '' : [item.stdout, item.stderr].filter(Boolean).join('\n') },
+  ];
+}
+
 /** Rollouts are an internal format. Keep unknown records as raw evidence and
- * normalize only recognized response items; event_msg repeats their content.
+ * normalize only recognized response items; other event_msg lines repeat their content.
  */
 function messages(entry: any): NeutralMessage[] {
   const item = entry?.payload;
+  if (entry?.type === 'event_msg' && item?.type === 'item_completed') return itemMessages(item.item);
   if (entry?.type !== 'response_item' || !item) return [];
   if (item.type === 'message') return [{ role: item.role, content: Array.isArray(item.content)
     ? item.content.map((block: any) => ['input_text', 'output_text'].includes(block?.type)
@@ -65,6 +86,13 @@ export const codex: HarnessAdapter = {
   nativeSession: entry => entry?.type === 'session_meta' && typeof entry.payload?.id === 'string'
     && typeof entry.payload.source !== 'object' ? entry.payload.id : undefined,
   nativeCwd: entry => entry?.type === 'session_meta' && typeof entry.payload?.cwd === 'string' ? entry.payload.cwd : undefined,
+  nativeChanges: entry => {
+    const item = entry?.type === 'event_msg' && entry.payload?.type === 'item_completed' ? entry.payload.item : undefined;
+    if (item?.type !== 'FileChange' || !item.changes || typeof item.changes !== 'object') return [];
+    return Object.entries<any>(item.changes).map(([file, change]) => ({ path: file, content: change?.content, diff: change?.unified_diff,
+      operation: change?.type === 'add' ? 'create' : change?.type === 'delete' ? 'delete' : 'modify' }));
+  },
+  isScriptStep: toolName => toolName === 'exec' || toolName === 'wait',
   // A fork points to its parent and copies no lines, so no line of it needs tracing.
   nativeForkedFrom: () => undefined,
   isNotice: () => false,

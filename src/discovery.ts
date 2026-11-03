@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Captures } from './captures.js';
 import { ledgerSchema, type LedgerRecord, type LedgerRequest, type Manifest } from './schema.js';
 import { EvidenceReader, evidenceVersion } from './evidence.js';
-import { conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
+import { betterResult, conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
 import { adapter } from './harnesses/index.js';
 
 /** The agent-facing ledger. Two moves over one session: glance (its shape and one entry
@@ -135,8 +135,7 @@ function shape(context: Context): Shape {
 function calls(records: LedgerRecord[]) {
   const finishes = new Map<string, LedgerRecord>();
   for (const r of records) if (r.type === 'tool_finished' && r.toolCallId) {
-    const prior = finishes.get(r.toolCallId);
-    if (!prior || prior.resultBasis || !r.resultBasis) finishes.set(r.toolCallId, r);
+    if (betterResult(finishes.get(r.toolCallId), r)) finishes.set(r.toolCallId, r);
   }
   const started = new Map<string, LedgerRecord>();
   for (const r of records) if (r.type === 'tool_started' && r.toolCallId && !started.has(r.toolCallId)) started.set(r.toolCallId, r);
@@ -372,11 +371,12 @@ function renderItems(context: Context, s: Shape, items: TurnItem[], scope: strin
       const target = relative(context, harness.toolTarget(item.name, input));
       const view = only !== undefined ? 'full' : harness.toolView(item.name);
       const refs = item.changes.map(change => patchRef(change, `c${c}`));
-      const status = item.status === 'ok' ? 'ok' : item.status === 'error' ? 'failed'
+      const step = harness.isScriptStep(item.name);
+      const status = step ? 'script step' : item.status === 'ok' ? 'ok' : item.status === 'error' ? 'failed'
         : item.status === 'pending' ? recording ? 'pending' : 'no result recorded' : 'outcome not recorded';
       const child = item.subagent ? s.agents.indexOf(item.subagent.agentId) + 1 : 0;
       lines.push([`c${c}  ${item.name}${target ? ` ${target}` : ''}`, status, ms(item.durationMs),
-        item.resultBasis ? 'result from transcript' : '', item.native ? 'seen only in transcript' : '',
+        item.resultBasis ? 'result from transcript' : '', item.native && !step ? 'seen only in transcript' : '',
         refs.length ? `→ ${refs.join(', ')}` : '', child ? `→ a${child} (open a${child})` : ''].filter(Boolean).join(' · '));
       // The change is the evidence: an edit's input and output repeat it, so they are shown once, as its patch.
       if (view === 'patch' && refs.length && item.status !== 'error') {

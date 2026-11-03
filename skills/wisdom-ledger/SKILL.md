@@ -41,6 +41,8 @@ smallest proof, compare the final reply's claims with the evidence, and stop.
 - `in worktree bp3 (branch x)` on a change: its path is relative to that linked git worktree, not the project.
 - `in (harness notice)` is a message the harness wrote to wake the agent, not something a person asked.
 - A cost `reported before the last 3 model calls` is the harness's last report, so it is lower than the real cost.
+- `script step` is Codex's own scripting (`exec`, `wait`); the `Bash` or `apply_patch` calls beside it are the real actions.
+- `reported-by-harness` on a patch is the harness's own account of the change: Wisdom did not observe it.
 - `observed during c1` means the change happened while that call ran: timing, not proof of
   authorship. `external-or-unknown` means no tool call was running.
 

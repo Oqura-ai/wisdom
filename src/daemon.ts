@@ -12,7 +12,7 @@ import { startDashboard } from './dashboard.js';
 /** Bumped when the daemon's contract changes (capture opening or reading). A daemon
  * started from an older build keeps running old code in memory, so clients check this.
  */
-export const CAPTURE_API = 9;
+export const CAPTURE_API = 10;
 
 export interface Connection { url: string; token: string; pid: number }
 

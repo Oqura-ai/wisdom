@@ -33,7 +33,7 @@ This passes Codex's `--dangerously-bypass-hook-trust` for the session, and Wisdo
 
 ## The hook never blocks
 
-Verified against Codex CLI 0.147.0 by real runs:
+Verified against Codex CLI 0.147.0 by real runs; not repeated on 0.164.0. Codex runs each hook through `powershell.exe -NoProfile -Command` on Windows.
 
 | Hook output | Codex behaviour |
 | --- | --- |
@@ -42,7 +42,7 @@ Verified against Codex CLI 0.147.0 by real runs:
 | Hook crash, or timeout (40 s) | Logged as "Failed"; the tool still runs |
 | `{}` from Wisdom plus a deny from another hook | Tool blocked: a user's own deny always wins |
 
-Wisdom's hook always prints `{}` ("no opinion"; Stop and SubagentStop require JSON). It never denies, never changes tool input and never adds model context, so your own hooks behave as they do without Wisdom. When the daemon cannot take an event, the hook keeps it in `.wisdom/spool/`, starts the daemon, and exits 1 with a warning; the daemon records it later, marked `delivered-late`. Each event is one request (the observation and its raw `harness_event` together) with a 10-second limit, and starting the daemon takes at most 10 more, inside Codex's 40-second timeout. If Wisdom's build cannot load ([integrations/codex/hook.mjs](../integrations/codex/hook.mjs)), the event cannot be kept: the hook says so and answers `{}`.
+Wisdom's hook always prints `{}` ("no opinion"; Stop and SubagentStop require JSON). It never denies, never changes tool input and never adds model context, so your own hooks behave as they do without Wisdom. When the daemon cannot take an event, the hook keeps it in `.wisdom/spool/`, starts the daemon through `Start-Process` on Windows (a child started with `spawn` holds the hook's output pipe, so Codex waits for its 40 s timeout and then kills it), and exits 1 with a warning; the daemon records it later, marked `delivered-late`. Each event is one request (the observation and its raw `harness_event` together) with a 10-second limit, and starting the daemon takes at most 10 more, inside Codex's 40-second timeout. If Wisdom's build cannot load ([integrations/codex/hook.mjs](../integrations/codex/hook.mjs)), the event cannot be kept: the hook says so and answers `{}`.
 
 Not covered by hooks: a hook process Codex cannot start (`node` missing from PATH), and tools that bypass hooks. A result without a recorded start appears as a `missing-tool-start` gap, and the rollout file still holds what Codex wrote.
 
@@ -55,11 +55,21 @@ Not covered by hooks: a hook process Codex cannot start (`node` missing from PAT
 - Subagent tool calls carry `agentId`. The `spawn_agent` result supplies `childAgentId`, so the call shows `→ a1` and `open a1` returns everything the subagent did, with the same layers as a turn. Subagent transcripts are copied at stop as preserved evidence, not separately indexed conversations. Missing tool-level identity does not establish main-agent authorship.
 - Shell and patch tools trigger workspace reconciliation, so their file changes are recorded even when hooks lack detail.
 
-### Tool results that arrive only in the transcript
+### How a tool runs, and where its result comes from
 
-Codex sends **no `PostToolUse` for a failed command** (including a failed `apply_patch`) and has no failure hook. When a turn ends (`Stop`), or the capture closes, a still-open tool whose result is in the rollout is finished from it: the `tool_finished` record has `resultBasis: "native-transcript"`, and `isError` comes from Codex's `Exit code: N` envelope. Finishing waits for the turn end because parallel calls can show a result before their own hook runs; a result hook that arrives later is kept as evidence and is not a gap. A tool with no result anywhere stays without a result (`no result recorded` in the ledger), and the capture ends `interrupted`.
+Since at least 0.164.0 the model usually calls `exec`: JavaScript in a sealed V8 isolate that calls `tools.exec_command` and `tools.apply_patch`. A script running past its yield time returns a cell ID, and the model polls it with `wait`. One action appears in three places:
 
-Successful commands whose response has no exit metadata keep `isError` unknown; their status is `completed`, meaning a result was recorded.
+| Where | Name | ID | Holds |
+| --- | --- | --- | --- |
+| `response_item` (the model's view) | `exec`, `wait` | `call_…` | The script and its printed output |
+| `event_msg` `item_completed` (what ran) | `CommandExecution`, `FileChange` | `exec-…` | Status, exit code, output, the exact diff |
+| Hook `PreToolUse`, `PostToolUse` | `Bash`, `apply_patch` | `exec-…` | Input and response; hooks do not fire for `exec` or `wait` |
+
+So hooks give live timing and file snapshots, and `item_completed` gives outcomes, joined by ID. `exec` and `wait` are shown as `script step` and not counted as tool calls; no record states which script ran which action, so Wisdom claims no link. A hook without an outcome takes it from the item if it is already in the rollout; otherwise a `tool_finished` with `resultBasis: "native-transcript"` is added when the turn ends. A failed command's exit code is what Codex reports: it runs commands through `powershell.exe -Command` on Windows, which reports 1 for most failures.
+
+On 0.147.0, Codex sent **no `PostToolUse` for a failed command**. When a turn ends (`Stop`), or the capture closes, a still-open tool whose result is in the rollout is finished from it, with `isError` from its `Exit code: N` envelope. Finishing waits for the turn end because parallel calls can show a result before their own hook runs; a result hook that arrives later is kept as evidence and is not a gap. A tool with no result anywhere stays without a result (`no result recorded` in the ledger), and the capture ends `interrupted`.
+
+A change Wisdom did not observe for a tool (the daemon was down, or its baseline came after) is recorded from the `FileChange` item, labelled `reported-by-harness`. Successful commands with no recorded outcome keep `isError` unknown. A session read only from its rollout shows each action and how it ended, but no diffs.
 
 ### Work that hooks do not see
 

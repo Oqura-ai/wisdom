@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createTwoFilesPatch } from 'diff';
 import { Ledger, writeJson } from './ledger.js';
 import { LedgerDatabase } from './database.js';
 import { SessionFiles, scope } from './workspace.js';
@@ -7,7 +8,7 @@ import { hookSchema, preview, type HookEvent, type Observation, type Manifest, t
 import { adapter, harnessNames } from './harnesses/index.js';
 import type { NativeEntry } from './harnesses/types.js';
 import { surfaceText } from './content.js';
-import { linkedWorktree, marker, movedFrom, spoolDir } from './paths.js';
+import { linkedWorktree, marker, movedFrom, spoolDir, worktreeBranch } from './paths.js';
 
 interface RunningCapture {
   ledger: Ledger;
@@ -17,6 +18,8 @@ interface RunningCapture {
   turns: Map<string, string>;
   /** Tools closed from the native transcript; a late result hook is then not a gap. */
   transcriptFinished: Set<string>;
+  /** Tools finished this turn: the transcript may still hold their outcome or their diff. */
+  awaiting: Set<string>;
   lastSeen: number;
   lastReconcile: number;
 }
@@ -214,7 +217,7 @@ export class Captures {
 
   private watch(ledger: Ledger, cwd?: string): void {
     this.running.set(ledger.manifest.captureId, { ledger, workspace: new SessionFiles(ledger, cwd), active: new Map(), turns: new Map(),
-      transcriptFinished: new Set(), lastSeen: Date.now(), lastReconcile: Date.now() });
+      transcriptFinished: new Set(), awaiting: new Set(), lastSeen: Date.now(), lastReconcile: Date.now() });
   }
 
   /** The turns a record already has, so a session continuing after a restart keeps its
@@ -283,6 +286,8 @@ export class Captures {
       const started = observation.type === 'tool_finished' && observation.toolCallId
         ? active.get(observation.toolCallId)?.recordId ?? ledger.findToolStart(observation.toolCallId)?.id : undefined;
       const record = ledger.append({ ...metadata, spooledAt: context.late?.spooledAt,
+        // A result hook may not say how it went; what ran may already be in the transcript.
+        isError: observation.type === 'tool_finished' && observation.toolCallId ? observation.isError ?? this.nativeOutcome(ledger, observation.toolCallId) : observation.isError,
         notice: observation.type === 'input' && typeof data?.text === 'string' && harness.isNotice(data.text) || undefined,
         role: observation.type === 'message' && typeof data?.role === 'string' ? data.role : undefined,
         // A result belongs to its original start even if another input arrived
@@ -311,6 +316,7 @@ export class Captures {
         if (!started) {
           ledger.gap('missing-tool-start', observation.toolCallId ?? 'unknown');
         }
+        if (observation.toolCallId) capture.awaiting.add(observation.toolCallId);
         if (live) this.settleTool(capture, observation.toolCallId!);
         else active.delete(observation.toolCallId!);
       }
@@ -342,8 +348,8 @@ export class Captures {
    * Only at turn end: parallel calls can show a result before their own hook runs.
    */
   private finishFromTranscript(capture: RunningCapture): void {
-    const { ledger, active } = capture;
-    if (!active.size) return;
+    const { ledger, active, awaiting } = capture;
+    if (!active.size && !awaiting.size) return;
     ledger.syncSource();
     for (const [toolCallId, call] of [...active]) {
       const result = this.database.records("capture_id=? AND type='source_record' AND role='toolResult' AND tool_call_id=?",
@@ -354,7 +360,52 @@ export class Captures {
         agentId: call.agentId, turnId: call.turnId, isError: result.isError, resultBasis: 'native-transcript', sourceEntryId: result.sourceEntryId,
         summary: `tool_finished: ${call.toolName} (result from native transcript; no result hook)` });
       capture.transcriptFinished.add(toolCallId);
+      awaiting.add(toolCallId);
       this.settleTool(capture, toolCallId);
+    }
+    for (const toolCallId of awaiting) {
+      const start = ledger.findToolStart(toolCallId);
+      const finishes = this.database.records("capture_id=? AND type='tool_finished' AND tool_call_id=?", [ledger.manifest.captureId, toolCallId], 'ORDER BY seq');
+      const outcome = this.nativeOutcome(ledger, toolCallId);
+      if (outcome !== undefined && start && !finishes.some(r => typeof r.isError === 'boolean')) {
+        ledger.append({ type: 'tool_finished', toolCallId, toolName: start.toolName, parentId: start.id, agentId: start.agentId, turnId: start.turnId,
+          isError: outcome, resultBasis: 'native-transcript', summary: `tool_finished: ${start.toolName} (outcome from native transcript)` });
+      }
+      if (start) this.recordReportedChanges(capture, toolCallId, start);
+    }
+    awaiting.clear();
+  }
+
+  /** How the transcript says a tool ended, when it says. */
+  private nativeOutcome(ledger: Ledger, toolCallId: string): boolean | undefined {
+    return this.database.records("capture_id=? AND type='source_record' AND role='toolResult' AND tool_call_id=?", [ledger.manifest.captureId, toolCallId], 'ORDER BY seq')
+      .find(r => typeof r.isError === 'boolean')?.isError;
+  }
+
+  /** A file the harness says this tool changed, with no observed change to show for it (the
+   * daemon was down, or the baseline came after). Its report is kept, and says whose it is.
+   */
+  private recordReportedChanges(capture: RunningCapture, toolCallId: string, start: LedgerRecord): void {
+    const { ledger } = capture;
+    const { manifest } = ledger;
+    const harness = adapter(manifest.harness);
+    const seen = new Set(this.database.records("capture_id=? AND type='file_change' AND seq>=?", [manifest.captureId, start.seq], 'ORDER BY seq').map(r => `${r.worktree ?? ''}:${r.path}`));
+    for (const result of this.database.records("capture_id=? AND type='source_record' AND role='toolResult' AND tool_call_id=?", [manifest.captureId, toolCallId], 'ORDER BY seq')) {
+      let raw: unknown;
+      try { raw = JSON.parse(ledger.readSource(result)); } catch { continue; }
+      for (const change of harness.nativeChanges(raw)) {
+        const file = path.resolve(manifest.workspaceRoot, change.path);
+        const tree = linkedWorktree(path.dirname(file));
+        const relative = path.relative(tree?.root ?? manifest.workspaceRoot, file).replaceAll('\\', '/');
+        const shown = relative.startsWith('../') || path.isAbsolute(relative) ? file : relative;
+        if (seen.has(`${tree?.name ?? ''}:${shown}`) || isExcluded(manifest, shown)) continue;
+        const patch = change.diff !== undefined ? `--- ${shown}\n+++ ${shown}\n${change.diff}`
+          : change.content !== undefined ? createTwoFilesPatch(change.operation === 'create' ? '/dev/null' : shown, change.operation === 'delete' ? '/dev/null' : shown,
+            change.operation === 'create' ? '' : change.content, change.operation === 'create' ? change.content : '', '', '', { context: 3 }) : undefined;
+        ledger.append({ type: 'file_change', path: shown, operation: change.operation, summary: `${change.operation}: ${shown}`,
+          parentId: start.id, toolCallId, attribution: 'reported-by-harness', worktree: tree?.name, branch: tree ? worktreeBranch(tree) : undefined,
+          patchRef: patch === undefined ? undefined : ledger.payload(patch), patchUnavailable: patch === undefined ? 'not-reported' : undefined });
+      }
     }
   }
 
@@ -516,6 +567,13 @@ function promptLine(observation: Observation): ((entry: NativeEntry) => boolean)
   const data = observation.data as any;
   const prompt = observation.type === 'input' && typeof data?.text === 'string' ? data.text.trim() : '';
   return prompt ? entry => entry.messages.some(message => message.role === 'user' && surfaceText(message).trim().includes(prompt)) : undefined;
+}
+
+/** Paths Wisdom does not record, whoever reports them. */
+function isExcluded(manifest: Manifest, file: string): boolean {
+  const parts = file.split('/');
+  return parts.some(part => manifest.scope.excludedDirectories.includes(part))
+    || manifest.scope.excludedPaths.some(prefix => file === prefix || file.startsWith(prefix + '/'));
 }
 
 function outside(root: string, folder: string): boolean {

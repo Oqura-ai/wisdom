@@ -54,6 +54,8 @@ export const claudeCode: HarnessAdapter = {
   nativeSession: entry => typeof entry?.sessionId === 'string' ? entry.sessionId : undefined,
   nativeCwd: entry => typeof entry?.cwd === 'string' ? entry.cwd : undefined,
   nativeVersion: entry => typeof entry?.version === 'string' ? entry.version : undefined,
+  nativeChanges: () => [],
+  isScriptStep: () => false,
   nativeForkedFrom: entry => typeof entry?.forkedFrom?.sessionId === 'string' ? entry.forkedFrom.sessionId : undefined,
   // A finished background command wakes the agent with this, through the prompt hook.
   isNotice: text => /^\s*<task-notification>/.test(text),

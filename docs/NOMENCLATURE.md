@@ -68,7 +68,9 @@ tool is shown in full. Unknown tools are always shown in full.
 | Word | Meaning |
 | --- | --- |
 | `ok` / `failed` | The harness reported success or an error. A finished tool is not correct code. |
-| `outcome not recorded` | A result was recorded without a success flag (Codex results often have none). |
+| `outcome not recorded` | A result was recorded without a success flag. |
+| `script step` | A call that is the harness's own scripting of tools (Codex `exec`, `wait`), shown whole. The actions it ran are their own calls, such as `Bash`. Their link is only timing, and a glance counts only the actions. |
+| `reported-by-harness` | A change the harness reported for a tool when Wisdom observed none (the daemon was down, for example). The diff is the harness's claim, not an observation. |
 | `pending` | No result yet, while the session records. |
 | `no result recorded` | No result, and the session is no longer recording. |
 | `result from transcript` | No result hook arrived; the result was taken from the harness's own transcript. |

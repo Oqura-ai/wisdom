@@ -22,6 +22,8 @@ export const pi: HarnessAdapter = {
   toolView: toolName => ['edit', 'write'].includes(toolName) ? 'patch' : toolName === 'read' ? 'file' : 'full',
   nativeSession: entry => entry?.type === 'session' && typeof entry.id === 'string' ? entry.id : undefined,
   nativeCwd: entry => entry?.type === 'session' && typeof entry.cwd === 'string' ? entry.cwd : undefined,
+  nativeChanges: () => [],
+  isScriptStep: () => false,
   // A fork's header is dated when it was made, before its copied lines' dates say otherwise.
   nativeForkedFrom: () => undefined,
   isNotice: () => false,
