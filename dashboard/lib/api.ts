@@ -35,6 +35,12 @@ export async function captureEvents(captureId: string): Promise<{ readVersion: n
   return view({ view: 'capture', captureId });
 }
 
+/** The prompt a session opened with: its first own request, not a subagent's task or a notice. */
+export async function firstPrompt(captureId: string): Promise<string | undefined> {
+  const { events } = await captureEvents(captureId);
+  return events.filter(e => e.type === 'input' && !e.agentId && !e.notice).sort((a, b) => a.seq - b.seq)[0]?.summary;
+}
+
 /** A tool's result body. A result taken from the harness transcript has no hook body,
  * so read the native transcript record with the same call ID instead.
  */

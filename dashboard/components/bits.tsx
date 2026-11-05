@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { Session } from '@/lib/api';
 
 export const harnessLabel: Record<string, string> = { pi: 'Pi', 'claude-code': 'Claude Code', codex: 'Codex' };
 
@@ -51,19 +52,34 @@ export function BackButton({ onClick, label }: { onClick: () => void; label: str
   return <button className="ghost back" onClick={onClick}><img src="/icons/back-button-96.png" alt="" />{label}</button>;
 }
 
-export function HarnessBadge({ harness, compact, face = true }: { harness: string; compact?: boolean; face?: boolean }) {
+export function HarnessBadge({ harness, compact }: { harness: string; compact?: boolean }) {
   const label = harnessLabel[harness] ?? harness;
-  return <span className={`harness h-${harness}`}>{face && <HarnessIcon harness={harness} size="small" />}{compact ? label.split(' ')[0] : label}</span>;
+  return <span className={`harness h-${harness}`}><HarnessIcon harness={harness} size="small" />{compact ? label.split(' ')[0] : label}</span>;
 }
 
 export function Wordmark() {
   return <span className="wordmark" aria-label="wisdom">wisd<Face tone="user" />m</span>;
 }
 
+/** Text size and theme, out of the way until wanted. The browser's popover handles
+ * dismissing it: Escape or a click elsewhere.
+ */
+export function DisplayMenu() {
+  return (
+    <>
+      <button className="plain" popoverTarget="display-menu">Display</button>
+      <div id="display-menu" className="display-menu" popover="auto">
+        <span className="menu-label">Text size</span><ScaleSwitch />
+        <span className="menu-label">Theme</span><ThemeSwitch />
+      </div>
+    </>
+  );
+}
+
 const scales = [['1', '100'], ['1.25', '125'], ['1.5', '150']] as const;
 
 /** UI scale in percent. 150 is the default; remembered per browser like the theme. */
-export function ScaleSwitch() {
+function ScaleSwitch() {
   const [scale, setScale] = useState<string>();
   useEffect(() => { setScale(document.documentElement.dataset.scale ?? '1.5'); }, []);
   const choose = (next: string) => {
@@ -73,7 +89,6 @@ export function ScaleSwitch() {
   };
   return (
     <span className="themes" role="radiogroup" aria-label="Text size" title="Text and layout size">
-      <span className="aa" aria-hidden>Aa</span>
       {scales.map(([value, label]) => (
         <button key={value} role="radio" aria-checked={scale === value} className={scale === value ? 'on' : ''} onClick={() => choose(value)}>{label}</button>
       ))}
@@ -87,7 +102,7 @@ type Theme = typeof themes[number];
 /** Light (the reference), dark (dusk) and night. Remembered per browser; the first
  * visit follows the system preference (see the script in app/layout.tsx).
  */
-export function ThemeSwitch() {
+function ThemeSwitch() {
   const [theme, setTheme] = useState<Theme>();
   useEffect(() => {
     const read = () => setTheme((document.documentElement.dataset.theme as Theme) ?? 'light');
@@ -111,13 +126,39 @@ export function ThemeSwitch() {
   );
 }
 
+/** Closed is the ordinary end of a session, so only a status worth noticing gets a dot. */
 export function StatusDot({ status }: { status: string }) {
-  return <span className={`dot s-${status}`} title={status} />;
+  return status === 'closed' ? null : <span className={`dot s-${status}`} title={status} />;
 }
 
 export function LiveBadge({ status, readVersion }: { status: string; readVersion?: number }) {
-  return <span className={`live l-${status}`}><span className="pulse" />{status === 'live' ? `live · rev ${readVersion}` : status}</span>;
+  return <span className={`live l-${status}`} title={status === 'live' ? `Updates by itself as sessions record (ledger revision ${readVersion})` : undefined}><span className="pulse" />{status === 'live' ? 'Live' : status}</span>;
 }
+
+export function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/** A session's counts in one line. Zeros are left out; failures and gaps stand out. */
+export function SessionFacts({ session: s }: { session: Session }) {
+  const facts: [string, string?][] = [];
+  if (s.requests) facts.push([plural(s.requests, 'request')]);
+  if (s.tools) facts.push([plural(s.tools, 'tool')]);
+  if (s.failures) facts.push([`${s.failures} failed`, 'bad']);
+  if (s.changes) facts.push([plural(s.changes, 'change')]);
+  if (s.subagents) facts.push([plural(s.subagents, 'subagent'), 'accent']);
+  if (s.gaps) facts.push([plural(s.gaps, 'gap'), 'warn']);
+  if (s.tokens.total) facts.push([`${tokens(s.tokens.total)} tokens`]);
+  if (s.evidenceMissing) facts.push(['evidence missing', 'bad']);
+  return <div className="row metrics">{facts.map(([text, tone]) => <span key={text} className={tone}>{text}</span>)}</div>;
+}
+
+/** Start to end, which counts idle time between visits; with gaps it would mislead. */
+export function sessionLength(s: Session): string {
+  return s.gaps ? '' : duration(s.startedAt, s.endedAt ?? (s.status === 'recording' ? undefined : s.lastObservedAt));
+}
+
+export const projectName = (root: string) => root.split(/[\\/]/).filter(Boolean).at(-1) ?? root;
 
 export function shortPath(value: string): string {
   const parts = value.split(/[\\/]/).filter(Boolean);

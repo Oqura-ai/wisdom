@@ -108,16 +108,25 @@ export function toolState(node: TreeNode): 'ok' | 'error' | 'pending' | 'unknown
   return 'unknown';
 }
 
-/** Counts used for the compact per-node badges. */
-export function subtreeStats(node: TreeNode): { tools: number; changes: number; errors: number } {
+/** When the work under a node ended: its last reply, call result or change. Notes do not
+ * count, since a compaction or a helper finishing can land long after the turn.
+ */
+export function subtreeEnd(node: TreeNode): string {
+  const own = node.result?.observedAt ?? node.record.sourceTimestamp ?? node.record.observedAt;
+  return node.children.filter(child => child.kind !== 'note').reduce((latest, child) => { const end = subtreeEnd(child); return end > latest ? end : latest; }, own);
+}
+
+/** Counts used for the compact per-node badges, and the files changed. */
+export function subtreeStats(node: TreeNode): { tools: number; changes: number; errors: number; files: string[] } {
   const totals = { tools: 0, changes: 0, errors: 0 };
+  const files = new Set<string>();
   const walk = (current: TreeNode) => {
     for (const child of current.children) {
       if (child.kind === 'tool') { totals.tools++; if (toolState(child) === 'error') totals.errors++; }
-      if (child.kind === 'change') totals.changes++;
+      if (child.kind === 'change') { totals.changes++; if (child.record.path) files.add(child.record.path); }
       walk(child);
     }
   };
   walk(node);
-  return totals;
+  return { ...totals, files: [...files] };
 }
