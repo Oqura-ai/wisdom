@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react';
 import { Markdown } from './Markdown';
 import { view, type Session, type Tokens } from '@/lib/api';
 import type { TreeNode } from '@/lib/tree';
-import { subtreeStats } from '@/lib/tree';
-import { Face, HarnessIcon, UserAvatar, harnessLabel, tokens as fmtTokens } from './bits';
-import { TokenBar } from './TokenBar';
+import { subtreeEnd, subtreeStats } from '@/lib/tree';
+import { Face, HarnessIcon, UserAvatar, harnessLabel, plural, tokens as fmtTokens } from './bits';
+import { TokenLegend } from './TokenBar';
 
 interface Body { text: string; truncated?: true; totalChars?: number; recordId?: string }
 interface Change { kind: 'change'; id: string; at: string; path?: string; operation?: string; attribution?: string; worktree?: string; branch?: string; patch?: Body; patchUnavailable?: string }
@@ -25,12 +25,10 @@ interface Turn { readVersion: number; harness: string; request: { id: string; at
  */
 export function ChatView({ session, requests, usage, readVersion }: { session: Session; requests: TreeNode[]; usage: Map<string, Tokens>; readVersion?: number }) {
   if (!requests.length) return <div className="card empty small">No requests recorded in this session yet.</div>;
-  const last = requests.at(-1)!.key;
   return (
     <div className="chat">
       {requests.map((node, index) => (
-        <TurnBox key={node.key} index={index + 1} node={node} session={session} tokens={usage.get(node.record.id)}
-          readVersion={readVersion} defaultOpen={node.key === last || requests.length <= 2} />
+        <TurnBox key={node.key} index={index + 1} node={node} session={session} tokens={usage.get(node.record.id)} readVersion={readVersion} />
       ))}
     </div>
   );
@@ -46,8 +44,8 @@ function elapsed(from: string, to?: string): string {
 /** One turn, as sketched: the prompt in a header (stats and time chips), then a box with
  * the steps (folded; each call opens on its own), the response, and the stats details.
  */
-function TurnBox({ index, node, session, tokens, readVersion, defaultOpen }: { index: number; node: TreeNode; session: Session; tokens?: Tokens; readVersion?: number; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+function TurnBox({ index, node, session, tokens, readVersion }: { index: number; node: TreeNode; session: Session; tokens?: Tokens; readVersion?: number }) {
+  const [open, setOpen] = useState(false);
   const [turn, setTurn] = useState<Turn>();
   const [error, setError] = useState<string>();
   const counts = subtreeStats(node);
@@ -60,9 +58,9 @@ function TurnBox({ index, node, session, tokens, readVersion, defaultOpen }: { i
   // The response is the turn's last reply; earlier narration belongs to the steps.
   const lastText = turn ? [...turn.items].reverse().find(item => item.kind === 'text') : undefined;
   const steps = turn ? turn.items.filter(item => item !== lastText) : [];
-  const stats = [counts.tools && `${counts.tools} tool${counts.tools > 1 ? 's' : ''}`, counts.changes && `${counts.changes} Δ`,
-    tokens && tokens.total > 0 && `${fmtTokens(tokens.total)} tok`].filter(Boolean).join(' · ');
-  const end = turn?.items.at(-1)?.at;
+  const stats = [counts.tools && plural(counts.tools, 'tool'), counts.changes && plural(counts.changes, 'change'),
+    tokens && tokens.total > 0 && `${fmtTokens(tokens.total)} tokens`].filter(Boolean).join(' · ');
+  const took = elapsed(node.record.observedAt, subtreeEnd(node));
 
   return (
     <section className={`turn ${open ? 'open' : ''}`}>
@@ -72,7 +70,7 @@ function TurnBox({ index, node, session, tokens, readVersion, defaultOpen }: { i
           <span className="turn-index">{String(index).padStart(2, '0')}</span>
           <span className="turn-title">{node.record.summary || '(empty request)'}</span>
           {stats && <span className="pill">{stats}{counts.errors > 0 && <b className="bad"> · {counts.errors} failed</b>}</span>}
-          <span className="pill time-pill">{new Date(node.record.observedAt).toLocaleTimeString()}{end ? ` · ${elapsed(node.record.observedAt, end)}` : ''}</span>
+          <span className="pill time-pill">{new Date(node.record.observedAt).toLocaleTimeString()}{took ? ` · ${took}` : ''}</span>
           <i className={`chevron ${open ? 'open' : ''}`} aria-hidden />
         </button>
       </div>
@@ -83,6 +81,7 @@ function TurnBox({ index, node, session, tokens, readVersion, defaultOpen }: { i
           {turn && (
             <>
               {turn.request.text.text.length > 120 && <div className="prompt-full"><span className="eyebrow">Request</span><Markdown text={turn.request.text.text} /></div>}
+              {counts.files.length > 0 && <div className="turn-files"><span className="eyebrow">Changed</span>{counts.files.map(file => <code key={file}>{file}</code>)}</div>}
               {steps.length > 0 && <Steps items={steps} harness={turn.harness} />}
               <div className="response">
                 <span className="eyebrow">Response</span>
@@ -91,9 +90,7 @@ function TurnBox({ index, node, session, tokens, readVersion, defaultOpen }: { i
                     {lastText.source === 'hook' && <div className="muted small">Final reply as reported by the harness hook.</div>}</>
                   : <p className="muted small">No reply recorded for this turn{counts.errors ? '; a step failed' : ''}.</p>}
               </div>
-              <footer className="turn-stats">
-                {turn.tokens.calls > 0 ? <TokenBar tokens={turn.tokens} compact /> : <span className="muted small">No token usage recorded for this turn.</span>}
-              </footer>
+              {turn.tokens.calls > 0 && <footer className="turn-stats"><TokenLegend tokens={turn.tokens} showCost={turn.tokens.costUsd !== null} /></footer>}
             </>
           )}
         </div>
@@ -160,6 +157,20 @@ function target(tool: { name: string; input?: Body }): string {
   return '';
 }
 
+/** What each tool call of a turn acted on, by call ID: a file or a command, as the chat shows it. */
+export async function toolTargets(captureId: string, requestId: string): Promise<[string, string][]> {
+  const turn = await view<Turn>({ view: 'turn', captureId, requestId });
+  const found: [string, string][] = [];
+  const walk = (items: Item[]) => {
+    for (const item of items) {
+      if (item.kind === 'tool') { found.push([item.toolCallId, target(item)]); if (item.subagent) walk(item.subagent.items); }
+      else if (item.kind === 'subagent') walk(item.subagent.items);
+    }
+  };
+  walk(turn.items);
+  return found;
+}
+
 function ToolView({ tool, harness }: { tool: Extract<Item, { kind: 'tool' }>; harness: string }) {
   const label = { ok: 'ok', error: 'failed', recorded: 'done', pending: 'no result' }[tool.status];
   return (
@@ -167,7 +178,7 @@ function ToolView({ tool, harness }: { tool: Extract<Item, { kind: 'tool' }>; ha
       <summary>
         <span className="glyph">⚙</span><b>{tool.name}</b><span className="tool-target">{target(tool)}</span>
         <span className="spacer" />
-        {tool.changes.length > 0 && <span className="tag">{tool.changes.length} Δ</span>}
+        {tool.changes.length > 0 && <span className="tag">{plural(tool.changes.length, 'change')}</span>}
         {tool.subagent && <span className="tag">subagent</span>}
         {tool.resultBasis && <span className="tag" title="Result read from the harness transcript; no result hook arrived">transcript</span>}
         {tool.durationMs !== undefined && <span className="muted small">{tool.durationMs < 1000 ? `${tool.durationMs}ms` : `${(tool.durationMs / 1000).toFixed(1)}s`}</span>}
@@ -197,7 +208,7 @@ function ChangeView({ change }: { change: Change }) {
 
 function SubagentView({ subagent, harness }: { subagent: Subagent; harness: string }) {
   return (
-    <details className="fold subagent-box" open>
+    <details className="fold subagent-box">
       <summary><Face tone="sub" size="small" /><b>{subagent.agentType || 'Subagent'}</b><span className="muted mono small">{subagent.agentId.slice(-8)}</span></summary>
       <div className="fold-body">
         {subagent.task && <div className="sub-task"><span className="eyebrow">task</span><Markdown text={subagent.task.text} /></div>}

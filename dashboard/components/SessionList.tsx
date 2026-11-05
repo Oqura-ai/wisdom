@@ -1,9 +1,9 @@
 'use client';
 
 import type { Session } from '@/lib/api';
-import { HarnessBadge, StatusDot, since, tokens } from './bits';
+import { HarnessBadge, SessionFacts, StatusDot, since } from './bits';
 
-export function SessionList({ sessions, selected, onSelect }: { sessions: Session[]; selected?: string; onSelect: (id: string) => void }) {
+export function SessionList({ sessions, titles, selected, onSelect }: { sessions: Session[]; titles: Map<string, string>; selected?: string; onSelect: (id: string) => void }) {
   if (!sessions.length) return <div className="empty small">No sessions for this filter.</div>;
   return (
     <ul className="sessions">
@@ -13,22 +13,21 @@ export function SessionList({ sessions, selected, onSelect }: { sessions: Sessio
             <div className="row">
               <HarnessBadge harness={session.harness} compact />
               <StatusDot status={session.status} />
-              <span className="mono muted">{session.captureId.slice(0, 8)}</span>
               <span className="spacer" />
               <span className="muted small">{since(session.lastObservedAt)}</span>
             </div>
-            <div className="row metrics">
-              <span>{session.requests} req</span><span>{session.tools} tools</span>
-              <span className={session.failures ? 'bad' : ''}>{session.failures} fail</span>
-              <span>{session.changes} Δ</span>
-              {session.subagents > 0 && <span className="accent">{session.subagents} sub</span>}
-              {session.gaps > 0 && <span className="warn">{session.gaps} gap</span>}
-              {session.tokens.total > 0 && <span title="tokens">{tokens(session.tokens.total)} tok</span>}
-              {session.evidenceMissing && <span className="bad" title="Evidence folder missing on disk">no evidence</span>}
-            </div>
+            <SessionTitle session={session} titles={titles} />
+            <SessionFacts session={session} />
           </button>
         </li>
       ))}
     </ul>
   );
+}
+
+/** A session reads as its first prompt; the ID stays available on hover. */
+export function SessionTitle({ session, titles }: { session: Session; titles: Map<string, string> }) {
+  const title = titles.get(session.captureId);
+  return <div className={title ? 'session-title' : 'session-title muted'} title={session.captureId}>
+    {title ?? (session.requests ? session.captureId.slice(0, 8) : 'No prompts recorded')}</div>;
 }

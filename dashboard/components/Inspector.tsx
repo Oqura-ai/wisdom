@@ -14,8 +14,11 @@ export function Inspector({ captureId, readVersion, node, onClose }: { captureId
     setBodies(undefined); setError(undefined);
     if (!node || readVersion === undefined || node.kind === 'subagent') return;
     const id = node.record.id;
+    // A slower answer for the row selected before must not replace this row's evidence.
+    let current = true;
     Promise.all([recordBodies(captureId, id, readVersion), node.result ? resultBody(captureId, node.result, readVersion) : undefined])
-      .then(([main, result]) => setBodies({ main, result }), e => setError(e.message));
+      .then(([main, result]) => { if (current) setBodies({ main, result }); }, e => { if (current) setError(e.message); });
+    return () => { current = false; };
   }, [captureId, readVersion, node]);
 
   if (!node) return <aside className="inspector card empty small">Select a request, tool call or change to see its recorded evidence.</aside>;
@@ -52,7 +55,14 @@ function Section({ title, body, json, diff }: { title: string; body: Body; json?
   if (!body) return null;
   if (!body.available) return <section className="evidence"><h3>{title}</h3><div className="muted small">{body.reason ?? 'Not available.'}</div></section>;
   let text = body.text ?? '';
-  if (json) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch { /* raw text */ } }
+  if (json) {
+    try {
+      const value = JSON.parse(text);
+      const only = value && typeof value === 'object' && Object.keys(value).length === 1 && 'input' in value;
+      // Display only: line breaks inside strings read as line breaks. The stored body is unchanged.
+      text = JSON.stringify(only ? value.input : value, null, 2).replace(/(?<!\\)(\\r)?\\n/g, '\n');
+    } catch { /* raw text */ }
+  }
   return (
     <section className="evidence">
       <h3>{title}{body.truncated && <span className="tag warn">truncated</span>}</h3>

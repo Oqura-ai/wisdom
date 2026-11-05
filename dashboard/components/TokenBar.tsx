@@ -10,24 +10,31 @@ const segments = [
   ['output', 'output', 'Generated tokens, reasoning included'],
 ] as const;
 
-/** One stacked bar of the additive token buckets, with an exact legend. */
-export function TokenBar({ tokens: t, compact }: { tokens: Tokens; compact?: boolean }) {
+/** One stacked bar of the additive token buckets, above its exact legend. */
+export function TokenBar({ tokens: t, compact, showCost = true }: { tokens: Tokens; compact?: boolean; showCost?: boolean }) {
   const total = Math.max(1, t.total);
-  const cacheShare = t.input + t.cacheRead + t.cacheWrite ? t.cacheRead / (t.input + t.cacheRead + t.cacheWrite) : 0;
   return (
     <div className={compact ? 'tokenbar' : 'tokenbar card'}>
       <div className="stack" title={`${t.total} tokens`}>
         {segments.map(([key, label]) => t[key] > 0 &&
           <span key={key} className={`seg-${key}`} style={{ width: `${(t[key] / total) * 100}%` }} title={`${label}: ${t[key]}`} />)}
       </div>
-      <div className="legend">
-        {segments.map(([key, label, title]) => (
-          <span key={key} title={title}><i className={`seg-${key}`} />{label} <b>{tokens(t[key])}</b></span>
-        ))}
-        {t.reasoning > 0 && <span title="Part of output">reasoning <b>{tokens(t.reasoning)}</b></span>}
-        <span title="Share of input served from cache">cache hit <b>{Math.round(cacheShare * 100)}%</b></span>
-        <span title={t.costBehind ? 'The harness last reported this before its latest model responses' : 'Only cost reported by the harness itself'}>cost <b>{cost(t.costUsd)}{t.costBehind ? ' so far' : ''}</b></span>
-      </div>
+      <TokenLegend tokens={t} showCost={showCost} />
+    </div>
+  );
+}
+
+/** Empty buckets are left out; cost is only what the harness reported. */
+export function TokenLegend({ tokens: t, showCost = true }: { tokens: Tokens; showCost?: boolean }) {
+  const input = t.input + t.cacheRead + t.cacheWrite;
+  return (
+    <div className="legend">
+      {segments.map(([key, label, title]) => t[key] > 0 && (
+        <span key={key} title={title}><i className={`seg-${key}`} />{label} <b>{tokens(t[key])}</b></span>
+      ))}
+      {t.reasoning > 0 && <span title="Part of output">reasoning <b>{tokens(t.reasoning)}</b></span>}
+      {t.cacheRead > 0 && <span title="Share of input served from cache">cache hit <b>{Math.round((t.cacheRead / input) * 100)}%</b></span>}
+      {showCost && <span title={t.costBehind ? 'The harness last reported this before its latest model responses' : 'Only cost reported by the harness itself'}>cost <b>{cost(t.costUsd)}{t.costBehind ? ' so far' : ''}</b></span>}
     </div>
   );
 }
