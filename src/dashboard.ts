@@ -5,21 +5,21 @@ import { fileURLToPath } from 'node:url';
 
 export type DashboardState = { url: string; status: 'starting' | 'running' | 'exited'; log: string } | { status: 'unavailable'; reason: string };
 
-/** The optional Next.js viewer in dashboard/. The daemon starts it, and it never
- * affects recording: if it is not built or cannot start, capture continues.
+const bundled = fileURLToPath(new URL('../../dist-dashboard/', import.meta.url));
+
+/** The viewer, built ahead of time into dist-dashboard/. The daemon starts it, and it never
+ * affects recording: if it is missing or cannot start, capture continues.
  */
-export function startDashboard(dataDir: string, port: number): { state: () => DashboardState; close: () => void } {
-  const root = fileURLToPath(new URL('../../dashboard/', import.meta.url));
-  const next = path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next');
-  if (!fs.existsSync(next)) return unavailable('Dashboard dependencies are not installed. Run: npm run dashboard:install');
-  if (!fs.existsSync(path.join(root, '.next', 'BUILD_ID'))) return unavailable('Dashboard is not built. Run: npm run dashboard:build');
+export function startDashboard(dataDir: string, port: number, root = bundled): { state: () => DashboardState; close: () => void } {
+  const server = path.join(root, 'server.js');
+  if (!fs.existsSync(server)) return unavailable('The dashboard is missing from this copy of Wisdom. Reinstall the package; in a clone, run npm run dashboard:install, then npm run dashboard:build.');
   const log = path.join(dataDir, 'dashboard.log');
   const out = fs.openSync(log, 'a');
   let status: 'starting' | 'running' | 'exited' = 'starting';
   // Loopback only; the dashboard serves unredacted evidence.
-  const child: ChildProcess = spawn(process.execPath, [next, 'start', '-H', '127.0.0.1', '-p', String(port)], {
+  const child: ChildProcess = spawn(process.execPath, [server], {
     cwd: root, windowsHide: true, stdio: ['ignore', out, out],
-    env: { ...process.env, WISDOM_DATA_DIR: dataDir, WISDOM_DAEMON_PID: String(process.pid), NEXT_TELEMETRY_DISABLED: '1' },
+    env: { ...process.env, PORT: String(port), HOSTNAME: '127.0.0.1', WISDOM_DATA_DIR: dataDir, WISDOM_DAEMON_PID: String(process.pid), NEXT_TELEMETRY_DISABLED: '1' },
   });
   fs.closeSync(out);
   child.once('spawn', () => { status = 'running'; });

@@ -65,7 +65,7 @@ function startDetached(args: string[], logFile: string): void {
     const script = `Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList '/d /s /c "${line.replaceAll("'", "''")}"'`;
     const started = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
-    if (started.status !== 0) throw new Error(`Could not start the daemon: ${started.stderr || started.error}`);
+    if (started.status !== 0) throw new Error(`Could not start Wisdom's daemon (${started.stderr || started.error}). A sandboxed agent may not be allowed to; run wisdom daemon start outside the sandbox.`);
     return;
   }
   const log = fs.openSync(logFile, 'a');

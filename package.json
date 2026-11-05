@@ -1,11 +1,40 @@
 {
-  "name": "wisdom",
+  "name": "@oqura/wisdom",
   "version": "0.3.0",
-  "private": true,
+  "description": "A local evidence ledger for coding-agent sessions (Claude Code, Codex, Pi), with a live dashboard and two ways to read: glance and open",
+  "license": "Apache-2.0",
   "type": "module",
-  "description": "A local SQLite evidence ledger for coding-agent sessions (Pi, Claude Code, Codex), read through two moves: glance and open",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "pi",
+    "coding-agents",
+    "observability",
+    "mcp",
+    "ledger"
+  ],
+  "homepage": "https://github.com/Oqura-ai/wisdom#readme",
+  "bugs": "https://github.com/Oqura-ai/wisdom/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Oqura-ai/wisdom.git"
+  },
   "engines": {
     "node": ">=24"
+  },
+  "bin": {
+    "wisdom": "dist/src/bin.js"
+  },
+  "files": [
+    "dist/src",
+    "!dist/src/**/*.map",
+    "dist-dashboard",
+    "integrations",
+    "skills",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
@@ -15,8 +44,10 @@
     "test:codex": "npm run build && node --test dist/test/codex.integration.js",
     "wisdom": "node dist/src/cli.js",
     "dashboard:install": "npm --prefix dashboard ci",
-    "dashboard:build": "npm --prefix dashboard run build",
-    "dashboard:dev": "npm --prefix dashboard run dev"
+    "dashboard:build": "npm --prefix dashboard run build && node scripts/bundle-dashboard.mjs",
+    "dashboard:dev": "npm --prefix dashboard run dev",
+    "prepack": "npm run build && npm run dashboard:build",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

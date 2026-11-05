@@ -21,9 +21,8 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
   const daemon = await startDaemon(dataDir, 0);
   // As wisdom init does: Pi's agent folder in the data folder, Wisdom's extension in its settings.
   const home = installPi(dataDir);
-  const child = spawn(process.execPath, [entry, '--mode', 'rpc', '--no-skills', '--no-prompt-templates', '--no-context-files',
+  const child = spawn(process.execPath, [entry, '--mode', 'rpc', '--no-prompt-templates', '--no-context-files',
     '--no-mcp', '--provider', 'wisdom-test', '--model', 'scripted', '--thinking', 'off',
-    '--skill', path.join(project, 'skills', 'wisdom-ledger'),
     '--extension', path.join(project, 'test', 'fixtures', 'scripted-provider.mjs')], {
     cwd: workspace, windowsHide: true,
     env: { ...process.env, PI_CODING_AGENT_DIR: home },

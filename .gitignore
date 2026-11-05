@@ -4,6 +4,8 @@ private
 # Dependencies and build output (tests and hooks run from dist/; rebuild with npm run build)
 node_modules/
 dist/
+dist-dashboard/
+*.tgz
 *.tsbuildinfo
 dashboard/.next/
 dashboard/next-env.d.ts
@@ -14,9 +16,6 @@ dashboard/next-env.d.ts
 
 # Experiment runs: recorded sessions and every review
 experiment/runs/
-
-# Local test playground for trying tracked sessions
-wisdom-play/
 
 # Personal harness settings (shared project settings stay tracked)
 .claude/settings.local.json

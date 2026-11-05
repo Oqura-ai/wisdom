@@ -1,4 +1,17 @@
-# SQLite storage and code map
+# Architecture
+
+```text
+Pi extension ─────┐
+Claude Code hooks ┼ local HTTP ── daemon ── SQLite
+Codex hooks ──────┘                │
+                 ledger (glance/open) · dashboard views
+                                 │
+                  CLI / MCP (agents) · live dashboard (people)
+```
+
+Harness adapters send events to a local daemon, which stores them in SQLite beside byte-preserved copies of each harness's own session files. Agents and people read the same evidence through different views. To read the code in order, start with [development](development.md#reading-the-code).
+
+## Storage
 
 Node 24's built-in `node:sqlite` supplies `DatabaseSync`. There is no ORM or extra
 database service. The daemon remains the single writer and the only reader.
@@ -90,11 +103,14 @@ The session's next hook event continues it, with a gap for the time in between; 
 | [harnesses/types.ts](../src/harnesses/types.ts) | The adapter contract: tool targets, direct file tools, how each tool is shown (`toolView`), and native-line reading. |
 | [harnesses/pi/](../src/harnesses/pi/) | Pi adapter, extension and launcher. |
 | [harnesses/claude-code/](../src/harnesses/claude-code/) | Claude Code adapter, hook mapping, and the installer that writes its hooks (run by [integrations/claude-code/hook.mjs](../integrations/claude-code/hook.mjs)) into its home. |
-| [harnesses/codex/](../src/harnesses/codex/) | Codex adapter, hook mapping, trust preflight and launcher. See [Codex recording](CODEX.md). |
+| [harnesses/codex/](../src/harnesses/codex/) | Codex adapter, hook mapping, trust preflight and launcher. See [harnesses](harnesses.md#codex). |
 | [client.ts](../src/client.ts) | Daemon descriptor lookup, authenticated calls and background startup. |
 | [mcp.ts](../src/mcp.ts) / [cli.ts](../src/cli.ts) | Two clients of the same ledger; both return its text unchanged. |
 | [stats.ts](../src/stats.ts) | Dashboard project inventory and per-harness, capture, tool, file and model counts and token usage in SQL. Usage records come from each adapter's `nativeEntry().usage` ([harnesses/types.ts](../src/harnesses/types.ts)). |
-| [dashboard.ts](../src/dashboard.ts) / [dashboard/](../dashboard/) | Optional Next.js live viewer started by the daemon; reads through `/view`. |
+| [dashboard.ts](../src/dashboard.ts) / [dashboard/](../dashboard/) | Next.js live viewer, shipped built in `dist-dashboard/` and started by the daemon; reads through `/view`. |
+| [doctor.ts](../src/doctor.ts) | `wisdom doctor`: a read-only health check of one project. |
+| [harnesses/launch.ts](../src/harnesses/launch.ts) | What every adapter shares: the hook command, writing hooks into a home, and copying the reading skill there. |
+| [bin.ts](../src/bin.ts) | The installed command: checks the Node version, then loads the CLI. |
 
 A read runs synchronously in the daemon's event loop, so no hook append interleaves
 with it, and every read filters by version, so a continuation sees the same evidence.

@@ -36,8 +36,8 @@ the smallest proof, check the claim, stop.
    - an agent question the current moves cannot answer is written down;
    - its effect is measured on recorded sessions with known answers (correct answers,
      tokens read, confident wrong answers);
-   - the code, tests, [NOMENCLATURE.md](NOMENCLATURE.md), the
-     [skill](../skills/wisdom-ledger/SKILL.md) and the README change together.
+   - the code, tests, [vocabulary](vocabulary.md), the
+     [skill](../skills/wisdom-ledger/SKILL.md) and the docs change together.
 2. **No content rule cuts tool output or patches.** The only limit is the declared
    ceiling (80,000 characters per response), and it cuts at a line boundary. Any rule that
    would choose which lines of an output or patch matter belongs to a later, explicit,
@@ -79,7 +79,7 @@ Every harness is an adapter; none is central.
   the harness's real hook behaviour with its installed version (Codex needs JSON output
   from every hook).
 - **States its coverage.** What it records, what it cannot (the fog), and the harness
-  version it was verified against, in a doc beside [CODEX.md](CODEX.md).
+  version it was verified against, in its section of [harnesses](harnesses.md).
 - **Tests.** Hook payload fixtures taken from the real version, a capture test that
   asserts the ledger's glance and open text, and an installed-binary check where possible.
 
@@ -115,7 +115,7 @@ Every harness is an adapter; none is central.
 - [ ] Every omission names how to get what was omitted.
 - [ ] The same request at the same version returns the same text.
 - [ ] Tests assert the exact text that changed.
-- [ ] NOMENCLATURE, the skill and the README describe the change.
+- [ ] The vocabulary, the skill and the docs describe the change.
 - [ ] If it changes what agents read, its effect on correct answers and tokens was measured.
 - [ ] A person can undo it with `git revert` and a daemon restart, with no evidence lost.
 

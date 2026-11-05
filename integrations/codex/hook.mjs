@@ -5,7 +5,7 @@ let hook;
 try { hook = await import('../../dist/src/harnesses/codex/hook.js'); }
 catch (error) {
   for await (const _ of process.stdin) { /* drain */ }
-  process.stderr.write(`Wisdom's Codex hook could not load (${error?.message ?? error}). Run npm run build in Wisdom; this event is not recorded.\n`);
+  process.stderr.write(`Wisdom's Codex hook could not load (${error?.message ?? error}). Reinstall Wisdom, or in a clone run npm run build; this event is not recorded.\n`);
   process.stdout.write('{}');
   process.exitCode = 1;
 }

@@ -2,7 +2,7 @@
 
 Decision date: 2026-10-19. Status: proposed first storage contract; no recorder implementation is claimed.
 
-Historical proposal: the 2026-10-20 implementation now uses authoritative SQLite metadata plus native JSONL and payload files. See [current storage](../docs/STORAGE.md) and [query vocabulary](../docs/NOMENCLATURE.md). Storage points below that the implementation superseded:
+Historical proposal: the 2026-10-20 implementation now uses authoritative SQLite metadata plus native JSONL and payload files. See [current storage](../architecture.md) and [query vocabulary](../vocabulary.md). Storage points below that the implementation superseded:
 
 - **Layout:** `manifest.json` and `changes.jsonl` are not written. Capture manifests and all records live in `.wisdom/ledger.sqlite`; each capture directory holds only `pi-session.jsonl` and `payloads/`.
 - **Import:** there is no historical-import mode or JSONL importer. Every capture is live observation; older Wisdom manifests and event/change JSONL are ignored and left untouched.

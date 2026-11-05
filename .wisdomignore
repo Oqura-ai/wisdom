@@ -1,2 +1,3 @@
 # Relative paths excluded when tracking Wisdom itself. No glob syntax.
 private/
+dist-dashboard/

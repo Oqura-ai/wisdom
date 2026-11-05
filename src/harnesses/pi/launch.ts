@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { home, readSettings, saveSettings, type Launch } from '../launch.js';
+import { home, installSkill, readSettings, saveSettings, type Launch } from '../launch.js';
 
 /** Reuse the user's Pi installation; do not install another agent. */
 export function piEntry(explicit?: string): string {
@@ -13,6 +13,12 @@ export function piEntry(explicit?: string): string {
   const pkg = path.join(root, 'releases', version, 'node_modules', '@earendil-works', 'pi-coding-agent');
   const metadata = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8'));
   return path.join(pkg, typeof metadata.bin === 'string' ? metadata.bin : metadata.bin.pi);
+}
+
+/** The managed Pi version, or undefined when Pi is not installed that way. */
+export function piVersion(): string | undefined {
+  try { return fs.readFileSync(path.join(os.homedir(), '.pi', 'agent', 'install', 'current-version'), 'utf8').trim() || undefined; }
+  catch { return undefined; }
 }
 
 /** Pi's agent folder (PI_CODING_AGENT_DIR) in Wisdom's folder, with Wisdom's extension
@@ -27,6 +33,7 @@ export function installPi(dataDir: string): string {
     .filter((item: unknown) => typeof item !== 'string' || !/harnesses[\\/]pi[\\/]extension\.js$/.test(item));
   settings.extensions = [...others, extension];
   saveSettings(file, settings);
+  installSkill(folder);
   return folder;
 }
 
@@ -40,5 +47,5 @@ export function launchPi(options: { entry?: string; args: string[]; dataDir: str
     }
   });
   return { command: process.execPath, env: { PI_CODING_AGENT_DIR: folder },
-    args: [piEntry(options.entry), '--skill', fileURLToPath(new URL('../../../../skills/wisdom-ledger', import.meta.url)), ...options.args] };
+    args: [piEntry(options.entry), ...options.args] };
 }

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { home, hookCommand, readSettings, saveSettings, withHooks, type Launch } from '../launch.js';
+import { home, hookCommand, installSkill, readSettings, saveSettings, withHooks, type Launch } from '../launch.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
   'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact'] as const;
@@ -19,6 +19,7 @@ export function installCodex(dataDir: string): { home: string; command: string }
   settings.hooks = withHooks(settings.hooks, hookEvents, command, () => ({}),
     event => ({ timeout: event === 'SessionEnd' ? 3 : 40 }));
   saveSettings(file, settings);
+  installSkill(folder);
   return { home: folder, command };
 }
 

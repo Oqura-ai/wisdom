@@ -70,7 +70,7 @@ function respond(lines: string[], from: number | undefined, next: LedgerRequest)
   while (end < all.length && (end === start || size + all[end].length + 1 <= CEILING)) size += all[end++].length + 1;
   const footer = end < all.length
     ? `limited · lines ${start + 1}–${end} of ${all.length} · continue: ${JSON.stringify({ ...next, from: end + 1 })}`
-    : start > 0 ? `complete · lines ${start + 1}–${end} of ${all.length}` : `complete · ${all.length} lines`;
+    : start > 0 ? `complete · lines ${start + 1}–${end} of ${all.length}` : `complete · ${all.length} ${all.length === 1 ? 'line' : 'lines'}`;
   return [...all.slice(start, end), '', footer + (wrapped ? ' · lines over 2,000 characters are split; ⤷ marks a continued piece' : '')].join('\n');
 }
 
@@ -212,11 +212,11 @@ function sessions(captures: Captures, version: number, from?: number): string {
   const counts = new Map(captures.database.sql.prepare(`SELECT capture_id AS id, count(*) AS n FROM records
     WHERE type='input' AND json_extract(body,'$.agentId') IS NULL AND revision<=? GROUP BY capture_id`).all(version)
     .map(row => [String(row.id), Number(row.n)]));
-  const lines = [`captures · ${number(manifests.length)}, newest first · version ${version}`, ''];
+  const lines = [`sessions · ${number(manifests.length)}, newest first · version ${version}`, ''];
   for (const m of manifests) {
     lines.push(`${m.captureId}  ${m.harness}  ${m.status}  ${minute(m.startedAt)}  ${plural(counts.get(m.captureId) ?? 0, 'turn')}  ${m.workspaceRoot}`);
   }
-  lines.push('', 'Glance one with { capture: "<id or first 8 characters>", glance: true }.');
+  lines.push('', 'To read one, glance its ID or its first 8 characters.');
   return respond(lines, from, { glance: true, at: version });
 }
 

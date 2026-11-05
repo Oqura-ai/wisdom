@@ -5,7 +5,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { call, connectionAt, ensureDaemon } from './client.js';
-import { startDaemon } from './daemon.js';
+import { startDaemon, type Connection } from './daemon.js';
+import { diagnose, formatChecks, wisdomVersion } from './doctor.js';
 import { serveMcp } from './mcp.js';
 import { findDataDir, marker, movedFrom } from './paths.js';
 import { writeJson } from './ledger.js';
@@ -15,26 +16,44 @@ import { installCodex, launchCodex } from './harnesses/codex/launch.js';
 import { adapter } from './harnesses/index.js';
 import { staleHooks, type Launch } from './harnesses/launch.js';
 
-const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
-const help = `Wisdom — live evidence ledger for coding agents (Pi, Claude Code, Codex)
+const help = `Wisdom records your coding agents' sessions, so you and your agents can read them.
 
-  wisdom init [--cwd DIR]            Make DIR (default: here) a Wisdom project: .wisdom/, hooks, daemon
-  wisdom track pi [--cwd DIR] [--pi-entry FILE] [-- Pi arguments]
-  wisdom track claude [--cwd DIR] [--claude-bin FILE] [-- Claude Code arguments]
-  wisdom track codex [--cwd DIR] [--codex-bin FILE] [--setup-hooks | --trust-all-hooks] [-- Codex arguments]
-  wisdom resume SESSION-ID           Continue a recorded session in its harness and folder
-  wisdom glance [CAPTURE|latest] [--from N] [--at VERSION]
-  wisdom open POSITION --capture CAPTURE|latest [--from N] [--at VERSION]
-  wisdom daemon start|run|status|stop [--port N] [--no-dashboard]
-  wisdom dashboard                   Print the live dashboard URL (served on daemon port + 1)
-  wisdom mcp
+Set up
+  wisdom init                     Turn on recording in this project
+  wisdom doctor                   Check that everything is working
 
-Every command finds the project's .wisdom folder from the current folder (or --cwd) upward,
-like git; --data DIR or WISDOM_DATA_DIR names it directly. Any harness process that uses
-the project's harness home records, however it was started; track is the short way.
-resume takes the full session ID. CAPTURE also takes its first 8+ characters, or latest (the newest session with a turn).
-POSITION is t3 (a turn), t3/c2 (a tool call), a1 (a subagent), a1/c2, or outside.
-Run: npm.cmd run wisdom -- <command>
+Run an agent
+  wisdom track claude|codex|pi    Start an agent in this project, recording
+  wisdom resume <session-id>      Continue a recorded session (takes the full ID)
+
+Read a session
+  wisdom dashboard                Print the address of the live dashboard
+  wisdom glance                   List recorded sessions, newest first
+  wisdom glance <session>         Show one session's shape and every turn
+  wisdom open <position> --capture <session>
+                                  Read one turn, tool call or subagent, whole
+
+Background service
+  wisdom daemon start|stop|status
+  wisdom daemon run               Run it in the foreground
+
+Other
+  wisdom mcp                      Serve the optional read-only MCP tool
+  wisdom --version
+
+<session>   a session ID, its first 8 or more characters, or latest
+<position>  t3 (a turn), t3/c2 (a tool call), a1 (a subagent), a1/c2, or outside
+
+Options
+  --cwd DIR, --data DIR           Use the project at DIR, or the data folder DIR
+  --from N, --at VERSION          glance, open: read from a line, at a fixed version
+  --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
+  --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
+  --setup-hooks                   track codex: review Wisdom's hooks, first time only
+  --trust-all-hooks               track codex: skip the review, for every hook in that run
+  -- ARGUMENTS                    track: pass the rest to the agent
+
+Docs: https://github.com/Oqura-ai/wisdom
 `;
 
 async function main(): Promise<void> {
@@ -44,31 +63,38 @@ async function main(): Promise<void> {
   const { positionals, values } = parseArgs({ args: separator < 0 ? args : args.slice(0, separator), allowPositionals: true,
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
-      help: { type: 'boolean' }, capture: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
+      help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
       'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
     } });
   const [command, first] = positionals;
+  if (values.version) { console.log(wisdomVersion()); return; }
   if (!command || values.help) { console.log(help); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'],
-    daemon: ['port', 'no-dashboard'], dashboard: [], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['port'],
-    resume: ['port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
-    glance: ['from', 'at'], open: ['capture', 'from', 'at'],
+    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
+    resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
+    glance: ['cwd', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
   };
   const allowed = options[command];
-  if (!allowed) throw new Error(`Unknown command: ${command}. Run --help.`);
+  if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
   if (separator >= 0 && command !== 'track') throw new Error('Arguments after -- are only supported by track');
   if (positionals.length > (['daemon', 'track', 'resume', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
-  if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('Invalid port');
+  if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
   if (command === 'init') { await init(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
   const explicit = values.data ?? process.env.WISDOM_DATA_DIR;
   const start = path.resolve(values.cwd ?? process.cwd());
   const found = explicit ? path.resolve(explicit) : findDataDir(start);
   if (!found) throw new Error(`${start} is not inside a Wisdom project. Run: wisdom init`);
   const dataDir = found;
+  if (command === 'doctor') {
+    const checks = await diagnose(dataDir);
+    console.log(formatChecks(path.dirname(dataDir), checks));
+    if (checks.some(check => check.level === 'problem')) process.exitCode = 1;
+    return;
+  }
   // track and resume write the hooks again themselves.
   const stale = ['track', 'resume'].includes(command) ? [] : staleHooks(dataDir);
   if (stale.length) console.error(`Wisdom's hooks for ${stale.join(', ')} point to a Wisdom build that has moved, so they cannot run. Run: wisdom init`);
@@ -83,13 +109,10 @@ async function main(): Promise<void> {
       await daemon.closed;
       process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
     } else if (first === 'start') {
-      const connection = await ensureDaemon(dataDir, port, !values['no-dashboard']);
-      console.log(`Wisdom running at ${connection.url} (PID ${connection.pid})`);
-      const viewer = (await call(connection, '/health')).dashboard;
-      console.log(viewer.url ? `Dashboard: ${viewer.url}` : `Dashboard not started: ${viewer.reason}`);
-    } else if (first === 'status') print(await call(connectionAt(dataDir), '/health'));
-    else if (first === 'stop') print(await call(connectionAt(dataDir), '/stop', {}));
-    else throw new Error('Use daemon start, run, status, or stop');
+      await showRunning(await ensureDaemon(dataDir, port, !values['no-dashboard']));
+    } else if (first === 'status') await showRunning(connectionAt(dataDir));
+    else if (first === 'stop') await stopDaemon(dataDir);
+    else throw new Error('Use: wisdom daemon start|stop|status|run');
     return;
   }
   if (command === 'dashboard') {
@@ -108,11 +131,42 @@ async function main(): Promise<void> {
   }
   if (command === 'mcp') { await serveMcp(await ensureDaemon(dataDir, port)); return; }
   // glance and open: the same request an agent sends through MCP, printed as the same text.
-  const number = (value?: string) => value === undefined ? undefined : Number(value);
-  const reading = { from: number(values.from), at: number(values.at) };
+  const number = (flag: string, value?: string) => {
+    if (value !== undefined && !/^\d+$/.test(value)) throw new Error(`${flag} needs a whole number.`);
+    return value === undefined ? undefined : Number(value);
+  };
+  const reading = { from: number('--from', values.from), at: number('--at', values.at) };
   if (command === 'open' && !first) throw new Error('Use: wisdom open POSITION --capture CAPTURE|latest');
   const input = command === 'glance' ? { capture: first, glance: true, ...reading } : { capture: values.capture, open: first, ...reading };
   console.log((await call(await ensureDaemon(dataDir), '/ledger', input)).text);
+}
+
+/** What the running service is, in the same words whichever command asked. */
+async function showRunning(connection: Connection): Promise<void> {
+  const health = await call(connection, '/health');
+  const viewer = health.dashboard;
+  console.log('Wisdom is running.');
+  console.log(`  Address    ${connection.url} (PID ${connection.pid})`);
+  console.log(`  Dashboard  ${dashboardLine(viewer)}`);
+  console.log(`  Sessions   ${health.captures}`);
+}
+
+function dashboardLine(viewer: any): string {
+  if (!viewer.url) return `not started. ${viewer.reason}`;
+  return viewer.status === 'exited' ? `stopped unexpectedly. Read ${viewer.log}` : viewer.url;
+}
+
+/** Stopping something already stopped is not a failure, and "stopped" is only said once it is. */
+async function stopDaemon(dataDir: string): Promise<void> {
+  const file = path.join(dataDir, 'daemon.json');
+  if (!fs.existsSync(file)) { console.log('Wisdom is not running.'); return; }
+  try { await call(connectionAt(dataDir), '/stop', {}); }
+  catch (error) {
+    if (error instanceof Error && error.message.includes('not answering')) { console.log('Wisdom is not running.'); return; }
+    throw error;
+  }
+  for (let attempt = 0; attempt < 50 && fs.existsSync(file); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
+  console.log(fs.existsSync(file) ? 'Wisdom is stopping.' : 'Wisdom stopped.');
 }
 
 /** The daemon's default port is 7434; when another project's daemon holds it, the next
@@ -139,24 +193,26 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
   const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
   if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
-  console.log(`${fresh ? 'Created' : 'Found'} ${dataDir}${ignored ? '' : ' (added .wisdom/ to .gitignore)'}`);
+  console.log(fresh ? `Wisdom is set up in ${project}` : `Wisdom was already set up in ${project}. Its hooks and skills are refreshed.`);
   const known = fresh ? undefined : movedFrom(dataDir);
-  if (known) console.log(`  This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
+  if (known) console.log(`This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
+  console.log('\nStart an agent:');
   const installed = (name: string, check: () => void, install: () => string, next: string) => {
-    try { check(); } catch { console.log(`  ${name.padEnd(12)} not found, skipped (run wisdom init again after installing it)`); return; }
-    console.log(`  ${name.padEnd(12)} hooks in ${path.relative(project, install())} · ${next}`);
+    try { check(); } catch { console.log(`  ${name.padEnd(12)} not installed. Run wisdom init again after installing it.`); return; }
+    install();
+    console.log(`  ${name.padEnd(12)} ${next}`);
   };
   const version = (command: string) => () => { execFileSync(command, ['--version'], { windowsHide: true, stdio: 'ignore' }); };
   installed('Claude Code', version(values['claude-bin'] ?? 'claude'), () => installClaudeCode(dataDir),
-    'first run: wisdom track claude, then log in once');
+    'wisdom track claude');
   installed('Codex', version(values['codex-bin'] ?? 'codex'), () => installCodex(dataDir).home,
-    'first run: wisdom track codex --setup-hooks, trust Wisdom\'s hooks in /hooks, log in');
+    'wisdom track codex --setup-hooks, trust its hooks in /hooks, then wisdom track codex');
   installed('Pi', () => { fs.accessSync(piEntry(values['pi-entry'])); }, () => installPi(dataDir),
-    'first run: wisdom track pi, then log in once (/login)');
-  console.log('Your global harness settings (~/.claude, ~/.codex, ~/.pi) are not touched.');
-  console.log('Keep .wisdom/ private: it holds each harness\'s login and unredacted sessions. .gitignore only keeps it out of git, so leave it out of zips, copies and synced folders.');
+    'wisdom track pi');
   const connection = await ensureDaemon(dataDir, port);
-  console.log(`Daemon running at ${connection.url}`);
+  console.log(`\nDashboard: ${dashboardLine((await call(connection, '/health')).dashboard)}`);
+  console.log('\nEach agent asks you to log in once for this project. Your global agent settings are not touched.');
+  console.log('Keep .wisdom/ private: it holds your sessions and agent logins, unredacted. Git ignores it, but leave it out of zips and synced folders.');
 }
 
 /** Start a harness with its home in the project's data folder. Recording comes from the
@@ -191,4 +247,13 @@ function runHarness(launch: Launch, cwd: string, env: NodeJS.ProcessEnv): Promis
   });
 }
 
-main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+// A reader that stops early (`| head`, `| Select-Object -First`) is not a failure.
+process.stdout.on('error', (error: NodeJS.ErrnoException) => { if (error.code === 'EPIPE') process.exit(0); throw error; });
+
+main().catch(error => { console.error(errorText(error)); process.exitCode = 1; });
+
+/** Node's own message for an unknown option talks about positional arguments. */
+function errorText(error: any): string {
+  if (error?.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') return `Unknown option ${/'([^']+)'/.exec(error.message)?.[1] ?? ''}. Run: wisdom --help`;
+  return error instanceof Error ? error.message : String(error);
+}

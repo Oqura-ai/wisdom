@@ -5,18 +5,27 @@ description: Read a recorded coding-agent session (Pi, Claude Code, or Codex) fr
 
 # Read a Wisdom session
 
-Use the `ledger` MCP tool when available. The CLI prints the same text:
-`node <wisdom>/dist/src/cli.js glance|open …`, run inside the project (it finds `.wisdom/`).
-`wisdom track` sets `WISDOM_CLI_PATH`, so `node "$env:WISDOM_CLI_PATH" glance latest` (PowerShell) or
-`node "$WISDOM_CLI_PATH" glance latest` (POSIX) works from any tracked workspace.
+Run the `wisdom` command in your shell, inside the project. It finds `.wisdom/` and starts
+Wisdom's background service if it is stopped.
+
+```sh
+wisdom glance                    # recorded sessions, newest first
+wisdom glance latest             # one session: its shape and every turn
+wisdom open t3 --capture latest  # turn 3, whole
+```
+
+If PowerShell blocks `wisdom`, use `wisdom.cmd`. If `wisdom` is not found, `wisdom track` sets
+`WISDOM_CLI_PATH`: run `node "$env:WISDOM_CLI_PATH" glance latest` (PowerShell) or
+`node "$WISDOM_CLI_PATH" glance latest` (POSIX). If you have a `ledger` tool, it takes the same
+moves as `{glance:true}`, `{capture, glance:true}` and `{capture, open}`, and returns the same text.
 
 ## Two moves
 
-1. **Glance.** `{glance:true}` lists sessions, newest first. `{capture:"latest"|"<id or 8+ characters>", glance:true}`
+1. **Glance.** `wisdom glance` lists sessions, newest first. `wisdom glance <latest|id or 8+ characters>`
    (`latest` is the newest session with a turn) shows one session: its shape, then each turn `t1`, `t2`, … with the user's input in full,
    the start of the turn's last reply, and facts: tool calls, failures, pending results,
    changed files, subagents `a1`, `a2`, … Read the inputs: they set the stakes.
-2. **Open.** `{capture, open:"t3"}` returns the whole turn in recorded order: thinking,
+2. **Open.** `wisdom open t3 --capture <session>` returns the whole turn in recorded order: thinking,
    replies, each call `c1`, `c2`, … with full input and output, then all of its patches
    `p1`, `p2`, … together. Read every patch of a turn together: changes depend on each other.
    - `t3/c2` opens one call (its full input and output; also how to read a file the turn
@@ -28,10 +37,24 @@ A good review: glance, open the turns whose facts look odd (a failure followed b
 change to tests only, files changed outside any tool call, pending calls), read the
 smallest proof, compare the final reply's claims with the evidence, and stop.
 
+## When the shell gets in the way
+
+- **Your shell can cut long output, even when Wisdom's answer is whole.** A saved-to-file notice or a
+  truncation warning means you did not see all of it, and `complete` then only describes Wisdom's answer.
+  If it saved the output to a file, read that file. Otherwise read in pages at the version the answer
+  states, starting each page where the last one stopped:
+  `wisdom open t3 --capture <session> --at <version> --from 1 | Select-Object -First 300` (PowerShell) or
+  `… | head -n 300` (POSIX), then `--from 301`, and so on until you reach the last line. Lines count from 1.
+  Do not report on a part you did not read.
+- **`latest` can be you.** Inside a recorded session, your own session is often the newest. To read an
+  earlier one, run `wisdom glance` and name its ID.
+- **In a sandbox,** Wisdom can read through a running service but may not be able to start a stopped one.
+  If it says so, ask the user to run `wisdom daemon start`.
+
 ## Reading the answer
 
 - The last line says `complete`, or `limited · lines … · continue: {…}`. To continue, send
-  that request exactly; it carries `from` and `at`. Never assume a limited answer is whole.
+  that request exactly; it carries `from` and `at` (`--from` and `--at` in the shell). Never assume a limited answer is whole.
 - Every response states its `version`. Pass it as `at` to keep reading the same snapshot
   while the session is still recording; omit it to see new evidence.
 - `⤷` starts the continued piece of a line longer than 2,000 characters.

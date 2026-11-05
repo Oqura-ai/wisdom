@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { home, hookCommand, readSettings, saveSettings, withHooks, type Launch } from '../launch.js';
+import { home, hookCommand, installSkill, readSettings, saveSettings, withHooks, type Launch } from '../launch.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
   'PostToolUseFailure', 'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact'] as const;
@@ -17,6 +17,7 @@ export function installClaudeCode(dataDir: string): string {
   settings.hooks = withHooks(settings.hooks, hookEvents, hookCommand('claude-code', dataDir),
     event => toolEvents.has(event) ? { matcher: '*' } : {});
   saveSettings(file, settings);
+  installSkill(folder);
   return folder;
 }
 
