@@ -9,7 +9,7 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | Limitation | What it means for you | Effort |
 | --- | --- | --- |
 | Tested on Windows only | macOS and Linux are expected to work, but no real session has been recorded on them. | M |
-| One dashboard per project | No single view of all projects, and each project runs its own daemon and dashboard. | L |
+| Each project stands alone | By design, each project has its own daemon, dashboard and address, and there is no view across projects. | By design |
 | The dashboard is read-only | Start, stop, repair and delete all happen in the terminal. | M |
 | At most about 20 projects running at once | Each running project takes a pair of ports, and each daemon and dashboard stay in memory. | L |
 | No search | You read one session at a time. | L |

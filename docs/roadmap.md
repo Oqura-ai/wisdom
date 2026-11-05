@@ -10,8 +10,7 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 | --- | --- | --- | --- |
 | npm package with a built-in dashboard | Install with one command | M | Done, not yet published |
 | `wisdom doctor` | One command that says what's wrong and how to fix it | M | Done |
-| One control panel for all projects | Every project and agent on one screen, at one address | L | Planned |
-| Health and controls in the panel | Start and stop the service, add a project, repair hooks | M | Planned |
+| Health and controls in the dashboard | See problems, and start, stop or repair from a project's own dashboard | M | Under discussion |
 | Storage and delete | See how much space sessions use, and delete one with a confirmation | M | Planned |
 | Search across sessions | Find a prompt, reply, command or file name, then jump to it | L | Planned |
 | Mark failed subagents, link forks to parents | Fewer sessions that look complete when they aren't | M | Planned |
@@ -21,7 +20,7 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 
 | Work | What you get | Effort |
 | --- | --- | --- |
-| Connect projects | Run plain `claude`, `codex` or `pi` with your normal login and still record, for one project or all of them | L |
+| Connect projects | Run plain `claude`, `codex` or `pi` with your normal login and still record, in a project you choose | L |
 | Worth checking | A short list at the top of each session: a call that failed with no later success, a test that failed before a test file was edited, part of a session not recorded. Built from recorded facts, with no AI. | M |
 | Sessions and commits | See the commits made during a session, and find the session behind a commit | M |
 | Easier install | A one-line installer that includes Node, then a desktop app | L |

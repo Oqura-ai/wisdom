@@ -112,7 +112,7 @@ See [development](docs/development.md) for tests, packaging and the code map, an
 Wisdom is early. The main gaps today:
 
 - **Tested on Windows only.** macOS and Linux are not verified yet.
-- **One dashboard per project.** There is no single view of all your projects, and no controls in the dashboard yet.
+- **The dashboard only shows.** Each project has its own, and starting, stopping and repairing happen in the terminal.
 - **No search.** You read one session at a time.
 - **No delete command.** Removing a recording means removing it by hand.
 - **Separate login per project.** Sessions started with plain `claude`, `codex` or `pi` outside the project's Wisdom home are not recorded.
@@ -122,7 +122,7 @@ See [limitations](docs/limitations.md) for the full list and the effort each one
 
 ## Roadmap
 
-Next up are one control panel for all projects, search, and recording without a separate login. After that come session handoffs between developers and evidence for code review. See the [roadmap](docs/roadmap.md).
+Next up are search and recording without a separate login. After that come session handoffs between developers and evidence for code review. See the [roadmap](docs/roadmap.md).
 
 ## License
 
