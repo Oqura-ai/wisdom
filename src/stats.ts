@@ -3,12 +3,16 @@ import type { SessionStore } from './store.js';
 import { workspaceKey } from './database.js';
 import { resumeCommands } from './harnesses/index.js';
 import type { LedgerRecord } from './schema.js';
+import { estimateCost } from './prices.js';
 
-export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean }
+/** `costEstimated`: some of `costUsd` was estimated from tokens (prices.ts), because the
+ * harness reported no cost for those calls. */
+export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean; costEstimated?: boolean }
 const emptyTokens = (): TokenTotals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null });
 function addTokens(into: TokenTotals, from: TokenTotals): void {
   for (const field of ['calls', 'input', 'cacheRead', 'cacheWrite', 'output', 'reasoning', 'total'] as const) into[field] += from[field];
   if (from.costUsd !== null) into.costUsd = (into.costUsd ?? 0) + from.costUsd;
+  if (from.costEstimated) into.costEstimated = true;
 }
 
 export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session: string; harness?: string; turns?: number }
@@ -95,6 +99,10 @@ export function stats(captures: SessionStore, request: { workspaceRoot?: string 
       cacheWrite: number(row.cacheWrite), output: number(row.output), reasoning: number(row.reasoning), total: 0,
       costUsd: row.costUsd === null ? null : number(row.costUsd) };
     tokens.total = tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.output;
+    if (tokens.costUsd === null) {
+      const estimate = estimateCost(String(row.model), tokens);
+      if (estimate !== undefined) { tokens.costUsd = estimate; tokens.costEstimated = true; }
+    }
     const id = String(row.id);
     addTokens(tokensByCapture.get(id) ?? tokensByCapture.set(id, emptyTokens()).get(id)!, tokens);
     const harness = harnessOfCapture.get(id) ?? 'unknown';

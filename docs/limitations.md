@@ -21,6 +21,7 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | The secret check finds known shapes only | `wisdom share` catches common keys, tokens and `PASSWORD=` style values, and misses others. Look through what you send. | Ongoing |
 | Clones under another login | A clone resumes under the login that recorded the session. Under a different login, Claude Code's signed thinking or Codex's encrypted reasoning may be refused. Not tested yet. | S to test |
 | A warning on the first event | When the daemon isn't running, the first hook shows a warning such as `SessionStart:startup hook error`. Nothing is lost, but it looks broken. | S |
+| Codex cost is an estimate | Codex reports tokens, not cost. The dashboard prices them at OpenAI's standard API rates for short prompts, read on a set date. Long prompts cost more, prices change, a model not in the table shows no cost, and on a ChatGPT plan you aren't billed per token. | S to keep current |
 | Large projects | Past 10,000 files or 64 MiB of retained contents, changes become gaps instead of diffs. | M |
 | Sessions sharing a folder | Two sessions in one folder see each other's changes. These are labelled honestly but can't be separated. | L |
 | Native formats can change | A new harness version can change what Wisdom reads. `wisdom doctor` shows when you're past the last tested version. | Ongoing |

@@ -3,6 +3,7 @@ import type { LedgerRecord } from './schema.js';
 import { EvidenceReader, evidenceVersion } from './evidence.js';
 import { nativeMessage } from './harnesses/index.js';
 import { messageContent } from './content.js';
+import { estimateCost } from './prices.js';
 
 /** One turn, at one version. Without maxChars every body is returned whole. */
 export interface TurnRequest { captureId: string; requestId: string; readVersion?: number; maxChars?: number }
@@ -198,7 +199,7 @@ export function conversation(captures: SessionStore, request: TurnRequest) {
   main.sort((a, b) => a.at.localeCompare(b.at));
 
   // Tokens of this turn: once per model response, resumed history excluded.
-  const tokens = { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null as number | null };
+  const tokens = { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null as number | null, costEstimated: undefined as true | undefined };
   const seen = new Set<string>();
   const usageAgents = [...agents];
   const usage = db.records(`capture_id=? AND revision<=? AND type='usage' AND (request_id=?${usageAgents.length ? ` OR json_extract(body,'$.agentId') IN (${usageAgents.map(() => '?').join(',')})` : ''})`,
@@ -211,7 +212,10 @@ export function conversation(captures: SessionStore, request: TurnRequest) {
     const u = record.usage;
     tokens.calls++; tokens.input += u.input; tokens.cacheRead += u.cacheRead; tokens.cacheWrite += u.cacheWrite;
     tokens.output += u.output; tokens.reasoning += u.reasoning ?? 0; tokens.total += u.input + u.cacheRead + u.cacheWrite + u.output;
+    // A harness that reports no cost (Codex) gets an estimate from its tokens, marked as one.
+    const estimate = typeof u.costUsd === 'number' ? undefined : estimateCost(record.model, u);
     if (typeof u.costUsd === 'number') tokens.costUsd = (tokens.costUsd ?? 0) + u.costUsd;
+    else if (estimate !== undefined) { tokens.costUsd = (tokens.costUsd ?? 0) + estimate; tokens.costEstimated = true; }
   }
 
   const promptData = json(prompt);

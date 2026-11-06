@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionStore } from './store.js';
 import { resolveCapture } from './discovery.js';
+import { sessionMarkdown } from './markdown.js';
 import type { LedgerRecord, ViewRequest } from './schema.js';
 import { EvidenceReader, evidenceVersion } from './evidence.js';
 import { conversation } from './conversation.js';
 import { stats } from './stats.js';
+import { estimateCost } from './prices.js';
 
 /** The dashboard's reads. It draws whole sessions, so it receives records as stored;
  * agents read through the ledger in discovery.ts instead.
@@ -20,6 +22,7 @@ export function view(captures: SessionStore, request: Exclude<ViewRequest, { vie
     case 'native-result': return nativeResult(captures, request.captureId, request.toolCallId, request.readVersion);
     case 'export': return exportCapture(captures, request.capture);
     case 'transcript': return transcript(captures, request.capture);
+    case 'markdown': return sessionMarkdown(captures, request.capture);
   }
 }
 
@@ -66,7 +69,9 @@ function captureRecords(captures: SessionStore, captureId: string) {
   const structure = db.records(`capture_id=? AND revision<=? AND type IN (${structureTypes.map(() => '?').join(',')})`, [captureId, readVersion, ...structureTypes]);
   const replies = db.records(`capture_id=? AND revision<=? AND type IN ('message','source_record') AND role='assistant'`, [captureId, readVersion])
     .filter(r => r.summary);
-  const usage = db.records(`capture_id=? AND revision<=? AND type='usage'`, [captureId, readVersion]);
+  // A call with no reported cost (Codex) carries an estimate beside the record, never inside it.
+  const usage = db.records(`capture_id=? AND revision<=? AND type='usage'`, [captureId, readVersion]).map(record =>
+    record.usage && typeof record.usage.costUsd !== 'number' ? { ...record, estimatedCostUsd: estimateCost(record.model, record.usage) } : record);
   return { readVersion, events: [...structure, ...replies].sort((a, b) => a.seq - b.seq), usage };
 }
 

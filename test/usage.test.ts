@@ -10,6 +10,7 @@ import { closeSession, observeSession, openSession } from './session.js';
 import { pi } from '../src/harnesses/pi/adapter.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 import { codex } from '../src/harnesses/codex/adapter.js';
+import { estimateCost } from '../src/prices.js';
 
 const lines = (...entries: unknown[]) => entries.map(e => JSON.stringify(e)).join('\n') + '\n';
 
@@ -104,5 +105,36 @@ test('usage is indexed live, linked to its requests, and not indexed again after
     assert.equal(daemon.captures.get(captureId).listRecords().filter(r => r.type === 'usage').length, 2);
     const stats = await call(daemon.connection, '/view', { view: 'project', workspaceRoot: workspace });
     assert.equal(stats.sessions[0].tokens.costUsd, 0.002);
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Codex cost is estimated from tokens at listed prices, marked, and only in the dashboard', async () => {
+  // gpt-5 at $1.25 input, $0.125 cached, $10 output per million; cache writes priced as input.
+  assert.equal(estimateCost('gpt-5', { input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, output: 1_000_000 }), 1.25 * 2 + 0.125 + 10);
+  assert.equal(estimateCost('unlisted-model', { input: 1, cacheRead: 0, cacheWrite: 0, output: 0 }), undefined);
+  assert.equal(estimateCost(undefined, { input: 1, cacheRead: 0, cacheWrite: 0, output: 0 }), undefined);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-usage-estimate-'));
+  const workspace = path.join(root, 'project'); fs.mkdirSync(workspace);
+  const transcript = path.join(root, 'rollout.jsonl'); fs.writeFileSync(transcript, '');
+  const daemon = await startDaemon(path.join(root, 'data'), 0);
+  try {
+    const c = daemon.connection;
+    const { captureId } = await openSession(c, { harness: 'codex', sessionId: 's', workspaceRoot: workspace, source: transcript });
+    await observeSession(c, captureId, { observationId: randomUUID(), type: 'input', data: { text: 'go' } });
+    fs.appendFileSync(transcript, lines({ type: 'turn_context', payload: { model: 'gpt-5' } },
+      { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 1_100_000 },
+        last_token_usage: { input_tokens: 1_000_000, cached_input_tokens: 0, output_tokens: 100_000 } } } }));
+    await observeSession(c, captureId, { observationId: randomUUID(), type: 'agent_settled' });
+    await closeSession(c, captureId);
+
+    const stats = await call(c, '/view', { view: 'project', workspaceRoot: workspace });
+    assert.equal(stats.sessions[0].tokens.costUsd, 1.25 + 1);
+    assert.equal(stats.sessions[0].tokens.costEstimated, true);
+    assert.equal(stats.harnesses[0].tokens.costEstimated, true);
+    const usage = (await call(c, '/view', { view: 'capture', captureId })).usage;
+    assert.equal(usage[0].estimatedCostUsd, 2.25);
+    assert.equal(usage[0].usage.costUsd, undefined, 'the stored record is unchanged');
+    assert(!/\$/.test((await call(c, '/ledger', { capture: captureId, glance: true })).text), 'agents see reported cost only');
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

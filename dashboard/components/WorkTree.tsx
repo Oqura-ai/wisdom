@@ -124,8 +124,8 @@ export function WorkTree({ session, readVersion, onBack, onOpen }: { session: Se
         <div className="metric" title={`Tokens across ${plural(session.tokens.calls, 'model response')} in this capture, subagents included`}>
           <b>{tokens(session.tokens.total)}</b><span>tokens</span>
         </div>
-        <div className="metric" title={session.tokens.costUsd === null ? 'Not reported by this harness' : session.tokens.costBehind ? 'The harness last reported this before its latest model responses' : 'Reported by the harness'}>
-          <b>{session.tokens.costUsd === null ? '—' : cost(session.tokens.costUsd)}</b><span>{session.tokens.costBehind ? 'cost so far' : 'cost'}</span>
+        <div className="metric" title={session.tokens.costUsd === null ? 'Not reported by this harness' : session.tokens.costBehind ? 'The harness last reported this before its latest model responses' : session.tokens.costEstimated ? 'Codex reports no cost; estimated from tokens at OpenAI API prices' : 'Reported by the harness'}>
+          <b>{session.tokens.costUsd === null ? '—' : cost(session.tokens.costUsd)}</b><span>{session.tokens.costBehind ? 'cost so far' : session.tokens.costEstimated ? 'est. cost' : 'cost'}</span>
         </div>
       </div>
       {error && <div className="banner">{error}</div>}

@@ -13,7 +13,7 @@ A harness is the coding agent Wisdom records. Each one has its own adapter, and 
 | Clone | Found and opened without a login | Found and opened without a login | Resumed in full with a scripted model |
 | Last tested version | 2.1.317 | 0.164.0 (the minimum accepted) | 1.2.0 |
 | Thinking | When recorded, otherwise `redacted` | Usually encrypted, shown as `redacted` | When recorded |
-| Cost | Total per session | Not reported | Per message |
+| Cost | Total per session | Not reported; the dashboard estimates it from tokens | Per message |
 
 `wisdom doctor` shows each harness's state in a project, and says when you're past the last tested version. A newer version may work fine, but native formats can change.
 

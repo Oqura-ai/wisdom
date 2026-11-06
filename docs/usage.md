@@ -11,6 +11,7 @@
 | `wisdom share <session>...` | Write one file to send a teammate, after a check for secrets. See [sharing a session](#sharing-a-session). |
 | `wisdom import <file>` | Read a teammate's shared file in this project, read-only. See [reading a shared session](#reading-a-shared-session). |
 | `wisdom clone <session>` | Carry a session on as a new session of the same harness, its history copied. See [cloning a session](#cloning-a-session). |
+| `wisdom export <session>` | Write a session as Markdown anyone can read, after a check for secrets. See [exporting a session](#exporting-a-session). |
 | `wisdom glance [session\|latest]` | List recorded sessions, or show one session's shape and every turn. |
 | `wisdom open <position> --capture <session\|latest>` | Read one turn, tool call or subagent, whole. |
 | `wisdom dashboard` | Print the address of the live dashboard. |
@@ -121,6 +122,18 @@ A clone is a new session in the same harness that already holds the other sessio
 - **The whole history goes to the model.** The first prompt after cloning sends it to your model provider, and that usage counts.
 
 Not yet confirmed: whether a clone resumes under a different login than the one that recorded it, since Claude Code signs its thinking and Codex encrypts its reasoning. Claude Code, Codex and Pi all find and open a clone; Pi was resumed in full with a scripted model.
+
+## Exporting a session
+
+```sh
+wisdom export 0f3c8a1e                 # saved to .wisdom/shared-out/0f3c8a1e.md
+wisdom export 0f3c8a1e --out pr.md
+wisdom export 0f3c8a1e --redact --out - | clip   # print it, for pasting
+```
+
+A Markdown document for people who don't have Wisdom: a PR description, an issue, docs. Every prompt and reply is in full. Each tool call is a folded block, like `t1/c2 · Bash · failed`, holding its whole input and output, numbered as `wisdom open` numbers it. Each turn's changes follow as raw `diff` blocks, and gaps appear where they happened. Recorded thinking is folded too; thinking the harness didn't record is named, not hidden. Nothing is summarized or cut, and there's no length limit. GitHub, GitLab and most editors open and close the folded blocks.
+
+The same check for secrets as `wisdom share` runs first, with the same choices: redact, keep, or cancel, and `--redact` or `--keep-secrets` when there's no terminal to ask. Messages go to stderr, so `--out -` prints only the document. Your own sessions and shared ones both export; a shared one says so.
 
 ## Reading a session
 

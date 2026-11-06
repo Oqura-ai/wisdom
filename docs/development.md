@@ -26,7 +26,7 @@ npm run test:codex   # installed Codex hook discovery and trust, no model calls
 
 Run one file after building with `node --test dist/test/ledger.test.js`, and filter with `--test-name-pattern="<regex>"`. No linter is configured.
 
-- `npm test` checks live reads, exact edit patches, failure side effects, partial native records, continuation of limited responses at a fixed version, positions and error messages, nested calls and subagents, MCP, restart recovery, SQLite persistence, `wisdom doctor`, handoff links, the secret check and share file format, importing and reading shared sessions, cloning, and what the npm package contains.
+- `npm test` checks live reads, exact edit patches, failure side effects, partial native records, continuation of limited responses at a fixed version, positions and error messages, nested calls and subagents, MCP, restart recovery, SQLite persistence, `wisdom doctor`, handoff links, the secret check and share file format, importing and reading shared sessions, cloning, Markdown export, and what the npm package contains.
 - The Pi integration test starts the installed Pi with its agent folder set up as `wisdom init` does, in an isolated temporary workspace. A local scripted provider drives real file tools and nested calls with no network requests or model spend. It checks that Pi loads the skill from its home, reads while Pi is running, the opened turn, and the mirrored transcript byte for byte. Set `WISDOM_PI_ENTRY` if the managed Pi installation is not available.
 - `WISDOM_CODEX_BIN` overrides the Codex executable for its test.
 

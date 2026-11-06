@@ -113,6 +113,7 @@ The session's next hook event continues it, with a gap for the time in between; 
 | [store.ts](../src/store.ts) | `SessionStore`: what the read layer needs from a place sessions are kept. The project's own `Captures` and each `SharedStore` implement it. |
 | [shared.ts](../src/shared.ts) | Imported share files: a read-only store each, the library that imports and finds them, and the routing of `/ledger` and `/view` to the store that holds a session. |
 | [share.ts](../src/share.ts) / [secrets.ts](../src/secrets.ts) | `wisdom share`: the share file format, written and read; the secret patterns, masking and redaction. |
+| [markdown.ts](../src/markdown.ts) | `wisdom export`: one session as Markdown, built from the same turn assembly as the ledger (the `markdown` view). |
 | [handoff.ts](../src/handoff.ts) | `wisdom handoff`: which session to read, the first prompt, and the handoff the hooks pass on. |
 | [clone.ts](../src/clone.ts) | `wisdom clone`: the copied transcript under a new ID, its clone note, and the check of changed files. |
 | [bin.ts](../src/bin.ts) | The installed command: checks the Node version, then loads the CLI. |

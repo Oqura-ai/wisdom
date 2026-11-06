@@ -79,9 +79,10 @@ wisdom handoff codex               # out of Claude Code? Codex starts by reading
 wisdom share 0f3c8a1e              # one file for a teammate, after a check for secrets
 wisdom import 0f3c8a1e-….wisdom-share   # your teammate reads it, read-only
 wisdom clone 0f3c8a1e              # carry a session on, its history included, in the same agent
+wisdom export 0f3c8a1e --out pr.md # Markdown anyone can read: a PR, an issue, docs
 ```
 
-Nothing is summarized: the next agent reads the record itself. A share holds no logins, and what the check finds is redacted in the file, kept, or the share cancelled. See [handing work on](docs/usage.md#handing-work-on), [sharing](docs/usage.md#sharing-a-session) and [cloning](docs/usage.md#cloning-a-session).
+Nothing is summarized: the next agent reads the record itself. A share holds no logins, and what the check finds is redacted in the file, kept, or the share cancelled. See [handing work on](docs/usage.md#handing-work-on), [sharing](docs/usage.md#sharing-a-session), [cloning](docs/usage.md#cloning-a-session) and [exporting](docs/usage.md#exporting-a-session).
 
 ## Documentation
 

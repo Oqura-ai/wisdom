@@ -96,6 +96,7 @@ export function tokensByRequest(usage: EventRecord[]): { byRequest: Map<string, 
       target.calls++; target.input += u.input; target.cacheRead += u.cacheRead; target.cacheWrite += u.cacheWrite;
       target.output += u.output; target.reasoning += u.reasoning ?? 0; target.total += u.input + u.cacheRead + u.cacheWrite + u.output;
       if (typeof u.costUsd === 'number') target.costUsd = (target.costUsd ?? 0) + u.costUsd;
+      else if (record.estimatedCostUsd !== undefined) { target.costUsd = (target.costUsd ?? 0) + record.estimatedCostUsd; target.costEstimated = true; }
     }
   }
   return { byRequest, total };

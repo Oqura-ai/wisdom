@@ -34,7 +34,7 @@ export function TokenLegend({ tokens: t, showCost = true }: { tokens: Tokens; sh
       ))}
       {t.reasoning > 0 && <span title="Part of output">reasoning <b>{tokens(t.reasoning)}</b></span>}
       {t.cacheRead > 0 && <span title="Share of input served from cache">cache hit <b>{Math.round((t.cacheRead / input) * 100)}%</b></span>}
-      {showCost && <span title={t.costBehind ? 'The harness last reported this before its latest model responses' : 'Only cost reported by the harness itself'}>cost <b>{cost(t.costUsd)}{t.costBehind ? ' so far' : ''}</b></span>}
+      {showCost && <span title={t.costBehind ? 'The harness last reported this before its latest model responses' : t.costEstimated ? 'Estimated from tokens at OpenAI API prices' : 'Reported by the harness'}>cost <b>{cost(t.costUsd)}{t.costBehind ? ' so far' : ''}</b></span>}
     </div>
   );
 }

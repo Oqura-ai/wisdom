@@ -96,20 +96,29 @@ export async function draftShare(connection: Connection, refs: string[]): Promis
   const sessions = exported.filter((session, index) => exported.findIndex(other => other.manifest.captureId === session.manifest.captureId) === index);
   const built = sessions.map(pieces);
   const all = built.flatMap(b => b.pieces);
+  const text = all.filter(piece => piece.encoding === 'utf8');
+  return { sessions, pieces: all, findings: findSecrets(text), homePlaces: homePlaces(text.map(piece => piece.text)), unscanned: built.reduce((n, b) => n + b.unscanned, 0) };
+}
+
+/** What looks like a secret, once per value, with every place it appears. */
+export function findSecrets(texts: { text: string; place: (index: number) => string }[]): Finding[] {
   const findings = new Map<string, Finding>();
-  for (const piece of all) {
-    if (piece.encoding !== 'utf8') continue;
-    for (const match of scanSecrets(piece.text)) {
+  for (const { text, place } of texts) {
+    for (const match of scanSecrets(text)) {
       const finding = findings.get(match.value) ?? { kind: match.kind, value: match.value, shown: maskSecret(match.value), places: [] };
-      const place = piece.place(match.index);
-      if (!finding.places.includes(place)) finding.places.push(place);
+      const where = place(match.index);
+      if (!finding.places.includes(where)) finding.places.push(where);
       findings.set(match.value, finding);
     }
   }
+  return [...findings.values()];
+}
+
+/** How often this machine's home folder, which names the user, appears in these texts. */
+export function homePlaces(texts: string[]): number {
   const home = os.homedir();
   const forms = [...new Set([home, home.replaceAll('\\', '/'), home.replaceAll('\\', '\\\\')])];
-  const homePlaces = all.reduce((sum, piece) => sum + forms.reduce((n, form) => n + piece.text.split(form).length - 1, 0), 0);
-  return { sessions, pieces: all, findings: [...findings.values()], homePlaces, unscanned: built.reduce((n, b) => n + b.unscanned, 0) };
+  return texts.reduce((sum, text) => sum + forms.reduce((n, form) => n + text.split(form).length - 1, 0), 0);
 }
 
 /** Write the file. Redacted values are replaced in every piece, in this file only; the

@@ -20,11 +20,12 @@ export function Overview({ stats, sessions, titles, harness, onOpen }: { stats: 
   const sum = (field: 'requests' | 'tools' | 'failures' | 'changes') => harnesses.reduce((n, h) => n + h[field], 0);
   const totalTokens = harnesses.reduce((n, h) => n + h.tokens.total, 0);
   const costs = harnesses.map(h => h.tokens.costUsd).filter((c): c is number => c !== null);
+  const estimated = harnesses.some(h => h.tokens.costEstimated);
   const kpis: [string, string, string?][] = [
     ['sessions', String(sessions.length)], ['requests', String(sum('requests'))],
     ['tool calls', String(sum('tools'))], ['failures', String(sum('failures')), sum('failures') ? 'bad' : undefined],
     ['file changes', String(sum('changes'))], ['tokens', tokens(totalTokens)],
-    ['reported cost', costs.length ? cost(costs.reduce((a, b) => a + b, 0)) : '—'],
+    [estimated ? 'cost *' : 'reported cost', costs.length ? cost(costs.reduce((a, b) => a + b, 0)) : '—'],
   ];
 
   return (
@@ -39,6 +40,7 @@ export function Overview({ stats, sessions, titles, harness, onOpen }: { stats: 
       <section className="kpis card">
         {kpis.map(([label, value, tone]) => <div key={label} className={`kpi ${tone ?? ''}`}><b>{value}</b><span>{label}</span></div>)}
       </section>
+      {estimated && <p className="muted small">* Codex reports no cost, so its cost here is estimated from tokens at OpenAI API prices. On a ChatGPT plan you aren't billed per token.</p>}
 
       <section className={`cards n-${Math.min(harnesses.length, 4)}`}>
         {harnesses.map(h => (
@@ -55,7 +57,7 @@ export function Overview({ stats, sessions, titles, harness, onOpen }: { stats: 
               <div><dt>changes</dt><dd>{h.changes}</dd></div>
               {h.subagents > 0 && <div><dt>subagents</dt><dd>{h.subagents}</dd></div>}
               <div><dt>tokens</dt><dd>{tokens(h.tokens.total)}</dd></div>
-              <div><dt>cost</dt><dd className={h.tokens.costUsd === null ? 'muted' : ''} title={h.tokens.costUsd === null ? 'Not reported by this harness' : 'Reported by the harness'}>
+              <div><dt>cost</dt><dd className={h.tokens.costUsd === null ? 'muted' : ''} title={h.tokens.costUsd === null ? 'Not reported by this harness' : h.tokens.costEstimated ? undefined : 'Reported by the harness'}>
                 {h.tokens.costUsd === null ? '—' : cost(h.tokens.costUsd)}</dd></div>
             </dl>
             {h.tokens.calls > 0

@@ -13,7 +13,8 @@ import { startDashboard } from './dashboard.js';
  */
 // 11: hook events may carry a handoff, and the export view exists.
 // 12: /import, and the shared and transcript views.
-export const CAPTURE_API = 12;
+// 13: the markdown view.
+export const CAPTURE_API = 13;
 
 export interface Connection { url: string; token: string; pid: number }
 

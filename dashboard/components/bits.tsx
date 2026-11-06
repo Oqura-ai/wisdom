@@ -181,7 +181,8 @@ export function tokens(value: number): string {
   return `${(value / 1_000_000).toFixed(2)}M`;
 }
 
-/** Only harness-reported cost is shown; absent means not reported, never $0. */
+/** Cost the harness reported, or an estimate from tokens where it reports none (Codex);
+ * the page says once which is estimated. Absent means neither, never $0. */
 export function cost(value: number | null | undefined): string {
   if (value === null || value === undefined) return 'not reported';
   return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;

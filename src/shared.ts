@@ -158,7 +158,7 @@ export function readLedger(captures: Captures, library: SharedLibrary, input: un
 /** A dashboard read, routed the same way. Exports stay with this project's own sessions. */
 export function readView(captures: Captures, library: SharedLibrary, request: ViewRequest): unknown {
   if (request.view === 'shared') return { sessions: library.all.flatMap(sharedSessions) };
-  const ref = 'captureId' in request ? request.captureId : request.view === 'transcript' ? request.capture : undefined;
+  const ref = 'captureId' in request ? request.captureId : request.view === 'transcript' || request.view === 'markdown' ? request.capture : undefined;
   const store = ref && !holds(captures, ref) ? library.owner(ref) : undefined;
   return view(store ?? captures, request);
 }

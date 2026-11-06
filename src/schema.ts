@@ -24,6 +24,7 @@ export const viewSchema = z.discriminatedUnion('view', [
   z.object({ view: z.literal('export'), capture: z.string().min(1) }).strict(),
   z.object({ view: z.literal('shared') }).strict(),
   z.object({ view: z.literal('transcript'), capture: z.string().min(1) }).strict(),
+  z.object({ view: z.literal('markdown'), capture: z.string().min(1) }).strict(),
 ]);
 
 /** Written by `wisdom clone` before the copy's transcript exists, so the daemon knows which

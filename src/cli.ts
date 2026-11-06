@@ -10,7 +10,8 @@ import { startDaemon, type Connection } from './daemon.js';
 import { diagnose, formatChecks, wisdomVersion } from './doctor.js';
 import { planHandoff } from './handoff.js';
 import { planClone } from './clone.js';
-import { chooseRedactions, defaultSharePath, draftShare, formatFindings, writeShare } from './share.js';
+import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share.js';
+import { redactSecrets } from './secrets.js';
 import { serveMcp } from './mcp.js';
 import { findDataDir, marker, movedFrom } from './paths.js';
 import { writeJson } from './ledger.js';
@@ -43,6 +44,7 @@ Read a session
 Share a session
   wisdom share <session>...       Write a file to send a teammate, after a check for secrets
   wisdom import <file>            Read a teammate's shared file here, read-only
+  wisdom export <session>         Write a session as Markdown anyone can read, after a check for secrets
   wisdom clone <session>          Carry a session on as a new one, in the same agent
 
 Background service
@@ -65,8 +67,8 @@ Options
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
   --trust-all-hooks               track codex: skip the review, for every hook in that run
   -- ARGUMENTS                    track: pass the rest to the agent; handoff: add to its prompt
-  --out FILE                      share: where to save (default: .wisdom/shared-out/)
-  --redact, --keep-secrets        share: replace what the check finds, or keep it, without asking
+  --out FILE                      share, export: where to save (default: .wisdom/shared-out/); export: - prints it
+  --redact, --keep-secrets        share, export: replace what the check finds, or keep it, without asking
 
 Docs: https://github.com/Oqura-ai/wisdom
 `;
@@ -89,7 +91,7 @@ async function main(): Promise<void> {
     daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
-    share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'],
+    share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
     clone: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     glance: ['cwd', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
   };
@@ -97,7 +99,7 @@ async function main(): Promise<void> {
   if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
   if (separator >= 0 && !['track', 'handoff'].includes(command)) throw new Error('Arguments after -- are only supported by track and handoff');
-  if (command !== 'share' && positionals.length > (['daemon', 'track', 'resume', 'handoff', 'import', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
+  if (command !== 'share' && positionals.length > (['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
@@ -150,6 +152,7 @@ async function main(): Promise<void> {
   if (command === 'handoff') { process.exitCode = await handoff(first, values, harnessArgs.join(' '), dataDir, port); return; }
   if (command === 'share') { process.exitCode = await share(positionals.slice(1), values, dataDir, port); return; }
   if (command === 'import') { await importShare(first, dataDir, port); return; }
+  if (command === 'export') { process.exitCode = await exportMarkdown(first, values, dataDir, port); return; }
   if (command === 'clone') { process.exitCode = await clone(first, values, dataDir, port); return; }
   if (command === 'mcp') { await serveMcp(await ensureDaemon(dataDir, port)); return; }
   // glance and open: the same request an agent sends through MCP, printed as the same text.
@@ -312,6 +315,37 @@ async function clone(ref: string | undefined, values: any, dataDir: string, port
     console.error(`${error instanceof Error ? error.message : error}\nThe clone is saved as session ${plan.sessionId}. Start it later with:\n  ${process.platform === 'win32' ? later.powershell : later.posix}`);
     return 1;
   }
+}
+
+/** One session as Markdown, for people without Wisdom: a PR, an issue, docs. The same check
+ * for secrets as share runs first. Messages go to stderr, so `--out -` prints only the document.
+ */
+async function exportMarkdown(ref: string | undefined, values: any, dataDir: string, port?: number): Promise<number> {
+  if (!ref) throw new Error('Use: wisdom export SESSION [--out FILE|-] [--redact | --keep-secrets]');
+  if (values.redact && values['keep-secrets']) throw new Error('--redact and --keep-secrets are alternatives; choose one.');
+  const { captureId, markdown } = await call(await ensureDaemon(dataDir, port), '/view', { view: 'markdown', capture: ref });
+  // A finding is placed by the turn heading above it.
+  const place = (index: number) => [...markdown.slice(0, index).matchAll(/^## (t\d+|Outside any turn)/gm)].at(-1)?.[1] ?? 'header';
+  const findings = findSecrets([{ text: markdown, place }]);
+  if (findings.length) console.error(formatFindings(findings));
+  const prompt = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stderr }) : undefined;
+  let redact;
+  try { redact = await chooseRedactions(findings, { redact: values.redact, keep: values['keep-secrets'] }, prompt && (question => prompt.question(question))); }
+  finally { prompt?.close(); }
+  if (!redact) { console.error('Cancelled. Nothing was written.'); return 1; }
+  const document = redactSecrets(markdown, new Map(redact.map(finding => [finding.value, finding.kind])));
+  if (values.out === '-') { process.stdout.write(document); return 0; }
+  const out = path.resolve(values.out ?? path.join(dataDir, 'shared-out', `${captureId.slice(0, 8)}.md`));
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, document);
+  console.error(`Saved ${out}.`);
+  if (redact.length) console.error(`Redacted ${redact.length === 1 ? '1 value' : `${redact.length} values`} in this file. Your recording is unchanged.`);
+  if (findings.length > redact.length) console.error(`Kept ${findings.length - redact.length} you chose to keep.`);
+  const home = homePlaces([document]);
+  if (home) console.error(`Your home folder path appears in ${home} places, and it includes your username.`);
+  if (!path.relative(path.dirname(dataDir), out).startsWith('..') && path.relative(dataDir, out).startsWith('..')) console.error('This file is inside your project. Keep it out of git.');
+  console.error('The check can miss secrets, so look through it before you post it.');
+  return 0;
 }
 
 /** Read a teammate's share file in this project. The daemon builds a read-only copy; this

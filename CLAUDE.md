@@ -25,6 +25,7 @@ npm.cmd run wisdom -- handoff codex|<session-id> [--from <id>]  # continue work 
 npm.cmd run wisdom -- share <session> [--redact|--keep-secrets]  # one file for a teammate, after a secret check
 npm.cmd run wisdom -- import <file>                            # read a teammate's share file, read-only
 npm.cmd run wisdom -- clone <session>                          # a new session of the same harness holding that history
+npm.cmd run wisdom -- export <session> [--out FILE|-]          # the session as Markdown, after a secret check
 npm.cmd run wisdom -- glance latest; npm.cmd run wisdom -- open t3 --capture latest   # read a session
 npm.cmd run wisdom -- doctor                                   # read-only health check of a project
 npm.cmd run dashboard:install; npm.cmd run dashboard:build    # live viewer in dist-dashboard/, served by the daemon on port+1
