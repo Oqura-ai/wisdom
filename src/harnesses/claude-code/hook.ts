@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { deliver } from '../../client.js';
+import { deliver, handoffFromEnv } from '../../client.js';
 import { hookDataDir } from '../../paths.js';
 
 /** Map one Claude Code hook payload to a neutral observation. Verified against
@@ -44,7 +44,7 @@ export async function main(named = process.argv[2]): Promise<void> {
     // subagent's hooks name the parent session; its transcript is copied at SubagentStop.
     if (typeof event.session_id !== 'string' || !event.session_id) throw new Error('Claude Code hook has no session_id');
     const identity = { sessionId: event.session_id, ...(typeof event.agent_id === 'string' ? {} : { source: event.transcript_path }) };
-    const { spooled } = await deliver(dataDir, { harness: 'claude-code', cwd: typeof event.cwd === 'string' ? event.cwd : process.cwd(),
+    const { spooled } = await deliver(dataDir, { harness: 'claude-code', cwd: typeof event.cwd === 'string' ? event.cwd : process.cwd(), ...handoffFromEnv(),
       observation: { observationId: randomUUID(), ...identity, ...mapped } as any });
     if (spooled) {
       process.stderr.write(`Wisdom kept this ${event.hook_event_name} to record when its daemon is back (${spooled}). File changes meanwhile are not observed.\n`);

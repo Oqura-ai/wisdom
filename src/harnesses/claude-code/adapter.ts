@@ -53,6 +53,11 @@ export const claudeCode: HarnessAdapter = {
   toolView: toolName => ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName) ? 'patch' : toolName === 'Read' ? 'file' : 'full',
   nativeSession: entry => typeof entry?.sessionId === 'string' ? entry.sessionId : undefined,
   nativeCwd: entry => typeof entry?.cwd === 'string' ? entry.cwd : undefined,
+  // Every line names its session and folder.
+  cloneLine: (entry, { sessionId, move }) => !entry || typeof entry !== 'object' ? entry
+    : { ...entry, ...(typeof entry.sessionId === 'string' ? { sessionId } : {}), ...(typeof entry.cwd === 'string' ? { cwd: move(entry.cwd) } : {}) },
+  // projects/<the folder, every character not a letter or digit as ->/<session>.jsonl
+  sessionFile: (home, sessionId, cwd) => path.join(home, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`),
   nativeVersion: entry => typeof entry?.version === 'string' ? entry.version : undefined,
   nativeChanges: () => [],
   isScriptStep: () => false,

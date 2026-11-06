@@ -27,6 +27,9 @@ Exactly one of `glance` and `open` is sent. Errors say what to send instead.
 | `a1` | The first subagent of the capture, numbered by its first recorded evidence. It opens with the same layers as a turn. |
 | `a1/c2` | The second tool call of subagent 1. |
 | (glance header) | `session <id>` is the harness's own session ID, which names the recording; `resume with: wisdom resume <full session ID>` continues it under recording. |
+| (glance header) | `shared copy from <project>, shared <time> · read-only, as recorded on the sender's machine`: a session imported from a share file. `redacted by sender ×N`: values the sender replaced with `[redacted by sender: <kind>]`. |
+| (glance header) | `cloned from <id> (<harness>) at version N · 12 turns`: this session began as a copy of that one, made by `wisdom clone`. Its first turns happened there and are read there; this session's turns start after them. Record type `session_link`, with a `history-cloned` gap. |
+| (glance header) | `continues <id> (<harness>)`: this session was started by `wisdom handoff` to carry on that session's work. `continued after <id> (<harness>) · at t5`: this session was resumed by a handoff, and from t5 it carries on after that session. Record type `session_link`. |
 | `outside` | Calls and changes recorded outside any turn (before the first input, or idle edits by other processes). |
 | `p1` | A patch, numbered within the response that shows it. It is a label, not an address: open its turn or call. |
 

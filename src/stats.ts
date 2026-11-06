@@ -1,7 +1,8 @@
 import fs from 'node:fs';
-import type { Captures } from './captures.js';
+import type { SessionStore } from './store.js';
 import { workspaceKey } from './database.js';
 import { resumeCommands } from './harnesses/index.js';
+import type { LedgerRecord } from './schema.js';
 
 export interface TokenTotals { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean }
 const emptyTokens = (): TokenTotals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0, costUsd: null });
@@ -10,11 +11,30 @@ function addTokens(into: TokenTotals, from: TokenTotals): void {
   if (from.costUsd !== null) into.costUsd = (into.costUsd ?? 0) + from.costUsd;
 }
 
+export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session: string; harness?: string; turns?: number }
+
+/** Handoffs and clones between this project's sessions, from both ends: a session lists the
+ * one it continues or was cloned from, and that one lists it back (`continued-by`, `cloned-by`).
+ */
+function sessionLinks(captures: SessionStore, key: string): Map<string, SessionLink[]> {
+  const links = new Map<string, SessionLink[]>();
+  const add = (id: string, link: SessionLink) => links.set(id, [...links.get(id) ?? [], link]);
+  const rows = captures.database.sql.prepare(`SELECT r.capture_id AS id, json_extract(c.manifest,'$.harness') AS harness, r.body AS body
+    FROM records r JOIN captures c ON c.id=r.capture_id WHERE c.workspace_root=? AND r.type='session_link' ORDER BY r.revision`).all(key);
+  for (const row of rows) {
+    const { link } = JSON.parse(String(row.body)) as LedgerRecord;
+    if (!link) continue;
+    add(String(row.id), { kind: link.kind, session: link.from, harness: link.fromHarness, ...(link.turns === undefined ? {} : { turns: link.turns }) });
+    add(link.from, { kind: link.kind === 'cloned' ? 'cloned-by' : 'continued-by', session: String(row.id), harness: String(row.harness) });
+  }
+  return links;
+}
+
 /** Counts of recorded evidence, computed in SQLite. These describe what was observed,
  * not quality: a failure is a tool result marked as an error, a change is an
  * observed file delta, and an unknown outcome is not counted as either.
  */
-export function stats(captures: Captures, request: { workspaceRoot?: string }) {
+export function stats(captures: SessionStore, request: { workspaceRoot?: string }) {
   const readVersion = captures.database.revision;
   const manifests = captures.database.manifests();
   if (!request.workspaceRoot) {
@@ -94,15 +114,18 @@ export function stats(captures: Captures, request: { workspaceRoot?: string }) {
     if (costBehind.has(id)) tokens.costBehind = true;
   }
 
+  const links = sessionLinks(captures, key);
   const sessions = inScope.map(manifest => {
     const row: any = counts.get(manifest.captureId) ?? {};
     return { captureId: manifest.captureId, harness: manifest.harness,
       harnessVersion: manifest.harnessVersion, status: manifest.status, endReason: manifest.endReason,
-      resume: resumeCommands(captures.dataDir, manifest.harness, manifest.captureId, manifest.workspaceRoot),
+      // A shared copy is someone else's recording: it is read, never resumed.
+      ...(captures.shared ? { shared: captures.shared } : { resume: resumeCommands(captures.dataDir, manifest.harness, manifest.captureId, manifest.workspaceRoot) }),
       startedAt: manifest.startedAt, endedAt: manifest.endedAt, lastObservedAt: row.lastObservedAt ?? manifest.startedAt,
       requests: number(row.requests), replies: number(row.replies), tools: number(row.tools), failures: number(row.failures),
       changes: number(row.changes), gaps: number(row.gaps), subagents: number(row.subagents),
       tokens: tokensByCapture.get(manifest.captureId) ?? emptyTokens(),
+      links: links.get(manifest.captureId) ?? [],
       // Records survive in SQLite, but bodies, patches and transcript copies live in this folder.
       evidenceMissing: !fs.existsSync(captures.get(manifest.captureId).dir) || undefined };
   }).sort((a, b) => b.startedAt.localeCompare(a.startedAt));

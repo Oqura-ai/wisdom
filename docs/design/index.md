@@ -6,3 +6,4 @@ Earlier design decisions, agreed on 2026-10-19. They are not descriptions of wha
 
 - [Future agent architecture](agent-review-architecture.md): runtime-owned workspaces and evidence, OpenRig-style coordination, fixed review candidates.
 - [One Pi session: storage](single-pi-storage.md): the current learning scope and a minimal data layout.
+- [Handoff and share](handoff-and-share.md): continue work in another session or harness, and send a session to a teammate to read or clone. Draft, 2026-11-06.

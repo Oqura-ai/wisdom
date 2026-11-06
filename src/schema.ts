@@ -21,7 +21,15 @@ export const viewSchema = z.discriminatedUnion('view', [
   z.object({ view: z.literal('turn'), captureId: z.string().min(1), requestId: z.string().min(1), readVersion: z.number().int().nonnegative().optional() }).strict(),
   z.object({ view: z.literal('record'), captureId: z.string().min(1), id: z.string().min(1), readVersion: z.number().int().nonnegative() }).strict(),
   z.object({ view: z.literal('native-result'), captureId: z.string().min(1), toolCallId: z.string().min(1), readVersion: z.number().int().nonnegative() }).strict(),
+  z.object({ view: z.literal('export'), capture: z.string().min(1) }).strict(),
+  z.object({ view: z.literal('shared') }).strict(),
+  z.object({ view: z.literal('transcript'), capture: z.string().min(1) }).strict(),
 ]);
+
+/** Written by `wisdom clone` before the copy's transcript exists, so the daemon knows which
+ * of the new session's lines are copied the first time it sees the session.
+ */
+export interface CloneNote { from: string; fromHarness: string; version: number; turns: number; bytes: number; createdAt: string }
 export type ViewRequest = z.infer<typeof viewSchema>;
 
 export const observationSchema = z.object({
@@ -45,6 +53,10 @@ export const observationSchema = z.object({
 }).strict();
 export type Observation = z.infer<typeof observationSchema>;
 
+/** Set by `wisdom handoff` on the harness it starts: this process continues `from`. */
+export const handoffSchema = z.object({ id: z.string().min(1), from: z.string().min(1) }).strict();
+export type Handoff = z.infer<typeof handoffSchema>;
+
 /** What every hook or extension sends: the session it names picks the record, so no
  * launcher is needed. `cwd` is where the harness runs; `late` marks an event kept in the
  * spool while the daemon was down, delivered after it came back.
@@ -54,6 +66,7 @@ export const hookSchema = z.object({
   harnessVersion: z.string().optional(),
   cwd: z.string().min(1),
   late: z.object({ spooledAt: z.string() }).strict().optional(),
+  handoff: handoffSchema.optional(),
   observation: observationSchema.extend({ sessionId: z.string().min(1) }),
 }).strict();
 export type HookEvent = z.infer<typeof hookSchema>;
@@ -110,6 +123,11 @@ export interface LedgerRecord {
   notice?: boolean;
   /** Kept in the spool while the daemon was down; recorded when it came back. */
   spooledAt?: string;
+  /** session_link records: this session continues `from`, started (`continues`) or resumed
+   * (`continued-after`) by one `wisdom handoff`, or began as a copy of it (`cloned`). */
+  link?: { kind: 'continues' | 'continued-after' | 'cloned'; from: string; fromHarness?: string; handoffId?: string;
+    /** For a clone: the source's version and how many of its turns were copied. */
+    version?: number; turns?: number };
   sourceEntryId?: string;
   sourceParentId?: string | null;
   sourceTimestamp?: string;

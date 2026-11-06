@@ -73,6 +73,7 @@ export function Dashboard() {
   const [view, setView] = useUrlState();
   const [projects, setProjects] = useState<Project[]>();
   const [stats, setStats] = useState<ProjectStats>();
+  const [shared, setShared] = useState<Session[]>([]);
   const [error, setError] = useState<string>();
   // The session drawer floats over the page; the main view always keeps the full width.
   const [drawer, setDrawer] = useState(false);
@@ -87,6 +88,7 @@ export function Dashboard() {
   useEffect(() => {
     if (live.status !== 'live') return;
     read<{ projects: Project[] }>({ view: 'projects' }).then(result => { setProjects(result.projects); setError(undefined); }, e => setError(e.message));
+    read<{ sessions: Session[] }>({ view: 'shared' }).then(result => setShared(result.sessions), e => setError(e.message));
   }, [live.status, live.readVersion]);
   const workspace = view.workspace ?? projects?.[0]?.workspaceRoot;
   useEffect(() => {
@@ -97,8 +99,10 @@ export function Dashboard() {
   // Most recently active first, the same order and time everywhere sessions are listed.
   const sessions = useMemo(() => (stats?.sessions ?? []).filter(s => !view.harness || s.harness === view.harness)
     .sort((a, b) => b.lastObservedAt.localeCompare(a.lastObservedAt)), [stats, view.harness]);
-  const selected = stats?.sessions.find(s => s.captureId === view.capture);
-  const titles = useSessionTitles(stats?.sessions);
+  // This project's own recording wins when a shared copy holds the same session.
+  const selected = stats?.sessions.find(s => s.captureId === view.capture) ?? shared.find(s => s.captureId === view.capture);
+  const everySession = useMemo(() => [...stats?.sessions ?? [], ...shared], [stats, shared]);
+  const titles = useSessionTitles(everySession);
 
   // A session page keeps the list beside it, for moving between sessions; on a narrow
   // window (see .docked in globals.css) the list floats and closes once a session is picked.
@@ -141,14 +145,19 @@ export function Dashboard() {
             ))}
           </div>
           <SessionList sessions={sessions} titles={titles} selected={view.capture} onSelect={capture => { setView({ capture }); if (narrow()) setDrawer(false); }} />
+          {shared.length > 0 && <>
+            <div className="list-heading">Shared with you · read-only</div>
+            <SessionList sessions={shared} titles={titles} selected={view.capture} onSelect={capture => { setView({ capture }); if (narrow()) setDrawer(false); }} />
+          </>}
         </aside>
 
         <main className="main" ref={main}>
           {selected
-            ? <WorkTree key={selected.captureId} session={selected} readVersion={live.readVersion} onBack={() => setView({ capture: undefined })} />
+            ? <WorkTree key={selected.captureId} session={selected} readVersion={live.readVersion} onBack={() => setView({ capture: undefined })} onOpen={capture => setView({ capture })} />
             : stats ? <Overview stats={stats} sessions={sessions} titles={titles} harness={view.harness} onOpen={capture => setView({ capture })} />
             : <div className="empty">{projects && !projects.length
-              ? <>No sessions recorded yet. Start one with <code>wisdom track pi|claude|codex --cwd &lt;project&gt;</code>.</>
+              ? <>No sessions recorded here yet. Start one with <code>wisdom track pi|claude|codex</code>.
+                  {shared.length > 0 && <> {shared.length === 1 ? 'One session' : `${shared.length} sessions`} shared with you {shared.length === 1 ? 'is' : 'are'} under <button className="plain link" onClick={() => setDrawer(true)}>Sessions</button>.</>}</>
               : 'Loading…'}</div>}
         </main>
       </div>

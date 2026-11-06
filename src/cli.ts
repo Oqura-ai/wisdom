@@ -4,16 +4,20 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createInterface } from 'node:readline/promises';
 import { call, connectionAt, ensureDaemon } from './client.js';
 import { startDaemon, type Connection } from './daemon.js';
 import { diagnose, formatChecks, wisdomVersion } from './doctor.js';
+import { planHandoff } from './handoff.js';
+import { planClone } from './clone.js';
+import { chooseRedactions, defaultSharePath, draftShare, formatFindings, writeShare } from './share.js';
 import { serveMcp } from './mcp.js';
 import { findDataDir, marker, movedFrom } from './paths.js';
 import { writeJson } from './ledger.js';
 import { installPi, launchPi, piEntry } from './harnesses/pi/launch.js';
 import { installClaudeCode, launchClaudeCode } from './harnesses/claude-code/launch.js';
 import { installCodex, launchCodex } from './harnesses/codex/launch.js';
-import { adapter } from './harnesses/index.js';
+import { adapter, resumeCommands } from './harnesses/index.js';
 import { staleHooks, type Launch } from './harnesses/launch.js';
 
 const help = `Wisdom records your coding agents' sessions, so you and your agents can read them.
@@ -25,6 +29,9 @@ Set up
 Run an agent
   wisdom track claude|codex|pi    Start an agent in this project, recording
   wisdom resume <session-id>      Continue a recorded session (takes the full ID)
+  wisdom handoff <claude|codex|pi|session-id> [--from <session-id>]
+                                  Continue work in a new or existing session, which
+                                  reads the other session first
 
 Read a session
   wisdom dashboard                Print the address of the live dashboard
@@ -32,6 +39,11 @@ Read a session
   wisdom glance <session>         Show one session's shape and every turn
   wisdom open <position> --capture <session>
                                   Read one turn, tool call or subagent, whole
+
+Share a session
+  wisdom share <session>...       Write a file to send a teammate, after a check for secrets
+  wisdom import <file>            Read a teammate's shared file here, read-only
+  wisdom clone <session>          Carry a session on as a new one, in the same agent
 
 Background service
   wisdom daemon start|stop|status
@@ -47,11 +59,14 @@ Other
 Options
   --cwd DIR, --data DIR           Use the project at DIR, or the data folder DIR
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
+  --from <session-id>             handoff: the session to read (default: the newest other one)
   --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
   --trust-all-hooks               track codex: skip the review, for every hook in that run
-  -- ARGUMENTS                    track: pass the rest to the agent
+  -- ARGUMENTS                    track: pass the rest to the agent; handoff: add to its prompt
+  --out FILE                      share: where to save (default: .wisdom/shared-out/)
+  --redact, --keep-secrets        share: replace what the check finds, or keep it, without asking
 
 Docs: https://github.com/Oqura-ai/wisdom
 `;
@@ -64,7 +79,7 @@ async function main(): Promise<void> {
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
-      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
+      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
@@ -73,13 +88,16 @@ async function main(): Promise<void> {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'],
     daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
+    handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
+    share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'],
+    clone: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     glance: ['cwd', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
   };
   const allowed = options[command];
   if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
-  if (separator >= 0 && command !== 'track') throw new Error('Arguments after -- are only supported by track');
-  if (positionals.length > (['daemon', 'track', 'resume', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
+  if (separator >= 0 && !['track', 'handoff'].includes(command)) throw new Error('Arguments after -- are only supported by track and handoff');
+  if (command !== 'share' && positionals.length > (['daemon', 'track', 'resume', 'handoff', 'import', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
@@ -129,6 +147,10 @@ async function main(): Promise<void> {
     console.error(`Resuming ${session.harness} session ${session.captureId}`);
     process.exitCode = await track(harness, { ...values, cwd: session.workspaceRoot }, args, dataDir, port); return;
   }
+  if (command === 'handoff') { process.exitCode = await handoff(first, values, harnessArgs.join(' '), dataDir, port); return; }
+  if (command === 'share') { process.exitCode = await share(positionals.slice(1), values, dataDir, port); return; }
+  if (command === 'import') { await importShare(first, dataDir, port); return; }
+  if (command === 'clone') { process.exitCode = await clone(first, values, dataDir, port); return; }
   if (command === 'mcp') { await serveMcp(await ensureDaemon(dataDir, port)); return; }
   // glance and open: the same request an agent sends through MCP, printed as the same text.
   const number = (flag: string, value?: string) => {
@@ -218,7 +240,7 @@ async function init(project: string, values: any, port?: number): Promise<void> 
 /** Start a harness with its home in the project's data folder. Recording comes from the
  * hooks in that home, so the launcher only sets the folder and starts the daemon early.
  */
-async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number): Promise<number> {
+async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number, env: Record<string, string> = {}): Promise<number> {
   const cwd = path.resolve(values.cwd ?? process.cwd());
   const cliPath = fileURLToPath(new URL('./cli.js', import.meta.url));
   if (values['pi-entry'] && harness !== 'pi') throw new Error('--pi-entry applies only to track pi');
@@ -237,7 +259,93 @@ async function track(harness: string | undefined, values: any, args: string[], d
     console.error('Wisdom is recording sessions in this harness home.');
   }
   // The ledger skill calls this installation's CLI from the project.
-  return runHarness(launch, cwd, { ...process.env, ...launch.env, WISDOM_CLI_PATH: cliPath });
+  return runHarness(launch, cwd, { ...process.env, ...env, ...launch.env, WISDOM_CLI_PATH: cliPath });
+}
+
+/** Write one file a teammate can read: chosen sessions, their evidence, no logins. What looks
+ * like a secret is shown first, and is redacted in the file, kept, or the share cancelled.
+ */
+async function share(refs: string[], values: any, dataDir: string, port?: number): Promise<number> {
+  if (!refs.length) throw new Error('Use: wisdom share SESSION... [--out FILE] [--redact | --keep-secrets]');
+  if (values.redact && values['keep-secrets']) throw new Error('--redact and --keep-secrets are alternatives; choose one.');
+  const draft = await draftShare(await ensureDaemon(dataDir, port), refs);
+  if (draft.findings.length) console.log(formatFindings(draft.findings));
+  const prompt = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
+  let redact;
+  try { redact = await chooseRedactions(draft.findings, { redact: values.redact, keep: values['keep-secrets'] }, prompt && (question => prompt.question(question))); }
+  finally { prompt?.close(); }
+  if (!redact) { console.log('Cancelled. Nothing was written.'); return 1; }
+  const out = path.resolve(values.out ?? defaultSharePath(dataDir, draft));
+  const { file, bytes } = writeShare(draft, redact, out);
+  const records = draft.sessions.reduce((n, session) => n + session.records.length, 0);
+  const files = draft.pieces.length - records;
+  const size = bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  console.log(`\nSaved ${file} (${size}): ${draft.sessions.length === 1 ? '1 session' : `${draft.sessions.length} sessions`}, ${records} records, ${files} files.`);
+  if (redact.length) console.log(`Redacted ${redact.length === 1 ? '1 value' : `${redact.length} values`} in this file. Your recording is unchanged.`);
+  if (draft.findings.length > redact.length) console.log(`Kept ${draft.findings.length - redact.length} you chose to keep.`);
+  if (draft.unscanned) console.log(`${draft.unscanned} files are not text, so the check could not read them.`);
+  if (draft.homePlaces) console.log(`Your home folder path appears in ${draft.homePlaces} places, and it includes your username.`);
+  const project = path.dirname(dataDir);
+  if (!path.relative(project, file).startsWith('..') && path.relative(dataDir, file).startsWith('..')) console.log('This file is inside your project. Keep it out of git.');
+  console.log('No logins are included. The check can miss secrets, so look through what you send.');
+  return 0;
+}
+
+/** Carry a session on as a new session of the same harness in this project: its history
+ * copied, recorded from the clone onward. The original, own or shared, is never changed.
+ */
+async function clone(ref: string | undefined, values: any, dataDir: string, port?: number): Promise<number> {
+  if (!ref) throw new Error('Use: wisdom clone SESSION');
+  const project = path.resolve(values.cwd ?? path.dirname(dataDir));
+  const plan = await planClone(await ensureDaemon(dataDir, port), dataDir, ref, project);
+  const { manifest, turns, sharedFrom } = plan.source;
+  console.error(`Cloned ${manifest.harness} session ${manifest.captureId}${sharedFrom ? ` (shared from ${sharedFrom})` : ''}, ${turns === 1 ? '1 turn' : `${turns} turns`}, into new session ${plan.sessionId}.`);
+  console.error('Wisdom records it from here on. The cloned turns stay readable in the original.');
+  if (plan.differing.length) {
+    const shown = plan.differing.slice(0, 5).join(', ') + (plan.differing.length > 5 ? `, and ${plan.differing.length - 5} more` : '');
+    console.error(`Note: ${plan.differing.length === 1 ? '1 file differs' : `${plan.differing.length} files differ`} on disk from what this session remembers: ${shown}.`);
+  }
+  try { return await track(plan.command, { ...values, cwd: project }, plan.args, dataDir, port); }
+  catch (error) {
+    // The copy is already saved, so say how to start it once the agent can run.
+    const later = resumeCommands(dataDir, plan.source.manifest.harness, plan.sessionId, project);
+    console.error(`${error instanceof Error ? error.message : error}\nThe clone is saved as session ${plan.sessionId}. Start it later with:\n  ${process.platform === 'win32' ? later.powershell : later.posix}`);
+    return 1;
+  }
+}
+
+/** Read a teammate's share file in this project. The daemon builds a read-only copy; this
+ * project's own recordings are never touched.
+ */
+async function importShare(file: string | undefined, dataDir: string, port?: number): Promise<void> {
+  if (!file) throw new Error('Use: wisdom import FILE');
+  const result = await call(await ensureDaemon(dataDir, port), '/import', { file: path.resolve(file) });
+  const when = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')}Z`;
+  const count = result.sessions.length === 1 ? '1 shared session' : `${result.sessions.length} shared sessions`;
+  console.log(`${result.added ? 'Imported' : 'Already imported:'} ${count} from ${result.shared.project}, shared ${when(result.shared.sharedAt)}:`);
+  for (const session of result.sessions) console.log(`  ${session.captureId}  ${session.harness}  ${session.turns === 1 ? '1 turn' : `${session.turns} turns`}`);
+  if (result.shared.redactions) console.log(`The sender redacted ${result.shared.redactions === 1 ? '1 value' : `${result.shared.redactions} values`}.`);
+  for (const id of result.alsoRecordedHere) console.log(`${id} is also recorded in this project, so reads show your own recording.`);
+  console.log(`Read-only, as recorded on the sender's machine. Read it with: wisdom glance ${result.sessions[0].captureId.slice(0, 8)}`);
+}
+
+/** Continue work in another session that reads this one first: a new session in any
+ * harness, or an existing one resumed. A running session cannot take outside input, so
+ * for one the prompt is printed to paste instead.
+ */
+async function handoff(target: string | undefined, values: any, words: string, dataDir: string, port?: number): Promise<number> {
+  if (!target) throw new Error('Use: wisdom handoff claude|codex|pi|SESSION-ID [--from SESSION-ID]');
+  const plan = await planHandoff(await ensureDaemon(dataDir, port), target, values.from, words);
+  if (plan.target?.status === 'recording') {
+    console.error(`Session ${plan.target.captureId} is still running, so Wisdom cannot start it. Paste this into it instead:\n`);
+    console.log(plan.prompt);
+    return 1;
+  }
+  if (plan.note) console.error(`Note: ${plan.note}`);
+  console.error(plan.target
+    ? `Resuming ${plan.target.harness} session ${plan.target.captureId}; it reads ${plan.from.harness} session ${plan.from.captureId} first.`
+    : `Starting a new ${plan.command} session; it reads ${plan.from.harness} session ${plan.from.captureId} first.`);
+  return track(plan.command, { ...values, cwd: plan.cwd ?? values.cwd }, plan.args, dataDir, port, plan.env);
 }
 
 function runHarness(launch: Launch, cwd: string, env: NodeJS.ProcessEnv): Promise<number> {

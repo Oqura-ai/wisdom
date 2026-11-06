@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { deliver } from '../../client.js';
+import { deliver, handoffFromEnv } from '../../client.js';
 import { hookDataDir } from '../../paths.js';
 import { exitEnvelope } from './adapter.js';
 
@@ -72,7 +72,7 @@ export async function main(named = process.argv[2]): Promise<void> {
       if (typeof identity.sessionId !== 'string' || !identity.sessionId) throw new Error('Codex hook has no session_id');
       // One request: the neutral observation plus the exact received JSON object,
       // kept as a separate record so it never enters clean conversation output.
-      const { spooled } = await deliver(dataDir, { harness: 'codex', cwd: typeof event.cwd === 'string' ? event.cwd : process.cwd(),
+      const { spooled } = await deliver(dataDir, { harness: 'codex', cwd: typeof event.cwd === 'string' ? event.cwd : process.cwd(), ...handoffFromEnv(),
         observation: { observationId: randomUUID(), ...identity, ...mapped, harnessEvent: event } as any }, daemonTimeoutMs);
       if (spooled) {
         process.stderr.write(`Wisdom kept this ${event.hook_event_name} to record when its daemon is back (${spooled}). File changes meanwhile are not observed.\n`);

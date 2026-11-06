@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { deliver } from '../../client.js';
+import { deliver, handoffFromEnv } from '../../client.js';
 import { harnessHome } from '../../paths.js';
 
 // A tiny structural interface keeps this extension independent of a second Pi
@@ -46,6 +46,7 @@ export default function wisdomTracking(pi: PiAPI): void {
   let warning: string | undefined;
   let queue = Promise.resolve();
   const harnessVersion = piVersion();
+  const handoff = handoffFromEnv();
 
   // Serial delivery preserves this extension's observation order. The tool_call
   // handler awaits it, so the before-image exists before execution.
@@ -53,7 +54,7 @@ export default function wisdomTracking(pi: PiAPI): void {
     const current = session;
     const task = queue.then(async () => {
       if (!current) return;
-      const { spooled } = await deliver(dataDir, { harness: 'pi', harnessVersion, cwd: current.cwd,
+      const { spooled } = await deliver(dataDir, { harness: 'pi', harnessVersion, cwd: current.cwd, ...handoff,
         observation: { observationId: randomUUID(), sessionId: current.sessionId, source: current.source, ...data } as any });
       if (spooled && !warning) {
         warning = `Wisdom is keeping events to record when its daemon is back (${spooled}).`;

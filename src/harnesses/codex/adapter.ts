@@ -106,6 +106,24 @@ export const codex: HarnessAdapter = {
   },
   // sessions/YYYY/MM/DD/rollout-….jsonl
   sessionFiles: home => jsonlFiles(path.join(home, 'sessions'), 3),
+  // The session's own header names it and its folders; a turn's context names its folder.
+  cloneLine: (entry, { from, sessionId, move }) => {
+    const payload = entry?.payload;
+    if (entry?.type === 'session_meta' && payload?.id === from) {
+      return { ...entry, payload: { ...payload, id: sessionId, ...(payload.session_id === undefined ? {} : { session_id: sessionId }),
+        ...(typeof payload.cwd === 'string' ? { cwd: move(payload.cwd) } : {}),
+        ...(Array.isArray(payload.runtime_workspace_roots) ? { runtime_workspace_roots: payload.runtime_workspace_roots.map((root: unknown) => typeof root === 'string' ? move(root) : root) } : {}) } };
+    }
+    if (entry?.type === 'turn_context' && typeof payload?.cwd === 'string') return { ...entry, payload: { ...payload, cwd: move(payload.cwd) } };
+    return entry;
+  },
+  // sessions/YYYY/MM/DD/rollout-YYYY-MM-DDTHH-MM-SS-<session>.jsonl, in local time as Codex names them.
+  sessionFile: (home, sessionId, _cwd, now) => {
+    const two = (n: number) => String(n).padStart(2, '0');
+    const [year, month, day] = [String(now.getFullYear()), two(now.getMonth() + 1), two(now.getDate())];
+    const time = `${two(now.getHours())}-${two(now.getMinutes())}-${two(now.getSeconds())}`;
+    return path.join(home, 'sessions', year, month, day, `rollout-${year}-${month}-${day}T${time}-${sessionId}.jsonl`);
+  },
   nativeEntry: entry => ({
     id: typeof entry?.payload?.id === 'string' && entry.payload.id ? entry.payload.id : undefined,
     timestamp: entry?.timestamp,

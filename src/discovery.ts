@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Captures } from './captures.js';
+import type { SessionStore, SharedInfo, SharedSession } from './store.js';
 import { ledgerSchema, type LedgerRecord, type LedgerRequest, type Manifest } from './schema.js';
 import { EvidenceReader, evidenceVersion } from './evidence.js';
 import { betterResult, conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
@@ -17,23 +17,24 @@ const WRAP = 2_000;
 const INDENT = '    ';
 
 type Tool = Extract<TurnItem, { kind: 'tool' }>;
-type Context = { captures: Captures; version: number; manifest: Manifest; reader: EvidenceReader };
+type Context = { captures: SessionStore; version: number; manifest: Manifest; reader: EvidenceReader };
 
-export function ledger(captures: Captures, input: unknown): string {
+/** `shared` lists sessions imported from share files, for the plain session list only. */
+export function ledger(captures: SessionStore, input: unknown, shared: SharedSession[] = []): string {
   const parsed = ledgerSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid ledger request. ${parsed.error.issues.map(i => `${i.path.join('.') || 'request'}: ${i.message}`).join('; ')}. `
     + 'Use { glance: true } to list sessions, { capture, glance: true } for one session, or { capture, open: "t1" }.');
   const request = parsed.data;
   if (!!request.glance === !!request.open) throw new Error('Send exactly one of glance or open.');
   const version = evidenceVersion(captures, request.at);
-  if (request.glance && !request.capture) return sessions(captures, version, request.from);
+  if (request.glance && !request.capture) return sessions(captures, version, shared, request.from);
   if (!request.capture) throw new Error('open needs capture: an ID from glance, or "latest".');
   const manifest = resolveCapture(captures, request.capture, version);
   const context: Context = { captures, version, manifest, reader: new EvidenceReader(captures) };
   return request.glance ? glance(context, request.from) : open(context, request.open!, request.from);
 }
 
-function resolveCapture(captures: Captures, ref: string, version: number): Manifest {
+export function resolveCapture(captures: SessionStore, ref: string, version: number): Manifest {
   const manifests = captures.database.manifests();
   if (!manifests.length) throw new Error('No sessions are recorded yet.');
   if (ref === 'latest') {
@@ -206,23 +207,38 @@ function lastReply(context: Context, records: LedgerRecord[]): string | undefine
 
 // ---------- glance ----------
 
-function sessions(captures: Captures, version: number, from?: number): string {
+function sessions(captures: SessionStore, version: number, shared: SharedSession[], from?: number): string {
   const manifests = captures.database.manifests().sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  if (!manifests.length) return respond(['No sessions are recorded yet.'], from, { glance: true, at: version });
+  if (!manifests.length && !shared.length) return respond(['No sessions are recorded yet.'], from, { glance: true, at: version });
   const counts = new Map(captures.database.sql.prepare(`SELECT capture_id AS id, count(*) AS n FROM records
     WHERE type='input' AND json_extract(body,'$.agentId') IS NULL AND revision<=? GROUP BY capture_id`).all(version)
     .map(row => [String(row.id), Number(row.n)]));
-  const lines = [`sessions · ${number(manifests.length)}, newest first · version ${version}`, ''];
+  const lines: string[] = [];
+  if (manifests.length) lines.push(`sessions · ${number(manifests.length)}, newest first · version ${version}`, '');
   for (const m of manifests) {
     lines.push(`${m.captureId}  ${m.harness}  ${m.status}  ${minute(m.startedAt)}  ${plural(counts.get(m.captureId) ?? 0, 'turn')}  ${m.workspaceRoot}`);
+  }
+  // Shared copies have versions of their own, so this list's version does not cover them.
+  if (shared.length) {
+    lines.push(...(manifests.length ? [''] : []), `shared with you · ${number(shared.length)}, read-only`, '');
+    for (const s of [...shared].sort((a, b) => b.startedAt.localeCompare(a.startedAt))) {
+      lines.push(`${s.captureId}  ${s.harness}  ${minute(s.startedAt)}  ${plural(s.turns, 'turn')}  from ${s.project}, shared ${minute(s.sharedAt)}`);
+    }
   }
   lines.push('', 'To read one, glance its ID or its first 8 characters.');
   return respond(lines, from, { glance: true, at: version });
 }
 
 
+/** How a shared copy introduces itself: whose it is, that it is read-only, and what the sender redacted. */
+function sharedLines(shared: SharedInfo): string[] {
+  return [`shared copy from ${shared.project}, shared ${minute(shared.sharedAt)} · read-only, as recorded on the sender's machine`,
+    ...(shared.redactions ? [`redacted by sender ×${shared.redactions}${shared.patchesEdited.length ? ` · patches edited by redaction: ${shared.patchesEdited.join(', ')}` : ''}`] : [])];
+}
+
 function glance(context: Context, from?: number): string {
   const { manifest, version } = context;
+  const { shared } = context.captures;
   const ledger = context.captures.get(manifest.captureId);
   const { turns, agents, agentTurn, records } = shape(context);
   const recording = manifest.status === 'recording';
@@ -231,9 +247,13 @@ function glance(context: Context, from?: number): string {
   const lines: string[] = [
     `session ${manifest.captureId} · ${manifest.harness}${manifest.harnessVersion ? ` ${manifest.harnessVersion}` : ''} · ${manifest.status}${manifest.endReason ? ` (${manifest.endReason})` : ''} · version ${version}`,
     // A resume run outside Wisdom loads no hooks, so its work would never reach the ledger.
-    `resume with: wisdom resume ${manifest.captureId}`,
+    // A shared copy is someone else's recording: it can be read, not resumed.
+    ...(shared ? sharedLines(shared) : [`resume with: wisdom resume ${manifest.captureId}`]),
     `workspace ${manifest.workspaceRoot}`,
     `started ${minute(manifest.startedAt)}${manifest.endedAt ? ` · ended ${minute(manifest.endedAt)}` : ''}`,
+    // A handoff that resumed this session took effect at the turn after it.
+    ...rows(context, "type='session_link'").map(({ summary, link, seq }) =>
+      link?.kind === 'continued-after' ? `${summary} · at t${turns.filter(turn => turn.seq < seq).length + 1}` : summary),
     [plural(turns.length, 'turn'), callFacts(records, recording), plural(records.filter(r => r.type === 'file_change').length, 'change'),
       plural(agents.length, 'subagent'), `${number(t.total)} tokens`, t.cost === undefined ? '' : `$${t.cost.toFixed(4)} reported${t.callsAfterCost ? ` before the last ${plural(t.callsAfterCost, 'model call')}` : ''}`].filter(Boolean).join(' · '),
   ];

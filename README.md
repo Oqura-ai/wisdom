@@ -72,12 +72,23 @@ It checks the service, the dashboard and each harness, changes nothing, and prin
 > [!WARNING]
 > `.wisdom/` holds unredacted sessions and each harness's login. It is kept out of git, but leave it out of zips, shared drives and synced folders too.
 
+## Hand work on, and share it
+
+```sh
+wisdom handoff codex               # out of Claude Code? Codex starts by reading that session
+wisdom share 0f3c8a1e              # one file for a teammate, after a check for secrets
+wisdom import 0f3c8a1e-….wisdom-share   # your teammate reads it, read-only
+wisdom clone 0f3c8a1e              # carry a session on, its history included, in the same agent
+```
+
+Nothing is summarized: the next agent reads the record itself. A share holds no logins, and what the check finds is redacted in the file, kept, or the share cancelled. See [handing work on](docs/usage.md#handing-work-on), [sharing](docs/usage.md#sharing-a-session) and [cloning](docs/usage.md#cloning-a-session).
+
 ## Documentation
 
 | Guide | What it covers |
 | --- | --- |
 | [Installation](docs/installation.md) | Install, update, move, uninstall |
-| [Usage](docs/usage.md) | Commands, how recording works, reading a session, privacy |
+| [Usage](docs/usage.md) | Commands, how recording works, handing work on, sharing and cloning, reading a session, privacy |
 | [Dashboard](docs/dashboard.md) | The live viewer |
 | [Harnesses](docs/harnesses.md) | Claude Code, Codex and Pi: setup and what each one records |
 | [Limitations](docs/limitations.md) | What doesn't work yet, and how much work each item is |

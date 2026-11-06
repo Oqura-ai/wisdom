@@ -12,9 +12,13 @@ export interface Project { workspaceRoot: string; captures: number; harnesses: s
 export interface Tokens { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean }
 export interface HarnessTotals { harness: string; captures: number; recording: number; requests: number; replies: number; tools: number;
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens }
-export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string; resume: { powershell: string; posix: string };
+/** A handoff between two sessions, seen from this one. */
+export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session: string; harness?: string; turns?: number }
+/** Where a shared copy came from. A shared session is read-only, so it has no resume command. */
+export interface SharedInfo { shareId: string; project: string; sharedAt: string; importedAt: string; redactions: number; patchesEdited: string[] }
+export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string; resume?: { powershell: string; posix: string }; shared?: SharedInfo;
   endReason?: string; startedAt: string; endedAt?: string; lastObservedAt: string; requests: number; replies: number; tools: number;
-  failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens; evidenceMissing?: boolean }
+  failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens; links: SessionLink[]; evidenceMissing?: boolean }
 export interface ProjectStats { readVersion: number; workspaceRoot: string; harnesses: HarnessTotals[]; sessions: Session[];
   toolUsage: { harness: string; toolName: string; calls: number; failures: number }[];
   files: { path: string; worktree?: string; changes: number; captures: number; lastChangedAt: string }[];

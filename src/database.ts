@@ -72,6 +72,11 @@ export class LedgerDatabase {
         : this.sql.prepare("SELECT id FROM records WHERE capture_id=? AND type='input' ORDER BY seq DESC LIMIT 1").get(record.captureId);
       if (input) { record.requestId = String(input.id); record.linkBasis = record.turnId ? 'recorded-turn' : 'observed-input-window'; }
     }
+    this.insert(record);
+  }
+
+  /** A record exactly as another database stored it (a shared copy): links already made there are kept. */
+  insert(record: LedgerRecord): void {
     this.sql.prepare(`INSERT INTO records(id,capture_id,seq,type,parent_id,request_id,tool_call_id,
       tool_name,source_entry_id,path,role,is_error,observation_id,body) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       record.id, record.captureId, record.seq, record.type, record.parentId ?? null, record.requestId ?? null,

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { CAPTURE_API, type Connection } from './daemon.js';
 import { spoolDir } from './paths.js';
-import type { HookEvent } from './schema.js';
+import { handoffSchema, type Handoff, type HookEvent } from './schema.js';
 
 export function connectionAt(dataDir: string): Connection {
   const file = path.join(dataDir, 'daemon.json');
@@ -29,6 +29,14 @@ export async function call(connection: Connection, route: string, input?: unknow
   const result = await response.json() as any;
   if (!response.ok) throw new Error(result.error ?? `Daemon returned HTTP ${response.status}`);
   return result;
+}
+
+/** The handoff `wisdom handoff` set on this harness process, if any. A value that does not
+ * parse is ignored: recording never depends on it.
+ */
+export function handoffFromEnv(env: NodeJS.ProcessEnv = process.env): { handoff: Handoff } | {} {
+  try { return env.WISDOM_HANDOFF ? { handoff: handoffSchema.parse(JSON.parse(env.WISDOM_HANDOFF)) } : {}; }
+  catch { return {}; }
 }
 
 /** How every hook reports. Live when the daemon answers; otherwise the event is kept in

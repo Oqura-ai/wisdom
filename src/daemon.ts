@@ -3,8 +3,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { Captures } from './captures.js';
-import { ledger } from './discovery.js';
-import { view } from './views.js';
+import { SharedLibrary, readLedger, readView } from './shared.js';
 import { hookSchema, viewSchema } from './schema.js';
 import { writeJson } from './ledger.js';
 import { startDashboard } from './dashboard.js';
@@ -12,7 +11,9 @@ import { startDashboard } from './dashboard.js';
 /** Bumped when the daemon's contract changes (capture opening or reading). A daemon
  * started from an older build keeps running old code in memory, so clients check this.
  */
-export const CAPTURE_API = 10;
+// 11: hook events may carry a handoff, and the export view exists.
+// 12: /import, and the shared and transcript views.
+export const CAPTURE_API = 12;
 
 export interface Connection { url: string; token: string; pid: number }
 
@@ -44,6 +45,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   let captures: Captures;
   try { captures = new Captures(dataDir); }
   catch (error) { fs.unlinkSync(lock); throw error; }
+  const library = new SharedLibrary(path.join(dataDir, 'shared'));
   const token = randomBytes(32).toString('hex');
   let dashboard: ReturnType<typeof startDashboard> | undefined;
   let closing = false;
@@ -66,8 +68,9 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
       }
       if (request.method !== 'POST') { send(404, { error: 'Unknown route' }); return; }
       const input = await body(request);
-      if (url.pathname === '/ledger') { send(200, { text: ledger(captures, input) }); return; }
-      if (url.pathname === '/view') { send(200, view(captures, viewSchema.parse(input))); return; }
+      if (url.pathname === '/ledger') { send(200, { text: readLedger(captures, library, input) }); return; }
+      if (url.pathname === '/view') { send(200, readView(captures, library, viewSchema.parse(input))); return; }
+      if (url.pathname === '/import') { send(200, importShare(captures, library, input)); return; }
       // Every hook and the Pi extension: the session the event names picks its record.
       if (url.pathname === '/observe') {
         const record = captures.route(hookSchema.parse(input));
@@ -95,7 +98,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   // waits for that file, so the file baseline of a kept tool start is taken before the tool runs.
   captures.drainSpool();
   writeJson(path.join(dataDir, 'daemon.json'), connection);
-  timer = setInterval(() => captures.poll(), 500);
+  timer = setInterval(() => { captures.poll(); library.poll(); }, 500);
   // Optional viewer. Started after daemon.json exists, since it reads it to connect.
   if (options.dashboardPort) dashboard = startDashboard(dataDir, options.dashboardPort);
 
@@ -107,9 +110,22 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
     captures.shutdown();
     await new Promise<void>(resolve => server.close(() => resolve()));
     captures.database.close();
+    library.close();
     fs.rmSync(path.join(dataDir, 'daemon.json'), { force: true });
     fs.rmSync(lock, { force: true });
     finish();
   }
   return { connection, captures, close, closed };
+}
+
+/** Import a share file named by an absolute path. Sessions also recorded here are named,
+ * because this project's own recording is the one every read shows.
+ */
+function importShare(captures: Captures, library: SharedLibrary, input: unknown) {
+  const file = (input as { file?: unknown })?.file;
+  if (typeof file !== 'string' || !path.isAbsolute(file)) throw new Error('Name the share file by its full path.');
+  const { store, added } = library.import(file);
+  const own = new Set(captures.database.manifests().map(manifest => manifest.captureId));
+  const sessions = library.sessions().filter(session => store.ids.includes(session.captureId));
+  return { added, shared: store.shared, sessions, alsoRecordedHere: sessions.map(s => s.captureId).filter(id => own.has(id)) };
 }

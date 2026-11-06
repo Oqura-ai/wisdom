@@ -1,4 +1,4 @@
-import type { Captures } from './captures.js';
+import type { SessionStore } from './store.js';
 import type { LedgerRecord } from './schema.js';
 import { isSurfaceRecord, surfaceText } from './content.js';
 import { nativeMessage } from './harnesses/index.js';
@@ -8,7 +8,7 @@ import { nativeMessage } from './harnesses/index.js';
  */
 export class EvidenceReader {
   private bodies = new Map<string, string | undefined>();
-  constructor(private captures: Captures) {}
+  constructor(private captures: SessionStore) {}
 
   read(record: LedgerRecord, section: 'data' | 'patch' | 'content'): string | undefined {
     const key = `${record.captureId}:${section === 'patch' ? record.patchRef
@@ -28,7 +28,7 @@ export class EvidenceReader {
 }
 
 /** Every read is pinned to one committed revision, so its answer cannot move while a session records. */
-export function evidenceVersion(captures: Captures, requested?: number): number {
+export function evidenceVersion(captures: SessionStore, requested?: number): number {
   const version = requested ?? captures.database.revision;
   if (!Number.isSafeInteger(version) || version < 0 || version > captures.database.revision) {
     throw new Error(`Version ${requested} is not available: the ledger is at version ${captures.database.revision}.`);

@@ -9,6 +9,8 @@ A harness is the coding agent Wisdom records. Each one has its own adapter, and 
 | Variable that sets the home | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` | `PI_CODING_AGENT_DIR` |
 | First run | `wisdom track claude`, log in once | `wisdom track codex --setup-hooks`, trust hooks, log in | `wisdom track pi`, `/login` once |
 | How agents read | Skill in its home, plus the optional `ledger` tool through `wisdom track` | Skill in its home, plus the optional `ledger` tool through `wisdom track` | Skill in its home |
+| Handoff | Takes a first prompt, and a resume ID with one; hooks pass the handoff on | Same | Same; the extension reads it in-process |
+| Clone | Found and opened without a login | Found and opened without a login | Resumed in full with a scripted model |
 | Last tested version | 2.1.317 | 0.164.0 (the minimum accepted) | 1.2.0 |
 | Thinking | When recorded, otherwise `redacted` | Usually encrypted, shown as `redacted` | When recorded |
 | Cost | Total per session | Not reported | Per message |

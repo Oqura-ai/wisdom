@@ -1,4 +1,4 @@
-import type { Captures } from './captures.js';
+import type { SessionStore } from './store.js';
 import type { LedgerRecord } from './schema.js';
 import { EvidenceReader, evidenceVersion } from './evidence.js';
 import { nativeMessage } from './harnesses/index.js';
@@ -59,7 +59,7 @@ const turnTypes = ['input', 'source_record', 'message', 'tool_started', 'tool_fi
  * lines are read through the harness adapter, so the shape is the same for every
  * harness. Only recorded links place an item; nothing is inferred.
  */
-export function conversation(captures: Captures, request: TurnRequest) {
+export function conversation(captures: SessionStore, request: TurnRequest) {
   const version = evidenceVersion(captures, request.readVersion);
   const ledger = captures.get(request.captureId);
   const harness = ledger.manifest.harness;

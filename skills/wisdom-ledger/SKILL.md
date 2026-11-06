@@ -63,6 +63,12 @@ smallest proof, compare the final reply's claims with the evidence, and stop.
   mean exactly that; do not read them as success.
 - `in worktree bp3 (branch x)` on a change: its path is relative to that linked git worktree, not the project.
 - `in (harness notice)` is a message the harness wrote to wake the agent, not something a person asked.
+- `shared copy from …` in a glance header: a teammate's session, imported read-only. `[redacted by sender: …]`
+  marks a value the sender removed, not something the agent wrote.
+- `cloned from <id>` in a glance header: this session began as a copy of that one. Its earlier turns
+  happened there; open them in that session.
+- `continues <id>` or `continued after <id>` in a glance header: this session carries on that session's work, after
+  a `wisdom handoff`. Read that session first, and check its claims against its own evidence.
 - A cost `reported before the last 3 model calls` is the harness's last report, so it is lower than the real cost.
 - `script step` is Codex's own scripting (`exec`, `wait`); the `Bash` or `apply_patch` calls beside it are the real actions.
 - `reported-by-harness` on a patch is the harness's own account of the change: Wisdom did not observe it.

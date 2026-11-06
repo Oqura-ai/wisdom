@@ -69,6 +69,11 @@ export function worktreeBranch(tree: Worktree): string | undefined {
   try { return /^ref: refs\/heads\/(.+?)\s*$/.exec(fs.readFileSync(path.join(tree.gitDir, 'HEAD'), 'utf8'))?.[1]; } catch { return undefined; }
 }
 
+/** The note `wisdom clone` leaves for the session it creates. */
+export function cloneNote(dataDir: string, sessionId: string): string {
+  return path.join(dataDir, 'clones', `${sessionId}.json`);
+}
+
 /** Events a hook could not deliver wait here, one file each, until the daemon reads them. */
 export function spoolDir(dataDir: string): string {
   return path.join(dataDir, 'spool');

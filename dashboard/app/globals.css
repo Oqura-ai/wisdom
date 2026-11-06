@@ -192,6 +192,18 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 .resume-line button { flex: none; border: 1px solid var(--line-strong); background: var(--surface); color: var(--muted); padding: 3px 11px;
   border-radius: 999px; font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; }
 .resume-line button:hover { color: var(--ink); }
+.cloned-history { border: 1px dashed var(--line-strong); border-radius: 12px; padding: 10px 14px; background: var(--surface); }
+.cloned-history summary { cursor: pointer; font: 11px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+.cloned-history p { margin: 10px 0; font-size: 13px; color: var(--ink-soft); }
+.shared-line span:last-child { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-soft); }
+.list-heading { padding: 14px 14px 4px; font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--faint); }
+/* Handoffs to and from other sessions, each one a way to open that session. */
+.session-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-link { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); background: var(--surface);
+  border-radius: 999px; padding: 4px 12px; color: var(--ink-soft); box-shadow: var(--card-depth); }
+.session-link:hover { color: var(--ink); border-color: var(--ink-soft); }
+.session-link .label { font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--faint); }
+.session-link code { font: 11.5px var(--mono); }
 .ghost { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 999px; padding: 4px 12px; color: var(--ink-soft); box-shadow: var(--card-depth); font-size: 11px; }
 .session-metrics { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
 .metric { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; padding: 10px 15px; display: grid; gap: 2px; min-width: 96px; box-shadow: var(--card-depth); }

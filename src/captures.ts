@@ -4,11 +4,11 @@ import { createTwoFilesPatch } from 'diff';
 import { Ledger, writeJson } from './ledger.js';
 import { LedgerDatabase } from './database.js';
 import { SessionFiles, scope } from './workspace.js';
-import { hookSchema, preview, type HookEvent, type Observation, type Manifest, type LedgerRecord } from './schema.js';
+import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from './schema.js';
 import { adapter, harnessNames } from './harnesses/index.js';
 import type { NativeEntry } from './harnesses/types.js';
 import { surfaceText } from './content.js';
-import { linkedWorktree, marker, movedFrom, spoolDir, worktreeBranch } from './paths.js';
+import { cloneNote, linkedWorktree, marker, movedFrom, spoolDir, worktreeBranch } from './paths.js';
 
 interface RunningCapture {
   ledger: Ledger;
@@ -39,6 +39,8 @@ export class Captures {
   readonly database: LedgerDatabase;
   private running = new Map<string, RunningCapture>();
   private lastScan = 0;
+  /** Handoff IDs already linked to a session, read from the records on first use. */
+  private handoffs?: Set<string>;
   /** Session files that name no session (a subagent's or helper's own file). */
   private notSessions = new Set<string>();
 
@@ -93,12 +95,14 @@ export class Captures {
     const { harness, observation } = event;
     if (!event.late) this.drainSpool(harness, observation.sessionId);
     let ledger = this.find(harness, observation.sessionId);
+    const opened = !ledger;
     if (!ledger || !this.running.has(ledger.manifest.captureId)) {
       // Codex ends every session it opened when it quits; one not being watched has nothing to close.
       if (observation.type === 'session_ended') return undefined;
       ledger = ledger ? this.resume(ledger, event) : this.open({ harness, sessionId: observation.sessionId,
         harnessVersion: event.harnessVersion, workspaceRoot: event.cwd, source: observation.source ?? null }, false, event.late ? undefined : event.cwd);
     }
+    if (event.handoff) this.link(ledger, event.handoff, opened ? 'continues' : 'continued-after');
     const id = ledger.manifest.captureId;
     const record = this.observe(id, observation, event);
     if (observation.type === 'session_ended' && this.running.has(id)) {
@@ -106,6 +110,29 @@ export class Captures {
       this.close(id, typeof reason === 'string' && reason ? `session-ended: ${reason}` : 'session-ended');
     }
     return record;
+  }
+
+  /** The session a `wisdom handoff` started or resumed says which session it continues.
+   * One handoff links one session: a /clear or /new later in the same process is not a
+   * continuation. Handoffs already linked are read once, so a restart never links twice.
+   */
+  private link(ledger: Ledger, handoff: Handoff, kind: 'continues' | 'continued-after'): void {
+    this.handoffs ??= new Set(this.database.records("type='session_link'").flatMap(record => record.link?.handoffId ?? []));
+    if (this.handoffs.has(handoff.id)) return;
+    this.handoffs.add(handoff.id);
+    const fromHarness = this.ledgers.get(handoff.from)?.manifest.harness;
+    ledger.append({ type: 'session_link', link: { kind, from: handoff.from, fromHarness, handoffId: handoff.id },
+      summary: `${kind === 'continues' ? 'continues' : 'continued after'} ${handoff.from}${fromHarness ? ` (${fromHarness})` : ''}` });
+  }
+
+  /** A session `wisdom clone` made begins with another session's lines. They are linked to the
+   * session they happened in, and never counted as this session's turns or file changes.
+   */
+  private linkClone(ledger: Ledger, clone: CloneNote): void {
+    const turns = `${clone.turns} turn${clone.turns === 1 ? '' : 's'}`;
+    ledger.append({ type: 'session_link', link: { kind: 'cloned', from: clone.from, fromHarness: clone.fromHarness, version: clone.version, turns: clone.turns },
+      summary: `cloned from ${clone.from} (${clone.fromHarness}) at version ${clone.version} · ${turns}` });
+    ledger.gap('history-cloned', `The first ${turns} happened in ${clone.from}; their file changes were made there, not here.`);
   }
 
   /** One native session is one record, named by the harness's own session ID. A session
@@ -141,10 +168,13 @@ export class Captures {
     // A found session happened when its file says, not when the scan reached it.
     const file = found && input.source ? fs.statSync(input.source) : undefined;
     const lines = found && input.source ? nativeLines(input.harness, input.source) : undefined;
+    const clone = readCloneNote(this.dataDir, input.sessionId);
+    const cloned = clone && input.source ? clonedIds(input.harness, input.source, clone.bytes) : new Set<string>();
     const copied = lines ? this.copiedHistory(input.harness, input.source!, lines) : undefined;
+    const copiedIds = new Set([...copied?.ids ?? [], ...cloned]);
     const manifest: Manifest = { schemaVersion: 1, captureId: id, ...input,
       workspaceRoot: fs.realpathSync(input.workspaceRoot), status: found ? 'closed' : 'recording',
-      startedAt: lines?.dated.find(([id]) => !id || !copied!.ids.has(id))?.[1] ?? (file ? new Date(Math.min(file.birthtimeMs, file.mtimeMs)).toISOString() : now),
+      startedAt: lines?.dated.find(([id]) => !id || !copiedIds.has(id))?.[1] ?? (file ? new Date(Math.min(file.birthtimeMs, file.mtimeMs)).toISOString() : now),
       ...(found ? { endedAt: file ? file.mtime.toISOString() : now, endReason: 'found-in-session-file' } : {}),
       scope: { ...scope, excludedPaths } };
     const ledger = new Ledger(this.captureDir(manifest), manifest, this.database, true);
@@ -152,7 +182,8 @@ export class Captures {
     if (found) {
       ledger.append({ type: 'capture_started', summary: 'Found in the harness\'s session file; Wisdom did not see this session live.' });
       ledger.gap('not-recorded-live', 'Read from the harness\'s own session file: no hook events and no observed file changes.');
-      ledger.copiedEntries = copied!.ids;
+      if (clone) this.linkClone(ledger, clone);
+      ledger.copiedEntries = copiedIds;
       const prompts = [...lines!.prompts].filter(id => copied!.ids.has(id)).length;
       if (prompts) ledger.gap('history-from-another-session',
         `${prompts} prompt${prompts === 1 ? '' : 's'} at the start of this file also appear in ${[...copied!.from].join(', ')}, which started earlier; they are that session's turns, not this one's.`);
@@ -162,6 +193,7 @@ export class Captures {
     try {
       this.watch(ledger, cwd);
       ledger.append({ type: 'capture_started', summary: 'Live capture started; file baseline is in memory.' });
+      if (clone) { this.linkClone(ledger, clone); ledger.copiedEntries = cloned; }
       if (!input.source && input.harness === 'pi') ledger.gap('native-session-unavailable', 'Pi persistence is disabled; extension observations remain available.');
       if (input.harness === 'codex') ledger.gap('codex-hook-coverage',
         'Hosted/specialized tools may bypass hooks; transcript parsing is best-effort. Subagent tool identity is only available when supplied by Codex.');
@@ -594,6 +626,21 @@ function isOlder(a: NativeLines, b: NativeLines): boolean {
   const [first, second] = [a.dated[0]?.[1], b.dated[0]?.[1]];
   if (!first || !second) return false;
   return first === second ? a.created < b.created : first < second;
+}
+
+function readCloneNote(dataDir: string, sessionId: string): CloneNote | undefined {
+  try { return JSON.parse(fs.readFileSync(cloneNote(dataDir, sessionId), 'utf8')); } catch { return undefined; }
+}
+
+/** The line IDs in the first `bytes` of a cloned transcript: the copied history. */
+function clonedIds(harness: string, file: string, bytes: number): Set<string> {
+  const ids = new Set<string>();
+  let text: string;
+  try { text = fs.readFileSync(file).subarray(0, bytes).toString('utf8'); } catch { return ids; }
+  for (const line of text.split('\n')) {
+    try { const id = adapter(harness).nativeEntry(JSON.parse(line)).id; if (id) ids.add(id); } catch { /* not a JSON line */ }
+  }
+  return ids;
 }
 
 /** What a found session's file says about itself: its line IDs, their dates and what it was forked from. */

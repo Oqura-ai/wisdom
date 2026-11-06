@@ -18,6 +18,8 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | Failed subagents go unmarked | A subagent cut off before it stops loses its report, transcript and tokens, with no gap to say so. | M |
 | Sessions aren't linked | Forks and `/clear` are a flat list, and `/rewind` isn't marked. | M |
 | Long replies through a shell | A harness can cut long shell output. Claude Code saves it to a file and Codex removes the middle, both with a notice, and the skill teaches agents to read the rest. It relies on the agent following that. | S |
+| The secret check finds known shapes only | `wisdom share` catches common keys, tokens and `PASSWORD=` style values, and misses others. Look through what you send. | Ongoing |
+| Clones under another login | A clone resumes under the login that recorded the session. Under a different login, Claude Code's signed thinking or Codex's encrypted reasoning may be refused. Not tested yet. | S to test |
 | A warning on the first event | When the daemon isn't running, the first hook shows a warning such as `SessionStart:startup hook error`. Nothing is lost, but it looks broken. | S |
 | Large projects | Past 10,000 files or 64 MiB of retained contents, changes become gaps instead of diffs. | M |
 | Sessions sharing a folder | Two sessions in one folder see each other's changes. These are labelled honestly but can't be separated. | L |

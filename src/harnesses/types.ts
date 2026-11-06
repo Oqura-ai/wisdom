@@ -90,6 +90,23 @@ export interface HarnessAdapter {
   nativePrompt(entry: any): string | undefined;
   /** Candidate session files in the harness's home (inside Wisdom's data folder). */
   sessionFiles(home: string): string[];
+  /** For `wisdom clone`: one transcript line of session `from`, rewritten to name the new
+   * session and, through `move`, the folder it now runs in. Lines that name neither stay as they are. */
+  cloneLine(entry: any, clone: { from: string; sessionId: string; move: (folder: string) => string }): any;
+  /** For `wisdom clone`: where in its home the harness looks for this session's file. */
+  sessionFile(home: string, sessionId: string, cwd: string, now: Date): string;
+}
+
+/** A path inside `from` moved to the same place inside `to`; any other path unchanged.
+ * Windows paths compare without case.
+ */
+export function moveFolder(from: string, to: string): (folder: string) => string {
+  const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+  return folder => {
+    if (key(folder) === key(from)) return to;
+    const inside = [from + '\\', from + '/'].some(prefix => key(folder).startsWith(key(prefix)));
+    return inside ? to + folder.slice(from.length) : folder;
+  };
 }
 
 /** `.jsonl` files `depth` folders below `dir` (0: in it), in name order. */

@@ -9,7 +9,7 @@ Codex hooks ──────┘                │
                   CLI / MCP (agents) · live dashboard (people)
 ```
 
-Harness adapters send events to a local daemon, which stores them in SQLite beside byte-preserved copies of each harness's own session files. Agents and people read the same evidence through different views. To read the code in order, start with [development](development.md#reading-the-code).
+Harness adapters send events to a local daemon, which stores them in SQLite beside byte-preserved copies of each harness's own session files. Agents and people read the same evidence through different views. Sessions imported from share files are kept as separate read-only stores, and each read goes to the store that holds the session. To read the code in order, start with [development](development.md#reading-the-code).
 
 ## Storage
 
@@ -110,6 +110,11 @@ The session's next hook event continues it, with a gap for the time in between; 
 | [dashboard.ts](../src/dashboard.ts) / [dashboard/](../dashboard/) | Next.js live viewer, shipped built in `dist-dashboard/` and started by the daemon; reads through `/view`. |
 | [doctor.ts](../src/doctor.ts) | `wisdom doctor`: a read-only health check of one project. |
 | [harnesses/launch.ts](../src/harnesses/launch.ts) | What every adapter shares: the hook command, writing hooks into a home, and copying the reading skill there. |
+| [store.ts](../src/store.ts) | `SessionStore`: what the read layer needs from a place sessions are kept. The project's own `Captures` and each `SharedStore` implement it. |
+| [shared.ts](../src/shared.ts) | Imported share files: a read-only store each, the library that imports and finds them, and the routing of `/ledger` and `/view` to the store that holds a session. |
+| [share.ts](../src/share.ts) / [secrets.ts](../src/secrets.ts) | `wisdom share`: the share file format, written and read; the secret patterns, masking and redaction. |
+| [handoff.ts](../src/handoff.ts) | `wisdom handoff`: which session to read, the first prompt, and the handoff the hooks pass on. |
+| [clone.ts](../src/clone.ts) | `wisdom clone`: the copied transcript under a new ID, its clone note, and the check of changed files. |
 | [bin.ts](../src/bin.ts) | The installed command: checks the Node version, then loads the CLI. |
 
 A read runs synchronously in the daemon's event loop, so no hook append interleaves

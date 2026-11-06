@@ -18,7 +18,9 @@ function useView(): [View, (view: View) => void] {
 /** One capture as a tree: request → tool calls → file changes, subagents nested
  * under the call that started them. Refreshes when the ledger revision moves.
  */
-export function WorkTree({ session, readVersion, onBack }: { session: Session; readVersion?: number; onBack: () => void }) {
+const linkLabel = { continues: 'continues', 'continued-after': 'continued after', 'continued-by': 'continued by', cloned: 'cloned from', 'cloned-by': 'cloned into' } as const;
+
+export function WorkTree({ session, readVersion, onBack, onOpen }: { session: Session; readVersion?: number; onBack: () => void; onOpen: (captureId: string) => void }) {
   const [data, setData] = useState<{ readVersion: number; events: EventRecord[]; usage: EventRecord[] }>();
   const [error, setError] = useState<string>();
   const [selected, setSelected] = useState<TreeNode>();
@@ -27,8 +29,8 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
   const [view, setView] = useView();
   const [copied, setCopied] = useState(false);
   // Ready to paste in any terminal: it sets the session's folder and its harness home.
-  const resume = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent) ? session.resume.powershell : session.resume.posix;
-  const copyResume = () => void navigator.clipboard.writeText(resume).then(() => {
+  const resume = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent) ? session.resume?.powershell : session.resume?.posix;
+  const copyResume = () => void navigator.clipboard.writeText(resume ?? '').then(() => {
     setCopied(true); setTimeout(() => setCopied(false), 1500);
   });
 
@@ -88,11 +90,30 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
           ))}
         </span>
       </div>
-      <div className="resume-line">
-        <span className="label">resume</span>
-        <code title="Continues this session with recording. The home stays set in this terminal, so harness commands run there also use this project.">{resume}</code>
-        <button onClick={copyResume} title="Copy the command">{copied ? 'copied' : 'copy'}</button>
-      </div>
+      {session.shared ? (
+        <div className="resume-line shared-line">
+          <span className="label">shared</span>
+          <span>From {session.shared.project}, shared {since(session.shared.sharedAt)}. Read-only, as recorded on the sender’s machine.
+            {session.shared.redactions > 0 && ` The sender redacted ${plural(session.shared.redactions, 'value')}.`}</span>
+        </div>
+      ) : (
+        <div className="resume-line">
+          <span className="label">resume</span>
+          <code title="Continues this session with recording. The home stays set in this terminal, so harness commands run there also use this project.">{resume}</code>
+          <button onClick={copyResume} title="Copy the command">{copied ? 'copied' : 'copy'}</button>
+        </div>
+      )}
+      {session.links.length > 0 && (
+        <div className="session-links">
+          {session.links.map(link => (
+            <button key={`${link.kind}-${link.session}`} className="session-link" onClick={() => onOpen(link.session)} title={`Open ${link.session}`}>
+              <span className="label">{linkLabel[link.kind]}</span>
+              {link.harness && <HarnessIcon harness={link.harness} />}
+              <code>{link.session.slice(0, 8)}</code>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="session-metrics">
         {([['requests', session.requests], ['tools', session.tools], ['failures', session.failures],
           ['changes', session.changes], ['subagents', session.subagents], ['gaps', session.gaps]] as const).filter(([, value]) => value > 0).map(([label, value]) => (
@@ -114,6 +135,14 @@ export function WorkTree({ session, readVersion, onBack }: { session: Session; r
         <details className="gaps"><summary>{plural(gaps.length, 'coverage gap')}</summary>
           <ul>{gaps.map(g => <li key={g.id} className="mono small">{g.summary}</li>)}</ul></details>
       )}
+      {view === 'chat' && session.links.filter(link => link.kind === 'cloned').map(link => (
+        // The copied turns live in the session they happened in; this only points there.
+        <details key={link.session} className="cloned-history">
+          <summary>Cloned history{link.turns !== undefined && ` · ${plural(link.turns, 'turn')}`}</summary>
+          <p>These turns happened in session <code>{link.session.slice(0, 8)}</code> before it was cloned. Their prompts, tool calls and changes are read there, not repeated here.</p>
+          <button className="ghost" onClick={() => onOpen(link.session)}>Open them</button>
+        </details>
+      ))}
       {view === 'chat' && data && <ChatView session={session} readVersion={data.readVersion} requests={requests} usage={usage.byRequest} />}
       {view === 'chat' && outsideFiles.length > 0 && (
         <div className="turn-files"><span className="eyebrow">Changed outside any request</span>{outsideFiles.map(node => <code key={node.key}>{node.record.path}</code>)}</div>
