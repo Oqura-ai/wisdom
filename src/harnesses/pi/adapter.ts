@@ -16,6 +16,7 @@ function usage(entry: any): NeutralUsage[] {
 export const pi: HarnessAdapter = {
   name: 'pi',
   homeEnv: 'PI_CODING_AGENT_DIR',
+  defaultHome: ['.pi', 'agent'],
   resume: sessionId => ['pi', '--session', sessionId],
   toolTarget: (_toolName, input) => typeof input?.path === 'string' ? input.path : undefined,
   isDirectFileTool: toolName => ['read', 'edit', 'write'].includes(toolName),

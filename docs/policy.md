@@ -73,6 +73,13 @@ Every harness is an adapter; none is central.
   Wisdom never edits a user's global configuration; a harness outside the home is
   exactly as it was. Wisdom watches; it does not control how the harness runs its
   sessions (forks, branches, worktrees are the harness's own).
+- **Or the project's own settings, with the person's own login.** `wisdom connect` adds
+  Wisdom's hook to the harness's project-level settings, only where the harness documents
+  loading them, and keeps them out of git (`.git/info/exclude`). It adds only its own
+  entries, never edits a file git tracks, and `wisdom disconnect` takes out exactly what it
+  added. Logins are never copied: a harness's refresh tokens can be single-use, so a copy
+  would log the person out of their own tool. A project's copy of the hook stands aside in
+  a tracked session, so no session is recorded twice.
 - **Never blocks, never loses.** A hook never stops the harness. An event the daemon
   cannot take is kept in the spool and recorded later, marked late; the hook warns.
   A session whose hooks never ran is read from its own file and marked as such. Verify

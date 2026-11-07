@@ -50,7 +50,7 @@ wisdom open t3 --capture <session> --at <version> --from 301 | head -n 300
 
 ## MCP (optional)
 
-Most agents don't need this. It's for an agent with no shell, or if you prefer a tool over a command. The server exposes one read-only tool, `ledger`, with five parameters: `capture`, `glance`, `open`, `from` and `at`. It returns the same text as the CLI, and it can't start a harness or edit code. `wisdom track` already passes it to Claude Code and Codex.
+Most agents don't need this. It's for an agent with no shell, or if you prefer a tool over a command. The server exposes one read-only tool, `ledger`, with five parameters: `capture`, `glance`, `open`, `from` and `at`. It returns the same text as the CLI, and it can't start a harness or edit code. `wisdom track` already passes it to Claude Code and Codex. In a project set up with `wisdom connect`, agents read with the skill; add the tool as below if you want it there too.
 
 To add it to another agent:
 
@@ -75,4 +75,4 @@ The CLI and MCP both use `POST /ledger` on the local daemon, authenticated with 
 
 ## What Wisdom changes
 
-Only files inside the project's `.wisdom/` folder. Your global harness configuration is never touched.
+Files inside the project's `.wisdom/` folder, and, after `wisdom connect`, Wisdom's own entries in the project's harness settings and skill folders, kept out of git. Your global harness configuration is never touched. See [two ways to record](usage.md#two-ways-to-record).

@@ -46,6 +46,7 @@ function usage(entry: any): NeutralUsage[] {
 export const claudeCode: HarnessAdapter = {
   name: 'claude-code',
   homeEnv: 'CLAUDE_CONFIG_DIR',
+  defaultHome: ['.claude'],
   resume: sessionId => ['claude', '--resume', sessionId],
   toolTarget: (_toolName, input) => typeof input?.file_path === 'string' ? input.file_path
     : typeof input?.notebook_path === 'string' ? input.notebook_path : undefined,

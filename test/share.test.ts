@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { call } from '../src/client.js';
 import { startDaemon, type Connection } from '../src/daemon.js';
 import { chooseRedactions, readShare, type Finding } from '../src/share.js';
-import { marker } from '../src/paths.js';
+import { harnessHome, marker } from '../src/paths.js';
 
 const bin = fileURLToPath(new URL('../src/bin.js', import.meta.url));
 const openai = 'sk-proj-abcdefghijklmnopqrstuvwxyz123456';
@@ -137,4 +137,38 @@ test('the export view pins one version and names only the evidence its records u
     await daemon.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('a redacted transcript line can change length, and every record still points at its whole line', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-share-lines-')));
+  const data = path.join(root, '.wisdom');
+  fs.mkdirSync(data);
+  fs.writeFileSync(path.join(data, marker), JSON.stringify({ project: root }));
+  const email = 'someone.real@gmail.com';
+  // A finished Claude Code session found from its file: the email sits in the first line, so
+  // redacting it moves every line after it.
+  const line = (entry: object) => JSON.stringify({ sessionId: 'lines-me', cwd: root, timestamp: '2026-01-01T10:00:00.000Z', ...entry });
+  const file = path.join(harnessHome(data, 'claude-code'), 'projects', 'p', 'lines-me.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, [line({ type: 'user', uuid: 'u1', message: { role: 'user', content: `Mail ${email} the report.` } }),
+    line({ type: 'assistant', uuid: 'm1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Sent.' }] } })].join('\n') + '\n');
+  const quiet = new Date(Date.now() - 10 * 60_000);
+  fs.utimesSync(file, quiet, quiet);
+  const daemon = await startDaemon(data, 0);
+  try {
+    daemon.captures.scan();
+    const out = path.join(root, 'out.wisdom-share');
+    const result = await run(root, 'lines-me', '--redact', '--out', out);
+    assert.equal(result.code, 0, result.stderr);
+    const shared = readShare(out);
+    const native = Buffer.from(shared.files.find(f => f.path === 'native-session.jsonl')!.content, 'utf8');
+    assert(!native.includes(email));
+    const pointed = shared.records.filter(({ record }) => record.sourceOffset !== undefined);
+    assert(pointed.length >= 2);
+    for (const { record } of pointed) {
+      const text = native.subarray(record.sourceOffset!, record.sourceOffset! + record.sourceLength!).toString('utf8');
+      assert(text.endsWith('\n'), `${record.type} ends at its line's end`);
+      JSON.parse(text);
+    }
+  } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

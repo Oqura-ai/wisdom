@@ -4,7 +4,7 @@ import type { Connection } from './daemon.js';
 import { adapter } from './harnesses/index.js';
 
 /** `wisdom track` names harnesses by their command; the ledger by their adapter. */
-const harnessByCommand: Record<string, string> = { claude: 'claude-code', codex: 'codex', pi: 'pi' };
+export const harnessByCommand: Record<string, string> = { claude: 'claude-code', codex: 'codex', pi: 'pi' };
 
 /** A target this long already fills much of a context window before it reads anything. */
 const LONG_SESSION_TOKENS = 150_000;
@@ -23,6 +23,8 @@ export interface HandoffPlan {
   from: HandoffSession;
   /** The existing session being resumed; absent when a new session starts. */
   target?: HandoffSession;
+  /** Where that session's transcript is kept, which says the home it runs in. */
+  targetSource?: string | null;
   note?: string;
 }
 
@@ -73,10 +75,10 @@ export async function planHandoff(connection: Connection, target: string, from: 
   const env = { WISDOM_HANDOFF: JSON.stringify({ id: randomUUID(), from: source.captureId }) };
   if (!existing) return { command: target, args: [prompt], env, prompt, from: source };
 
-  const { workspaceRoot } = await call(connection, '/resolve', { session: existing.captureId });
+  const { workspaceRoot, source: targetSource } = await call(connection, '/resolve', { session: existing.captureId });
   const [command, ...args] = adapter(existing.harness).resume(existing.captureId);
   const note = existing.tokens.total > LONG_SESSION_TOKENS
     ? `${existing.captureId} is long (${existing.tokens.total.toLocaleString('en-US')} tokens). A new session starts lighter: wisdom handoff ${command} --from ${source.captureId}`
     : undefined;
-  return { command, args: [...args, prompt], cwd: workspaceRoot, env, prompt, from: source, target: existing, note };
+  return { command, args: [...args, prompt], cwd: workspaceRoot, env, prompt, from: source, target: existing, targetSource, note };
 }

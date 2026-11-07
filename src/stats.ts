@@ -128,7 +128,7 @@ export function stats(captures: SessionStore, request: { workspaceRoot?: string 
     return { captureId: manifest.captureId, harness: manifest.harness,
       harnessVersion: manifest.harnessVersion, status: manifest.status, endReason: manifest.endReason,
       // A shared copy is someone else's recording: it is read, never resumed.
-      ...(captures.shared ? { shared: captures.shared } : { resume: resumeCommands(captures.dataDir, manifest.harness, manifest.captureId, manifest.workspaceRoot) }),
+      ...(captures.shared ? { shared: captures.shared } : { resume: resumeCommands(captures.dataDir, manifest.harness, manifest.captureId, manifest.workspaceRoot, manifest.source) }),
       startedAt: manifest.startedAt, endedAt: manifest.endedAt, lastObservedAt: row.lastObservedAt ?? manifest.startedAt,
       requests: number(row.requests), replies: number(row.replies), tools: number(row.tools), failures: number(row.failures),
       changes: number(row.changes), gaps: number(row.gaps), subagents: number(row.subagents),

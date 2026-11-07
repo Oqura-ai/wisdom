@@ -4,9 +4,9 @@ import { execFileSync } from 'node:child_process';
 import { call } from './client.js';
 import { CAPTURE_API, type Connection } from './daemon.js';
 import { harnessHome, movedFrom, spoolDir } from './paths.js';
-import { hookCommand, hookState, skillState } from './harnesses/launch.js';
+import { hookCommand, hookState, resolveCommand, skillState, type Command, type Place } from './harnesses/launch.js';
 import { hookEvents, inspectHooks, requireTrustedHooks } from './harnesses/codex/launch.js';
-import { piVersion } from './harnesses/pi/launch.js';
+import { piCommand } from './harnesses/pi/launch.js';
 
 export type Level = 'ok' | 'note' | 'problem';
 export interface Check { level: Level; name: string; detail: string; fix?: string }
@@ -20,10 +20,11 @@ export function wisdomVersion(): string {
   return JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 }
 
-/** The version a command-line harness reports, or undefined when it cannot be run. */
-function versionOf(command: string): string | undefined {
+/** The version a harness reports, or undefined when it cannot be found or run. */
+function versionOf(program: () => Command): string | undefined {
   try {
-    const text = execFileSync(command, ['--version'], { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const { command, args } = program();
+    const text = execFileSync(command, [...args, '--version'], { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] });
     return /\d+\.\d+\.\d+/.exec(text)?.[0] ?? 'unknown';
   } catch { return undefined; }
 }
@@ -38,24 +39,29 @@ export async function diagnose(dataDir: string, bins: { claude?: string; codex?:
   const version = (key: keyof typeof testedWith, found: string) => found === testedWith[key] || found === 'unknown'
     ? `version ${found}` : `version ${found}, last tested with ${testedWith[key]}`;
 
+  // A connected harness is reported as connected; otherwise as set up for wisdom track.
+  const placeOf = (key: keyof typeof testedWith): Place => hookState(dataDir, key, 'project') === 'none' ? 'home' : 'project';
   const harness = (name: string, key: keyof typeof testedWith, found: string | undefined): Check => {
-    const state = hookState(dataDir, key);
-    if (state === 'stale') return { level: 'problem', name, detail: 'its hooks point to a copy of Wisdom that has moved or gone, so live recording has stopped', fix: 'wisdom init' };
-    if (state === 'other') return { level: 'problem', name, detail: 'its hooks run a different copy of Wisdom, such as one left under an earlier Node version', fix: 'wisdom init' };
+    const place = placeOf(key);
+    const fix = place === 'project' ? 'wisdom connect' : 'wisdom init';
+    const where = place === 'project' ? ' in the project\'s settings (your own login)' : '';
+    const state = hookState(dataDir, key, place);
+    if (state === 'stale') return { level: 'problem', name, detail: 'its hooks point to a copy of Wisdom that has moved or gone, so live recording has stopped', fix };
+    if (state === 'other') return { level: 'problem', name, detail: 'its hooks run a different copy of Wisdom, such as one left under an earlier Node version', fix };
     if (state === 'none') return found
-      ? { level: 'note', name, detail: `installed (${version(key, found)}), but not set up in this project`, fix: 'wisdom init' }
+      ? { level: 'note', name, detail: `installed (${version(key, found)}), but not set up in this project`, fix: 'wisdom connect' }
       : { level: 'note', name, detail: 'not installed' };
     if (!found) return { level: 'note', name, detail: 'hooks are set up, but the harness itself was not found' };
     const differs = found !== testedWith[key] && found !== 'unknown';
-    const skill = skillState(dataDir, key);
-    if (skill !== 'current') return { level: 'note', name, detail: `hooks in place, ${version(key, found)}. Its reading skill is ${skill}, so its agents may not know how to read recordings.`, fix: 'wisdom init' };
-    return { level: differs ? 'note' : 'ok', name, detail: `hooks in place, skill installed, ${version(key, found)}` };
+    const skill = skillState(dataDir, key, place);
+    if (skill !== 'current') return { level: 'note', name, detail: `hooks in place${where}, ${version(key, found)}. Its reading skill is ${skill}, so its agents may not know how to read recordings.`, fix };
+    return { level: differs ? 'note' : 'ok', name, detail: `hooks in place${where}, skill installed, ${version(key, found)}` };
   };
-  checks.push(harness('Claude Code', 'claude-code', versionOf(bins.claude ?? 'claude')));
+  checks.push(harness('Claude Code', 'claude-code', versionOf(() => resolveCommand(bins.claude ?? 'claude'))));
   const codexBin = bins.codex ?? 'codex';
-  const codex = harness('Codex', 'codex', versionOf(codexBin));
-  checks.push(codex.detail.startsWith('hooks in place') ? await codexTrust(codex, codexBin, dataDir, project) : codex);
-  checks.push(harness('Pi', 'pi', (bins.pi ?? piVersion)()));
+  const codex = harness('Codex', 'codex', versionOf(() => resolveCommand(codexBin)));
+  checks.push(codex.detail.startsWith('hooks in place') ? await codexTrust(codex, codexBin, dataDir, project, placeOf('codex')) : codex);
+  checks.push(harness('Pi', 'pi', (bins.pi ?? (() => versionOf(piCommand)))()));
 
   const waiting = countFiles(spoolDir(dataDir));
   checks.push(waiting
@@ -90,11 +96,12 @@ function dashboardCheck(dataDir: string, daemon: Check & { health?: any }): Chec
 /** Codex runs a hook only after it is trusted, so being set up is not the same as working.
  * Reads Codex's hook list without starting a thread or calling a model.
  */
-async function codexTrust(check: Check, command: string, dataDir: string, project: string): Promise<Check> {
-  const fix = 'wisdom track codex --setup-hooks';
+async function codexTrust(check: Check, command: string, dataDir: string, project: string, place: Place): Promise<Check> {
+  // Connected, the project's hooks are reviewed in the person's own Codex, which also asks to trust the project.
+  const fix = place === 'project' ? 'codex, here: trust this project, then review Wisdom\'s hooks in /hooks' : 'wisdom track codex --setup-hooks';
   try {
-    const listed = await inspectHooks(command, [], project, { ...process.env, CODEX_HOME: harnessHome(dataDir, 'codex') });
-    requireTrustedHooks(listed, hookCommand('codex', dataDir));
+    const env = place === 'project' ? process.env : { ...process.env, CODEX_HOME: harnessHome(dataDir, 'codex') };
+    requireTrustedHooks(await inspectHooks(resolveCommand(command), [], project, env), hookCommand('codex', dataDir, place === 'project'), false, place);
     return check;
   } catch (error) {
     const untrusted = error instanceof Error && error.message.includes('untrusted');

@@ -1,5 +1,6 @@
-/** Values that look like credentials. A scan finds the shapes it knows and misses the
- * rest, so everything that reports a scan says so.
+/** Values that look like credentials, and personal identifiers a harness writes into its own
+ * transcript (Claude Code records the person's email and organization ID). A scan finds the
+ * shapes it knows and misses the rest, so everything that reports a scan says so.
  */
 interface Pattern { kind: string; regex: RegExp; group?: number }
 
@@ -18,11 +19,19 @@ const patterns: Pattern[] = [
   // Names are upper case only, so a match never starts inside an ordinary word.
   { kind: 'secret-assignment', group: 1,
     regex: /[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY)[A-Z0-9_]*\\?["']?\s*[=:]\s*\\?["']?([^\s"'\\]{6,})/g },
+  // Claude Code's credential_org line. Only by its name: session IDs are UUIDs too.
+  { kind: 'organization-id', group: 1, regex: /organizationUuid\\?["']?\s*:\s*\\?["']?([0-9a-fA-F-]{36})/g },
+  // In JSON-escaped text an address can follow `\n`; it starts after the escape, so redacting it
+  // never takes the escape's letter and leaves the JSON valid.
+  { kind: 'email-address', regex: /(?:(?<=\\[nrt])|(?<![\w.%+\\-]))[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/g },
 ];
 
-/** Values that are clearly not secrets: references, placeholders and plain settings. */
+/** Values that are clearly not secrets: references, placeholders, plain settings, and
+ * addresses that name no one (examples, no-reply senders, git's own SSH user).
+ */
 function placeholder(value: string): boolean {
-  return /^[$<{%(*[]/.test(value) || /^\d+$/.test(value) || /^(?:true|false|null|none|undefined)$/i.test(value);
+  return /^[$<{%(*[]/.test(value) || /^\d+$/.test(value) || /^(?:true|false|null|none|undefined)$/i.test(value)
+    || /^(?:git@|no-?reply@)|@(?:[\w-]+\.)*example\.(?:com|org|net)$|@users\.noreply\.github\.com$/i.test(value);
 }
 
 export interface SecretMatch { kind: string; value: string; index: number }

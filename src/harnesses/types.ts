@@ -56,6 +56,8 @@ export interface HarnessAdapter {
   name: string;
   /** The variable that sets the harness's home. */
   homeEnv: string;
+  /** The person's own home when that variable is not set, as folders under their home folder. */
+  defaultHome: string[];
   /** The harness's own command to continue a session by its ID. */
   resume(sessionId: string): string[];
   /** File named by a direct file tool's input, if any. */

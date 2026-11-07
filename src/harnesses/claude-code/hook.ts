@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { deliver, handoffFromEnv } from '../../client.js';
-import { hookDataDir } from '../../paths.js';
+import { hookDataDir, wisdomHomeData } from '../../paths.js';
 
 /** Map one Claude Code hook payload to a neutral observation. Verified against
  * Claude Code 2.1.306 payloads; unknown events are ignored, not guessed.
@@ -32,9 +32,11 @@ export function observation(event: any): Record<string, unknown> | undefined {
  * was started. It never stops Claude Code: an event the daemon cannot take is kept in
  * the spool, and exit code 1 shows the warning without blocking.
  */
-export async function main(named = process.argv[2]): Promise<void> {
+export async function main(named = process.argv[2], place = process.argv[3]): Promise<void> {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
+  // The project's copy of the hook stands aside in a tracked session: its home's copy records it.
+  if (place === 'project' && wisdomHomeData('claude-code', process.env.CLAUDE_CONFIG_DIR)) return;
   const event = JSON.parse(input);
   const mapped = observation(event);
   if (!mapped) return;

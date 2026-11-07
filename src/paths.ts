@@ -28,15 +28,20 @@ export function harnessHome(dataDir: string, harness: string): string {
   return path.join(dataDir, 'harnesses', harness, 'home');
 }
 
+/** The data folder whose harness home `home` is, when it is one; a person's own home is not. */
+export function wisdomHomeData(harness: string, home: string | undefined): string | undefined {
+  if (!home) return undefined;
+  const data = path.resolve(home, '..', '..', '..');
+  return path.resolve(harnessHome(data, harness)) === path.resolve(home) && fs.existsSync(path.join(data, marker)) ? data : undefined;
+}
+
 /** The data folder a hook reports to. The home this process really uses wins: a project
  * moved or copied still names its old folder in its hook command. A folder that no longer
  * exists is never recreated, so a move cannot leave a second, empty project behind.
  */
 export function hookDataDir(harness: string, home: string | undefined, named: string | undefined): string {
-  if (home) {
-    const data = path.resolve(home, '..', '..', '..');
-    if (path.resolve(harnessHome(data, harness)) === path.resolve(home) && fs.existsSync(path.join(data, marker))) return data;
-  }
+  const data = wisdomHomeData(harness, home);
+  if (data) return data;
   if (!named) throw new Error('the hook names no Wisdom data folder; run wisdom init again');
   if (!fs.existsSync(named)) throw new Error(`its Wisdom data folder ${named} no longer exists; if the project moved, run wisdom init there`);
   return named;
@@ -72,6 +77,20 @@ export function worktreeBranch(tree: Worktree): string | undefined {
 /** The note `wisdom clone` leaves for the session it creates. */
 export function cloneNote(dataDir: string, sessionId: string): string {
   return path.join(dataDir, 'clones', `${sessionId}.json`);
+}
+
+/** Which harnesses `wisdom connect` connected, since when, and the person's own home it found
+ * for each, so the daemon reads that home's session files without the person's environment.
+ */
+export function connectedFile(dataDir: string): string {
+  return path.join(dataDir, 'connected.json');
+}
+
+/** When each connected harness was connected, and the person's own home it uses there. */
+export type Connected = Partial<Record<'claude-code' | 'codex' | 'pi', { since: string; home: string }>>;
+
+export function readConnected(dataDir: string): Connected {
+  try { return JSON.parse(fs.readFileSync(connectedFile(dataDir), 'utf8')); } catch { return {}; }
 }
 
 /** Events a hook could not deliver wait here, one file each, until the daemon reads them. */

@@ -20,12 +20,12 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 | Search across sessions | Find a prompt, reply, command or file name, then jump to it | L | Planned |
 | Mark failed subagents, link forks to parents | Fewer sessions that look complete when they aren't | M | Planned |
 | Tested on macOS and Linux | A promise beyond Windows | M | Planned |
+| Connect projects | `wisdom connect`: run plain `claude`, `codex` or `pi` with your normal login and still record, in a project you choose | L | Done |
 
 ## Next: record without the extra setup
 
 | Work | What you get | Effort |
 | --- | --- | --- |
-| Connect projects | Run plain `claude`, `codex` or `pi` with your normal login and still record, in a project you choose | L |
 | Worth checking | A short list at the top of each session: a call that failed with no later success, a test that failed before a test file was edited, part of a session not recorded. Built from recorded facts, with no AI. | M |
 | Sessions and commits | See the commits made during a session, and find the session behind a commit | M |
 | Easier install | A one-line installer that includes Node, then a desktop app | L |

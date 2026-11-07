@@ -7,21 +7,19 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from '../src/daemon.js';
 import { call } from '../src/client.js';
-import { installPi } from '../src/harnesses/pi/launch.js';
+import { installPi, piCommand } from '../src/harnesses/pi/launch.js';
 
 test('installed Pi records real write/edit/failing/nested tools and can be queried mid-session', { timeout: 30000 }, async () => {
   const project = fileURLToPath(new URL('../../', import.meta.url));
-  const install = path.join(os.homedir(), '.pi', 'agent', 'install');
-  const version = process.env.WISDOM_PI_ENTRY ? 'custom installation'
-    : fs.readFileSync(path.join(install, 'current-version'), 'utf8').trim();
-  const entry = process.env.WISDOM_PI_ENTRY ?? path.join(install, 'releases', version, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js');
+  // The Pi Wisdom itself starts: WISDOM_PI_ENTRY, else the managed release, else pi on PATH.
+  const pi = piCommand(process.env.WISDOM_PI_ENTRY);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-pi-test-'));
   const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
   const dataDir = path.join(root, 'data');
   const daemon = await startDaemon(dataDir, 0);
   // As wisdom init does: Pi's agent folder in the data folder, Wisdom's extension in its settings.
   const home = installPi(dataDir);
-  const child = spawn(process.execPath, [entry, '--mode', 'rpc', '--no-prompt-templates', '--no-context-files',
+  const child = spawn(pi.command, [...pi.args, '--mode', 'rpc', '--no-prompt-templates', '--no-context-files',
     '--no-mcp', '--provider', 'wisdom-test', '--model', 'scripted', '--thinking', 'off',
     '--extension', path.join(project, 'test', 'fixtures', 'scripted-provider.mjs')], {
     cwd: workspace, windowsHide: true,
@@ -83,7 +81,7 @@ test('installed Pi records real write/edit/failing/nested tools and can be queri
     assert.match(turn, /^p\d+  example\.txt · modify · /m);
     assert.match(turn, /^c\d+  partial_failure · failed/m);
     assert.match(turn, /^reply /m);
-    console.log(`Verified installed Pi ${version}: ${changes.length} file observations, live reads, native source mirrored byte-for-byte.`);
+    console.log(`Verified installed Pi ${ledger.manifest.harnessVersion}: ${changes.length} file observations, live reads, native source mirrored byte-for-byte.`);
   } finally {
     if (child.exitCode === null) child.kill();
     await daemon.close();

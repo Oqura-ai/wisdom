@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { deliver, handoffFromEnv } from '../../client.js';
-import { hookDataDir } from '../../paths.js';
+import { hookDataDir, wisdomHomeData } from '../../paths.js';
 import { exitEnvelope } from './adapter.js';
 
 /** Unknown tool outcomes stay unknown. A PostToolUse is not proof of success. */
@@ -54,7 +54,7 @@ export function observation(event: any): Record<string, unknown> | undefined {
  * Codex: an event the daemon cannot take is kept in the spool. It always answers `{}`
  * (Stop and SubagentStop require JSON); a warning goes to stderr with exit code 1.
  */
-export async function main(named = process.argv[2]): Promise<void> {
+export async function main(named = process.argv[2], place = process.argv[3]): Promise<void> {
   let event: any;
   let input = '';
   try {
@@ -64,7 +64,8 @@ export async function main(named = process.argv[2]): Promise<void> {
     }
     event = JSON.parse(input);
     const mapped = observation(event);
-    if (mapped) {
+    // The project's copy of the hook stands aside in a tracked session: its home's copy records it.
+    if (mapped && !(place === 'project' && wisdomHomeData('codex', process.env.CODEX_HOME))) {
       const dataDir = hookDataDir('codex', process.env.CODEX_HOME, named);
       // A subagent's events name its own rollout file; that is not the session transcript
       // switching. Its transcript is copied separately at SubagentStop.

@@ -4,8 +4,10 @@
 
 | Command | What it does |
 | --- | --- |
-| `wisdom init` | Make a folder a Wisdom project: `.wisdom/`, hooks and the reading skill in each harness's home, the daemon. Running it again repairs them. |
-| `wisdom track claude\|codex\|pi` | Start a harness with its home in the project. Harness options go after `--`, such as `-- --continue`. |
+| `wisdom connect` | Record plain `claude`, `codex` and `pi` started in this project, with your own login: Wisdom's hook and reading skill in the project's own settings, kept out of git. Running it again repairs them. See [two ways to record](#two-ways-to-record). |
+| `wisdom disconnect` | Take out exactly what `connect` added. Recordings are kept. |
+| `wisdom init` | Make a folder a Wisdom project for `wisdom track`: `.wisdom/`, hooks and the reading skill in each harness's home there, the daemon. Running it again repairs them. |
+| `wisdom track claude\|codex\|pi` | Start a harness with its home in the project, under its own login there. Harness options go after `--`, such as `-- --continue`. |
 | `wisdom resume <session-id>` | Continue a recorded session in its harness and folder, still recording. Takes the full ID only, so a resume never lands in the wrong session. |
 | `wisdom handoff <harness\|session-id> [--from <session-id>]` | Continue work in a new session of any harness, or an existing session, that reads another session first. See [handing work on](#handing-work-on). |
 | `wisdom share <session>...` | Write one file to send a teammate, after a check for secrets. See [sharing a session](#sharing-a-session). |
@@ -23,13 +25,33 @@ Every command finds `.wisdom/` from the current folder upward, the way git finds
 
 ## How recording works
 
-**The harness home is the fence.** Each harness keeps all its own files in `.wisdom/harnesses/<harness>/home/`: settings with Wisdom's hooks, login, and sessions (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`). Any process that uses that home loads the hooks, however it was started: a `/fork` running in the background, a `/branch`, a resume, a worktree. So every session there is recorded, and nothing outside it is. `~/.claude`, `~/.codex` and `~/.pi/agent` are never touched, and a plain `claude`, `codex` or `pi` neither records nor sees these sessions.
+### Two ways to record
+
+**Connected: your own login.** `wisdom connect` puts Wisdom's hook in the project's own harness settings: `.claude/settings.local.json`, `.codex/hooks.json` and `.pi/settings.json`, with the reading skill in `.claude/skills/` and `.agents/skills/`. Then `claude`, `codex` and `pi`, started in the project as you always do, record with your normal login. Nothing reaches git: those paths go in `.git/info/exclude`, your clone's own ignore file, and a settings file git already tracks is left alone. Wisdom only adds its own entries and keeps everything else in those files; `wisdom disconnect` takes them out again. Your global harness settings are not touched.
+
+What each harness loads, verified on Claude Code 2.1.319, Codex 0.166.0 and Pi 1.2.0:
+
+- **Claude Code** records when started in the project's top folder. Started in a subfolder, it does not load the project's settings, so it is not recorded.
+- **Codex** asks once to trust the project, and Wisdom's hooks must then be reviewed once in its `/hooks`. It records from the project's folder or any below it, but it ignores the project's hooks inside a git worktree ([openai/codex#27133](https://github.com/openai/codex/issues/27133)).
+- **Pi** records when started in the project's top folder, once you trust the project when it asks.
+
+Your harness keeps its sessions in its own home (`~/.claude`, `~/.codex`, `~/.pi/agent`). Wisdom copies this project's sessions from there, and its safety net reads only this project's session files changed since you connected. A clone made in a connected project goes into that home, so it resumes under your login.
+
+**Tracked: a home of its own.** `wisdom init` and `wisdom track` keep each harness's whole home inside the project, as described below. It needs one login per project, and it records what connected recording can't: a session started from a subfolder, Codex in a worktree, and every process that uses the home. Both can be set up in one project; a tracked session there is recorded once, by its home's hook, while the project's copy stands aside.
+
+`wisdom resume`, `handoff` and `clone` keep a session in the home it ran in. A new session from `handoff` runs connected when the project is connected. A connected Claude Code or Pi session they start begins in the project's folder, wherever you ran the command, since only there does it load the settings that record it.
+
+### Tracked recording
+
+**The harness home is the fence.** Each harness keeps all its own files in `.wisdom/harnesses/<harness>/home/`: settings with Wisdom's hooks, login, and sessions (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`). Any process that uses that home loads the hooks, however it was started: a `/fork` running in the background, a `/branch`, a resume, a worktree. So every session there is recorded. `~/.claude`, `~/.codex` and `~/.pi/agent` are never touched, and a plain `claude`, `codex` or `pi` doesn't see these sessions; it records only if the project is connected.
 
 `wisdom track` is the short way to start a harness with its home set. It also starts the daemon, and passes the optional `ledger` MCP tool to Claude Code and Codex. Each home holds the skill that teaches agents to read recordings. See [agents](agents.md).
 
+### Either way
+
 **Wisdom never stops the harness.** Each hook sends its event to the daemon. If the daemon is down or refuses, the hook keeps the event in `.wisdom/spool/`, starts the daemon, and shows a warning. The daemon records kept events in order when it is back, marked `delivered-late`. File changes made while it was down are not observed, and the glance says so.
 
-**Nothing in the home goes unnoticed.** Every 10 seconds the daemon looks at the session files in the harness homes. A session file with no record, unchanged for two minutes (hooks untrusted or disabled, for example), becomes a record read from that file. Its typed prompts appear as `in (from session file)`, its replies, calls and results as the harness wrote them, with a `not-recorded-live` gap (no hook events, no observed file changes). Lines a session gained while nothing recorded are read the same way.
+**Nothing in the home goes unnoticed.** Every 10 seconds the daemon looks at the session files in the harness homes, and, for a connected harness, at this project's session files in your own home changed since you connected. A session file with no record, unchanged for two minutes (hooks untrusted or disabled, for example), becomes a record read from that file. Its typed prompts appear as `in (from session file)`, its replies, calls and results as the harness wrote them, with a `not-recorded-live` gap (no hook events, no observed file changes). Lines a session gained while nothing recorded are read the same way.
 
 **One session, one record.** Wisdom records each harness session under that harness's own session ID. There is no second ID and no launcher in between. Two sessions running at once (a background `/fork`, two terminals) are two records, both recording. A session ends with the harness's own end event, or after 10 minutes with no event and no tool running (`idle`), and its next event continues it. Resuming continues its record: its turns go on from where they stopped, and the glance lists a `not-recording-between-visits` gap, because file changes made while nothing was recording are not observed. Forks and branches are recorded as separate sessions, without a link to their parent yet. When a harness moves a session's file (Claude Code does on entering a worktree), the copy follows it.
 
@@ -61,7 +83,7 @@ wisdom share 0f3c8a1e 01a1aca0 --out a.wisdom-share
 
 This writes one file holding the sessions' records, their payloads and patches, and the harness's own transcript copy. It never holds logins, the spool or the daemon's details. By default it goes to `.wisdom/shared-out/`, which git ignores, so a file can't be committed by accident. Send it however you like. Your teammate reads it with `wisdom import`.
 
-Before anything is written, Wisdom checks for values that look like secrets (API keys, tokens, private keys, `PASSWORD=` and similar) and lists each one, masked, with where it appears:
+Before anything is written, Wisdom checks for values that look like secrets (API keys, tokens, private keys, `PASSWORD=` and similar) and for personal details a harness writes into its own transcript (email addresses, and Claude Code's organization ID), and lists each one, masked, with where it appears:
 
 ```text
 Found 2 possible secrets:

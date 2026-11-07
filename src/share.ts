@@ -121,6 +121,28 @@ export function homePlaces(texts: string[]): number {
   return texts.reduce((sum, text) => sum + forms.reduce((n, form) => n + text.split(form).length - 1, 0), 0);
 }
 
+/** Each session's transcript copy, redacted line by line, and where each line now starts and
+ * how long it is, keyed by where it started. Records name their line by byte offset, so they
+ * are pointed at the redacted line. Nothing to redact leaves the transcripts as they are.
+ */
+function redactTranscripts(pieces: Piece[], values: Map<string, string>): Map<string, { text: string; lines: Map<number, { offset: number; length: number }> }> {
+  const result = new Map<string, { text: string; lines: Map<number, { offset: number; length: number }> }>();
+  if (!values.size) return result;
+  for (const piece of pieces) {
+    if (piece.path !== 'native-session.jsonl' || piece.encoding !== 'utf8') continue;
+    const lines = new Map<number, { offset: number; length: number }>();
+    let from = 0, to = 0, text = '';
+    // Each line keeps its newline, as the byte offsets count it.
+    for (const line of piece.text.split(/(?<=\n)/)) {
+      const after = redactSecrets(line, values);
+      lines.set(from, { offset: to, length: Buffer.byteLength(after) });
+      from += Buffer.byteLength(line); to += Buffer.byteLength(after); text += after;
+    }
+    result.set(piece.captureId, { text, lines });
+  }
+  return result;
+}
+
 /** Write the file. Redacted values are replaced in every piece, in this file only; the
  * recording itself is never changed. The header lists each redaction, never its value.
  */
@@ -132,10 +154,18 @@ export function writeShare(draft: ShareDraft, redact: Finding[], out: string): {
   for (const session of draft.sessions) {
     body.push(JSON.stringify({ kind: 'session', manifest: session.manifest }));
   }
+  const transcripts = redactTranscripts(draft.pieces, values);
   for (const piece of draft.pieces) {
-    const text = piece.encoding === 'utf8' ? redactSecrets(piece.text, values) : piece.text;
+    const text = piece.path === 'native-session.jsonl' && transcripts.has(piece.captureId) ? transcripts.get(piece.captureId)!.text
+      : piece.encoding === 'utf8' ? redactSecrets(piece.text, values) : piece.text;
     if (text !== piece.text && piece.path) edited.add(`${piece.captureId}/${piece.path}`);
-    if (piece.record) body.push(JSON.stringify({ kind: 'record', captureId: piece.captureId, record: JSON.parse(text) }));
+    if (piece.record) {
+      // A record points at its transcript line by byte; a redacted line can be longer or shorter.
+      const record: LedgerRecord = JSON.parse(text);
+      const line = record.sourceOffset === undefined ? undefined : transcripts.get(piece.captureId)?.lines.get(record.sourceOffset);
+      if (line) { record.sourceOffset = line.offset; record.sourceLength = line.length; }
+      body.push(JSON.stringify({ kind: 'record', captureId: piece.captureId, record }));
+    }
     else body.push(JSON.stringify({ kind: 'file', captureId: piece.captureId, path: piece.path, encoding: piece.encoding,
       sha256: hash(piece.encoding === 'utf8' ? text : Buffer.from(text, 'base64')), content: text }));
   }

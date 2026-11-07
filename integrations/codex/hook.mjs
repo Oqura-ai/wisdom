@@ -9,4 +9,4 @@ catch (error) {
   process.stdout.write('{}');
   process.exitCode = 1;
 }
-if (hook) await hook.main(process.argv[2]);
+if (hook) await hook.main(process.argv[2], process.argv[3]);
