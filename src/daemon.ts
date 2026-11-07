@@ -14,7 +14,7 @@ import { startDashboard } from './dashboard.js';
 // 11: hook events may carry a handoff, and the export view exists.
 // 12: /import, and the shared and transcript views.
 // 13: the markdown view.
-export const CAPTURE_API = 13;
+export const CAPTURE_API = 14;
 
 export interface Connection { url: string; token: string; pid: number }
 
@@ -79,8 +79,8 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
       }
       if (url.pathname === '/resolve') {
         // Resuming starts a harness, so it takes the exact session ID only: never a guess.
-        const { captureId, harness, workspaceRoot } = captures.get(String((input as any)?.session ?? '')).manifest;
-        send(200, { captureId, harness, workspaceRoot }); return;
+        const { captureId, harness, workspaceRoot, source } = captures.get(String((input as any)?.session ?? '')).manifest;
+        send(200, { captureId, harness, workspaceRoot, source }); return;
       }
       if (url.pathname === '/stop') { send(200, { status: 'stopping' }); setImmediate(() => void close()); return; }
       send(404, { error: 'Unknown route' });

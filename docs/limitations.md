@@ -14,7 +14,7 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | At most about 20 projects running at once | Each running project takes a pair of ports, and each daemon and dashboard stay in memory. | L |
 | No search | You read one session at a time. | L |
 | No delete command | Removing one recording means editing `.wisdom/` by hand. | M |
-| Separate login per project | Each harness logs in once per project, and a plain `claude`, `codex` or `pi` is not recorded. | L |
+| Connected recording has limits | With `wisdom connect`, Claude Code and Pi record only when started in the project's top folder; Codex needs the project trusted and Wisdom's hooks reviewed once, and ignores them in a git worktree. `wisdom track` records these, with one login per project. | M |
 | Failed subagents go unmarked | A subagent cut off before it stops loses its report, transcript and tokens, with no gap to say so. | M |
 | Sessions aren't linked | Forks and `/clear` are a flat list, and `/rewind` isn't marked. | M |
 | Long replies through a shell | A harness can cut long shell output. Claude Code saves it to a file and Codex removes the middle, both with a notice, and the skill teaches agents to read the rest. It relies on the agent following that. | S |

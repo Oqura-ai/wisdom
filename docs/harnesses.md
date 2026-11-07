@@ -7,7 +7,8 @@ A harness is the coding agent Wisdom records. Each one has its own adapter, and 
 | How it reports | Hooks in `settings.json` | Hooks in `hooks.json`, once trusted | Extension in `settings.json` |
 | Its home in `.wisdom/harnesses/` | `claude-code/home` | `codex/home` | `pi/home` |
 | Variable that sets the home | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` | `PI_CODING_AGENT_DIR` |
-| First run | `wisdom track claude`, log in once | `wisdom track codex --setup-hooks`, trust hooks, log in | `wisdom track pi`, `/login` once |
+| Connected (`wisdom connect`, your own login) | `.claude/settings.local.json`; start `claude` in the project's folder | `.codex/hooks.json`; trust the project, review hooks in `/hooks` once; not in a git worktree | `.pi/settings.json`; start `pi` in the project's folder, trust the project |
+| Tracked, first run | `wisdom track claude`, log in once | `wisdom track codex --setup-hooks`, trust hooks, log in | `wisdom track pi`, `/login` once |
 | How agents read | Skill in its home, plus the optional `ledger` tool through `wisdom track` | Skill in its home, plus the optional `ledger` tool through `wisdom track` | Skill in its home |
 | Handoff | Takes a first prompt, and a resume ID with one; hooks pass the handoff on | Same | Same; the extension reads it in-process |
 | Clone | Found and opened without a login | Found and opened without a login | Resumed in full with a scripted model |
@@ -20,6 +21,8 @@ A harness is the coding agent Wisdom records. Each one has its own adapter, and 
 On Claude Code 2.1.317 and Codex 0.164.0, real sessions with only the skill and a shell found the skill by themselves and read recordings with `wisdom glance` and `wisdom open`. See [agents](agents.md).
 
 Each harness starts clean in its home and asks you to log in once. Your global settings, plugins and MCP servers don't apply there. See [how recording works](usage.md#how-recording-works).
+
+Wisdom finds each harness the way your shell does: `claude`, `codex` or `pi` on your PATH, whether a native installer, npm or pnpm put it there. On Windows, npm and pnpm install a command as a `.cmd` file, which Node can't start without a shell, so Wisdom starts the program that file runs: an `.exe` itself, or a script with Node. `--claude-bin`, `--codex-bin` and `--pi-entry` name another installation.
 
 ## Claude Code
 
@@ -40,7 +43,7 @@ wisdom track claude -- --continue
 
 ## Pi
 
-`wisdom init` adds Wisdom's extension to `.wisdom/harnesses/pi/home/settings.json`. Wisdom reuses your own Pi installation and doesn't install another agent.
+`wisdom init` adds Wisdom's extension to `.wisdom/harnesses/pi/home/settings.json`. Wisdom reuses your own Pi installation and doesn't install another agent: the release Pi's installer made current, or else `pi` on your PATH, as npm installs it.
 
 ```sh
 wisdom track pi

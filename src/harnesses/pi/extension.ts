@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { deliver, handoffFromEnv } from '../../client.js';
-import { harnessHome } from '../../paths.js';
+import { findDataDir, harnessHome } from '../../paths.js';
 
 // A tiny structural interface keeps this extension independent of a second Pi
 // installation. The installed Pi supplies its real API at runtime (verified on 1.2.0).
@@ -11,15 +11,23 @@ interface PiAPI {
   registerCommand(name: string, options: { description: string; handler: (args: string, context: any) => Promise<void> }): void;
 }
 
-/** Wisdom's data folder, when Pi runs with its agent folder inside one; otherwise this
- * Pi is outside Wisdom and nothing is recorded.
+/** Wisdom's data folder: the one Pi's agent folder is in, when Pi is tracked; otherwise the
+ * project's, since only a connected project's settings load this extension, and Pi loads them
+ * when it starts in the project's folder.
  */
 function dataFolder(): string | undefined {
   const agentDir = process.env.PI_CODING_AGENT_DIR;
-  if (!agentDir) return undefined;
-  const data = path.resolve(agentDir, '..', '..', '..');
-  return path.resolve(harnessHome(data, 'pi')) === path.resolve(agentDir) ? data : undefined;
+  if (agentDir) {
+    const data = path.resolve(agentDir, '..', '..', '..');
+    if (path.resolve(harnessHome(data, 'pi')) === path.resolve(agentDir)) return data;
+  }
+  return findDataDir(process.cwd());
 }
+
+/** A tracked session in a connected project loads this extension twice: from its home and from
+ * the project. One registration records it.
+ */
+const loaded = Symbol.for('wisdom.pi.extension');
 
 /** The version of the Pi that is running, from its own package. */
 function piVersion(): string | undefined {
@@ -35,13 +43,14 @@ function piVersion(): string | undefined {
   } catch { return undefined; }
 }
 
-/** Loaded from the settings of Pi's home in Wisdom's folder. Every event names its
+/** Loaded from the settings of Pi's home in Wisdom's folder, or of a connected project. Every event names its
  * session, so /new, /fork, /clone and /resume reach the right record. It never blocks Pi:
  * an event the daemon cannot take is kept in the spool.
  */
 export default function wisdomTracking(pi: PiAPI): void {
   const dataDir = dataFolder();
-  if (!dataDir) return;
+  if (!dataDir || (globalThis as any)[loaded]) return;
+  (globalThis as any)[loaded] = true;
   let session: { sessionId: string; source: string | null; cwd: string } | undefined;
   let warning: string | undefined;
   let queue = Promise.resolve();

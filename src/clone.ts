@@ -3,7 +3,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { call } from './client.js';
 import type { Connection } from './daemon.js';
-import { adapter } from './harnesses/index.js';
+import { adapter, userHome } from './harnesses/index.js';
+import { hookState, settingsFiles, type Place } from './harnesses/launch.js';
 import { moveFolder } from './harnesses/types.js';
 import { hash } from './ledger.js';
 import { cloneNote, harnessHome } from './paths.js';
@@ -15,6 +16,8 @@ interface Source { readVersion: number; manifest: Manifest; file?: string; bytes
 export interface ClonePlan {
   /** The harness command and arguments that resume the copy, as `wisdom resume` would. */
   command: string;
+  /** Where the copy runs: Wisdom's home for the harness, or the person's own in a connected project. */
+  place: Place;
   args: string[];
   cwd: string;
   sessionId: string;
@@ -55,7 +58,9 @@ export async function planClone(connection: Connection, dataDir: string, ref: st
   const { manifest } = source;
   if (!source.file || !source.bytes) throw new Error(`${manifest.captureId} has no copy of its harness transcript, so it cannot be cloned. Read it instead, or hand off from it.`);
   const harness = adapter(manifest.harness);
-  const home = harnessHome(dataDir, manifest.harness);
+  // A connected project runs the harness in the person's own home, so the copy goes there.
+  const place: Place = hookState(dataDir, manifest.harness as keyof typeof settingsFiles.home, 'project') === 'none' ? 'home' : 'project';
+  const home = place === 'project' ? userHome(manifest.harness) : harnessHome(dataDir, manifest.harness);
   const sessionId = randomUUID();
   const file = harness.sessionFile(home, sessionId, cwd, now);
   const note = cloneNote(dataDir, sessionId);
@@ -72,5 +77,5 @@ export async function planClone(connection: Connection, dataDir: string, ref: st
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, copy, { flag: 'wx' });
   const [command, ...args] = harness.resume(sessionId);
-  return { command: command!, args, cwd, sessionId, file, source, differing: differingFiles(cwd, source.changes) };
+  return { command: command!, place, args, cwd, sessionId, file, source, differing: differingFiles(cwd, source.changes) };
 }

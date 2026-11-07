@@ -8,23 +8,26 @@ import { createInterface } from 'node:readline/promises';
 import { call, connectionAt, ensureDaemon } from './client.js';
 import { startDaemon, type Connection } from './daemon.js';
 import { diagnose, formatChecks, wisdomVersion } from './doctor.js';
-import { planHandoff } from './handoff.js';
+import { harnessByCommand, planHandoff } from './handoff.js';
+import { connect, disconnect, type Connectable } from './connect.js';
 import { planClone } from './clone.js';
 import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share.js';
 import { redactSecrets } from './secrets.js';
 import { serveMcp } from './mcp.js';
 import { findDataDir, marker, movedFrom } from './paths.js';
 import { writeJson } from './ledger.js';
-import { installPi, launchPi, piEntry } from './harnesses/pi/launch.js';
+import { installPi, launchPi, piCommand } from './harnesses/pi/launch.js';
 import { installClaudeCode, launchClaudeCode } from './harnesses/claude-code/launch.js';
 import { installCodex, launchCodex } from './harnesses/codex/launch.js';
-import { adapter, resumeCommands } from './harnesses/index.js';
-import { staleHooks, type Launch } from './harnesses/launch.js';
+import { adapter, resumeCommands, sessionPlace } from './harnesses/index.js';
+import { hookState, resolveCommand, settingsFile, staleHooks, type Command, type Launch, type Place } from './harnesses/launch.js';
 
 const help = `Wisdom records your coding agents' sessions, so you and your agents can read them.
 
 Set up
-  wisdom init                     Turn on recording in this project
+  wisdom connect                  Record claude, codex and pi started here, with your own login
+  wisdom disconnect               Stop that, taking out what connect added; recordings are kept
+  wisdom init                     Record agents started with wisdom track, each with its own login here
   wisdom doctor                   Check that everything is working
 
 Run an agent
@@ -87,7 +90,7 @@ async function main(): Promise<void> {
   if (values.version) { console.log(wisdomVersion()); return; }
   if (!command || values.help) { console.log(help); return; }
   const options: Record<string, string[]> = {
-    init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'],
+    init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
     daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
@@ -104,11 +107,17 @@ async function main(): Promise<void> {
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
   if (command === 'init') { await init(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
+  if (command === 'connect') { await connectProject(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
   const explicit = values.data ?? process.env.WISDOM_DATA_DIR;
   const start = path.resolve(values.cwd ?? process.cwd());
   const found = explicit ? path.resolve(explicit) : findDataDir(start);
   if (!found) throw new Error(`${start} is not inside a Wisdom project. Run: wisdom init`);
   const dataDir = found;
+  if (command === 'disconnect') {
+    const was = disconnect(dataDir);
+    console.log(`Wisdom is disconnected from ${path.dirname(dataDir)}: its hooks and reading skill are out of the project's settings${was.length ? ` (${was.map(harness => names[harness]).join(', ')})` : ''}. Your recordings are kept.`);
+    return;
+  }
   if (command === 'doctor') {
     const checks = await diagnose(dataDir);
     console.log(formatChecks(path.dirname(dataDir), checks));
@@ -116,7 +125,7 @@ async function main(): Promise<void> {
     return;
   }
   // track and resume write the hooks again themselves.
-  const stale = ['track', 'resume'].includes(command) ? [] : staleHooks(dataDir);
+  const stale = ['track', 'resume', 'disconnect'].includes(command) ? [] : staleHooks(dataDir);
   if (stale.length) console.error(`Wisdom's hooks for ${stale.join(', ')} point to a Wisdom build that has moved, so they cannot run. Run: wisdom init`);
   if (command === 'daemon') {
     if (first === 'run') {
@@ -147,7 +156,8 @@ async function main(): Promise<void> {
     const session = await call(await ensureDaemon(dataDir, port), '/resolve', { session: first });
     const [harness, ...args] = adapter(session.harness).resume(session.captureId);
     console.error(`Resuming ${session.harness} session ${session.captureId}`);
-    process.exitCode = await track(harness, { ...values, cwd: session.workspaceRoot }, args, dataDir, port); return;
+    // A session continues in the home it ran in: Wisdom's, or the person's own in a connected project.
+    process.exitCode = await track(harness, { ...values, cwd: session.workspaceRoot }, args, dataDir, port, {}, sessionPlace(dataDir, session.harness, session.source)); return;
   }
   if (command === 'handoff') { process.exitCode = await handoff(first, values, harnessArgs.join(' '), dataDir, port); return; }
   if (command === 'share') { process.exitCode = await share(positionals.slice(1), values, dataDir, port); return; }
@@ -208,58 +218,111 @@ async function runDaemon(dataDir: string, port: number | undefined, dashboard: b
  * harness's home there, and a running daemon. Running it again repairs the hooks.
  */
 async function init(project: string, values: any, port?: number): Promise<void> {
-  if (!fs.existsSync(project)) throw new Error(`${project} does not exist`);
-  const dataDir = path.join(project, '.wisdom');
-  const fresh = !fs.existsSync(path.join(dataDir, marker));
-  fs.mkdirSync(dataDir, { recursive: true });
-  if (fresh) writeJson(path.join(dataDir, marker), { project, createdAt: new Date().toISOString() });
-  // Session files and payloads are stored unredacted: never commit them.
-  const ignore = path.join(project, '.gitignore');
-  const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
-  const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
-  if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
+  const { dataDir, fresh } = makeProject(project);
   console.log(fresh ? `Wisdom is set up in ${project}` : `Wisdom was already set up in ${project}. Its hooks and skills are refreshed.`);
   const known = fresh ? undefined : movedFrom(dataDir);
   if (known) console.log(`This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
   console.log('\nStart an agent:');
-  const installed = (name: string, check: () => void, install: () => string, next: string) => {
-    try { check(); } catch { console.log(`  ${name.padEnd(12)} not installed. Run wisdom init again after installing it.`); return; }
+  const found = installedHarnesses(values);
+  const installed = (harness: Connectable, install: () => unknown, next: string) => {
+    if (!found.includes(harness)) { console.log(`  ${names[harness].padEnd(12)} not installed. Run wisdom init again after installing it.`); return; }
     install();
-    console.log(`  ${name.padEnd(12)} ${next}`);
+    console.log(`  ${names[harness].padEnd(12)} ${next}`);
   };
-  const version = (command: string) => () => { execFileSync(command, ['--version'], { windowsHide: true, stdio: 'ignore' }); };
-  installed('Claude Code', version(values['claude-bin'] ?? 'claude'), () => installClaudeCode(dataDir),
-    'wisdom track claude');
-  installed('Codex', version(values['codex-bin'] ?? 'codex'), () => installCodex(dataDir).home,
-    'wisdom track codex --setup-hooks, trust its hooks in /hooks, then wisdom track codex');
-  installed('Pi', () => { fs.accessSync(piEntry(values['pi-entry'])); }, () => installPi(dataDir),
-    'wisdom track pi');
+  installed('claude-code', () => installClaudeCode(dataDir), 'wisdom track claude');
+  installed('codex', () => installCodex(dataDir), 'wisdom track codex --setup-hooks, trust its hooks in /hooks, then wisdom track codex');
+  installed('pi', () => installPi(dataDir), 'wisdom track pi');
   const connection = await ensureDaemon(dataDir, port);
   console.log(`\nDashboard: ${dashboardLine((await call(connection, '/health')).dashboard)}`);
   console.log('\nEach agent asks you to log in once for this project. Your global agent settings are not touched.');
   console.log('Keep .wisdom/ private: it holds your sessions and agent logins, unredacted. Git ignores it, but leave it out of zips and synced folders.');
 }
 
-/** Start a harness with its home in the project's data folder. Recording comes from the
- * hooks in that home, so the launcher only sets the folder and starts the daemon early.
+const names: Record<Connectable, string> = { 'claude-code': 'Claude Code', codex: 'Codex', pi: 'Pi' };
+
+/** Make a folder a Wisdom project: its data folder, marked, and kept out of git, since session
+ * files and payloads are stored unredacted.
  */
-async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number, env: Record<string, string> = {}): Promise<number> {
-  const cwd = path.resolve(values.cwd ?? process.cwd());
+function makeProject(project: string): { dataDir: string; fresh: boolean } {
+  if (!fs.existsSync(project)) throw new Error(`${project} does not exist`);
+  const dataDir = path.join(project, '.wisdom');
+  const fresh = !fs.existsSync(path.join(dataDir, marker));
+  fs.mkdirSync(dataDir, { recursive: true });
+  if (fresh) writeJson(path.join(dataDir, marker), { project, createdAt: new Date().toISOString() });
+  const ignore = path.join(project, '.gitignore');
+  const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
+  const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
+  if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
+  return { dataDir, fresh };
+}
+
+/** The harnesses that run here: each is asked for its version. */
+function installedHarnesses(values: any): Connectable[] {
+  const programs: Record<Connectable, () => Command> = {
+    'claude-code': () => resolveCommand(values['claude-bin'] ?? 'claude'),
+    codex: () => resolveCommand(values['codex-bin'] ?? 'codex'),
+    pi: () => piCommand(values['pi-entry']),
+  };
+  return (Object.keys(programs) as Connectable[]).filter(harness => {
+    try { const { command, args } = programs[harness](); execFileSync(command, [...args, '--version'], { windowsHide: true, stdio: 'ignore' }); return true; }
+    catch { return false; }
+  });
+}
+
+/** Record plain `claude`, `codex` and `pi` in this project with the person's own login. */
+async function connectProject(project: string, values: any, port?: number): Promise<void> {
+  const { dataDir, fresh } = makeProject(project);
+  const found = installedHarnesses(values);
+  const result = connect(dataDir, found);
+  console.log(`${fresh ? 'Wisdom is set up in' : 'Wisdom is connected in'} ${project}. Start your agent here as you always do, with your own login:\n`);
+  const next: Record<Connectable, string> = {
+    'claude-code': 'claude   (start it in this folder, not a subfolder)',
+    codex: 'codex    (trust this project if it asks, then review Wisdom\'s hooks once in /hooks)',
+    pi: 'pi       (start it in this folder, and trust this project when it asks)',
+  };
+  for (const harness of Object.keys(names) as Connectable[]) {
+    const line = result.connected.includes(harness) ? next[harness]
+      : !found.includes(harness) ? 'not installed. Run wisdom connect again after installing it.'
+      : `not connected: git tracks ${path.relative(project, settingsFile(dataDir, harness, 'project'))}, and Wisdom will not put this machine's paths in it. Use wisdom track ${harness === 'claude-code' ? 'claude' : harness}.`;
+    console.log(`  ${names[harness].padEnd(12)} ${line}`);
+  }
+  console.log(`\nWisdom added its hook and reading skill to: ${result.files.map(file => path.relative(project, file)).join(', ') || 'nothing'}.`);
+  console.log(result.excluded ? 'They are listed in .git/info/exclude, so git ignores them and they never reach your teammates. wisdom disconnect removes them.'
+    : 'This folder is not a git repository, so nothing was excluded from git. wisdom disconnect removes them.');
+  await ensureDaemon(dataDir, port);
+  console.log('Keep .wisdom/ private: it holds your sessions, unredacted. Git ignores it, but leave it out of zips and synced folders.');
+}
+
+/** Start a harness in this project. Tracked (`place` home), it runs with its home in the
+ * project's data folder, whose hooks record it. Connected (`place` project), it runs with the
+ * person's own home and login, and the project's settings record it.
+ */
+async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number, env: Record<string, string> = {}, place: Place = 'home'): Promise<number> {
+  const name = harnessByCommand[harness ?? ''];
+  if (place === 'project' && name && hookState(dataDir, name as Connectable, 'project') === 'none') {
+    throw new Error(`This ${names[name as Connectable]} session runs with your own login, and this project is not connected, so it would not be recorded. Run: wisdom connect`);
+  }
+  // Claude Code and Pi load a project's settings only when started in its own folder (verified on
+  // 2.1.319 and 1.2.0), so a connected session starts there; Codex finds them from any folder below.
+  const asked = path.resolve(values.cwd ?? process.cwd());
+  const cwd = place === 'project' && name !== 'codex' ? path.dirname(path.resolve(dataDir)) : asked;
+  if (path.relative(cwd, asked)) console.error(`Starting in ${cwd}, the project's folder: there ${names[name as Connectable]} loads the settings that record it.`);
   const cliPath = fileURLToPath(new URL('./cli.js', import.meta.url));
   if (values['pi-entry'] && harness !== 'pi') throw new Error('--pi-entry applies only to track pi');
   if (values['claude-bin'] && harness !== 'claude') throw new Error('--claude-bin applies only to track claude');
   if ((values['codex-bin'] || values['setup-hooks'] || values['trust-all-hooks']) && harness !== 'codex') {
     throw new Error('--codex-bin, --setup-hooks and --trust-all-hooks apply only to track codex');
   }
-  const launch: Launch = harness === 'pi' ? launchPi({ entry: values['pi-entry'], args, dataDir })
-    : harness === 'claude' ? launchClaudeCode({ command: values['claude-bin'], args, dataDir, cliPath })
-    : harness === 'codex' ? await launchCodex({ command: values['codex-bin'], args, dataDir, cliPath, cwd, setupHooks: values['setup-hooks'], trustAllHooks: values['trust-all-hooks'] })
+  const launch: Launch = harness === 'pi' ? launchPi({ entry: values['pi-entry'], args, dataDir, place })
+    : harness === 'claude' ? launchClaudeCode({ command: values['claude-bin'], args, dataDir, cliPath, place })
+    : harness === 'codex' ? await launchCodex({ command: values['codex-bin'], args, dataDir, cliPath, cwd, setupHooks: values['setup-hooks'], trustAllHooks: values['trust-all-hooks'], place })
     : (() => { throw new Error('Use: wisdom track pi|claude|codex'); })();
   if (launch.setupOnly) console.error('Open /hooks in Codex, review and trust the Wisdom hooks, then quit and run wisdom track codex. '
     + 'Until they are trusted, sessions are read from their files only.');
   else {
     await ensureDaemon(dataDir, port);
-    console.error('Wisdom is recording sessions in this harness home.');
+    console.error(place === 'project' ? 'Wisdom records this session through the project\'s settings, with your own login.'
+      : 'Wisdom is recording sessions in this harness home.');
   }
   // The ledger skill calls this installation's CLI from the project.
   return runHarness(launch, cwd, { ...process.env, ...env, ...launch.env, WISDOM_CLI_PATH: cliPath });
@@ -308,10 +371,10 @@ async function clone(ref: string | undefined, values: any, dataDir: string, port
     const shown = plan.differing.slice(0, 5).join(', ') + (plan.differing.length > 5 ? `, and ${plan.differing.length - 5} more` : '');
     console.error(`Note: ${plan.differing.length === 1 ? '1 file differs' : `${plan.differing.length} files differ`} on disk from what this session remembers: ${shown}.`);
   }
-  try { return await track(plan.command, { ...values, cwd: project }, plan.args, dataDir, port); }
+  try { return await track(plan.command, { ...values, cwd: project }, plan.args, dataDir, port, {}, plan.place); }
   catch (error) {
     // The copy is already saved, so say how to start it once the agent can run.
-    const later = resumeCommands(dataDir, plan.source.manifest.harness, plan.sessionId, project);
+    const later = resumeCommands(dataDir, plan.source.manifest.harness, plan.sessionId, project, plan.file);
     console.error(`${error instanceof Error ? error.message : error}\nThe clone is saved as session ${plan.sessionId}. Start it later with:\n  ${process.platform === 'win32' ? later.powershell : later.posix}`);
     return 1;
   }
@@ -379,7 +442,10 @@ async function handoff(target: string | undefined, values: any, words: string, d
   console.error(plan.target
     ? `Resuming ${plan.target.harness} session ${plan.target.captureId}; it reads ${plan.from.harness} session ${plan.from.captureId} first.`
     : `Starting a new ${plan.command} session; it reads ${plan.from.harness} session ${plan.from.captureId} first.`);
-  return track(plan.command, { ...values, cwd: plan.cwd ?? values.cwd }, plan.args, dataDir, port, plan.env);
+  // A resumed session continues in the home it ran in; a new one runs connected when this project is.
+  const place = plan.target ? sessionPlace(dataDir, plan.target.harness, plan.targetSource)
+    : hookState(dataDir, harnessByCommand[plan.command] as Connectable, 'project') === 'none' ? 'home' : 'project';
+  return track(plan.command, { ...values, cwd: plan.cwd ?? values.cwd }, plan.args, dataDir, port, plan.env, place);
 }
 
 function runHarness(launch: Launch, cwd: string, env: NodeJS.ProcessEnv): Promise<number> {

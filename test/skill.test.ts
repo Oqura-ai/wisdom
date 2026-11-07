@@ -20,7 +20,7 @@ test('init puts the reading skill in every harness home, and nothing outside the
     const homes = { 'claude-code': installClaudeCode(data), codex: installCodex(data).home, pi: installPi(data) };
     for (const [harness, home] of Object.entries(homes)) {
       assert.equal(fs.readFileSync(path.join(home, 'skills', 'wisdom-ledger', 'SKILL.md'), 'utf8'), fs.readFileSync(shipped, 'utf8'));
-      assert.equal(skillState(data, harness), 'current');
+      assert.equal(skillState(data, harness as keyof typeof homes), 'current');
     }
   } finally { fs.rmSync(data, { recursive: true, force: true }); }
 });

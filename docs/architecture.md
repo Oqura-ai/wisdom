@@ -109,13 +109,14 @@ The session's next hook event continues it, with a gap for the time in between; 
 | [stats.ts](../src/stats.ts) | Dashboard project inventory and per-harness, capture, tool, file and model counts and token usage in SQL. Usage records come from each adapter's `nativeEntry().usage` ([harnesses/types.ts](../src/harnesses/types.ts)). |
 | [dashboard.ts](../src/dashboard.ts) / [dashboard/](../dashboard/) | Next.js live viewer, shipped built in `dist-dashboard/` and started by the daemon; reads through `/view`. |
 | [doctor.ts](../src/doctor.ts) | `wisdom doctor`: a read-only health check of one project. |
-| [harnesses/launch.ts](../src/harnesses/launch.ts) | What every adapter shares: the hook command, writing hooks into a home, and copying the reading skill there. |
+| [harnesses/launch.ts](../src/harnesses/launch.ts) | What every adapter shares: finding a harness on PATH (following Windows `.cmd` shims), the hook command, where each harness's settings name Wisdom (its home, or the project), writing and removing hooks, and the reading skill. |
 | [store.ts](../src/store.ts) | `SessionStore`: what the read layer needs from a place sessions are kept. The project's own `Captures` and each `SharedStore` implement it. |
 | [shared.ts](../src/shared.ts) | Imported share files: a read-only store each, the library that imports and finds them, and the routing of `/ledger` and `/view` to the store that holds a session. |
 | [share.ts](../src/share.ts) / [secrets.ts](../src/secrets.ts) | `wisdom share`: the share file format, written and read; the secret patterns, masking and redaction. |
 | [markdown.ts](../src/markdown.ts) | `wisdom export`: one session as Markdown, built from the same turn assembly as the ledger (the `markdown` view). |
 | [handoff.ts](../src/handoff.ts) | `wisdom handoff`: which session to read, the first prompt, and the handoff the hooks pass on. |
 | [clone.ts](../src/clone.ts) | `wisdom clone`: the copied transcript under a new ID, its clone note, and the check of changed files. |
+| [connect.ts](../src/connect.ts) | `wisdom connect` and `disconnect`: Wisdom in the project's own harness settings and skill folders, `.git/info/exclude`, and `.wisdom/connected.json`, which tells the daemon which person's home to read and from when. |
 | [bin.ts](../src/bin.ts) | The installed command: checks the Node version, then loads the CLI. |
 
 A read runs synchronously in the daemon's event loop, so no hook append interleaves

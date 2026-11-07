@@ -8,7 +8,7 @@ import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type
 import { adapter, harnessNames } from './harnesses/index.js';
 import type { NativeEntry } from './harnesses/types.js';
 import { surfaceText } from './content.js';
-import { cloneNote, linkedWorktree, marker, movedFrom, spoolDir, worktreeBranch } from './paths.js';
+import { cloneNote, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch } from './paths.js';
 
 interface RunningCapture {
   ledger: Ledger;
@@ -41,8 +41,11 @@ export class Captures {
   private lastScan = 0;
   /** Handoff IDs already linked to a session, read from the records on first use. */
   private handoffs?: Set<string>;
-  /** Session files that name no session (a subagent's or helper's own file). */
+  /** Session files that name no session (a subagent's or helper's own file), or, in a person's
+   * own home, belong to another project. */
   private notSessions = new Set<string>();
+  /** This project's session files found in a connected harness's own home. */
+  private ownSessionFiles = new Set<string>();
 
   constructor(readonly dataDir: string) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -232,7 +235,8 @@ export class Captures {
    */
   private copiedHistory(harness: string, source: string, own: NativeLines): { ids: Set<string>; from: Set<string> } {
     const ids = new Set<string>(), from = new Set<string>();
-    for (const other of adapter(harness).sessionFiles(path.join(this.dataDir, 'harnesses', harness, 'home'))) {
+    const candidates = [...adapter(harness).sessionFiles(path.join(this.dataDir, 'harnesses', harness, 'home')), ...this.ownSessionFiles];
+    for (const other of candidates) {
       if (path.resolve(other) === path.resolve(source)) continue;
       const lines = nativeLines(harness, other);
       if (!isOlder(lines, own)) continue;
@@ -485,22 +489,45 @@ export class Captures {
     }
   }
 
-  /** The safety net: every session file in Wisdom's homes gets a record, whether or not
-   * its hooks ran. A quiet file with no record is read whole; lines a session gained while
-   * nothing was recording are read when it goes quiet again.
+  /** The homes whose session files belong here: each harness's home in Wisdom's folder, and, for
+   * a harness `wisdom connect` connected, the person's own home from the moment it was connected.
+   * That home holds every project's sessions, so there only this project's are taken.
+   */
+  private homes(): { harness: string; home: string; since?: number }[] {
+    const connected = readConnected(this.dataDir);
+    return harnessNames.flatMap(harness => {
+      const own = connected[harness];
+      return [{ harness, home: path.join(this.dataDir, 'harnesses', harness, 'home') }, ...own ? [{ harness, home: own.home, since: Date.parse(own.since) }] : []];
+    });
+  }
+
+  /** Whether a session that ran in `cwd` worked in this project, or in one of its worktrees. */
+  private inProject(cwd: string | undefined): boolean {
+    if (!cwd) return false;
+    const project = path.dirname(path.resolve(this.dataDir));
+    const relative = path.relative(project, linkedWorktree(cwd)?.main ?? cwd);
+    return !relative.startsWith('..') && !path.isAbsolute(relative);
+  }
+
+  /** The safety net: every session file in Wisdom's homes, and this project's in a connected
+   * harness's own home, gets a record, whether or not its hooks ran. A quiet file with no record
+   * is read whole; lines a session gained while nothing was recording are read when it goes quiet again.
    */
   scan(): void {
     const bySource = new Map([...this.ledgers.values()].filter(l => l.manifest.source).map(l => [l.manifest.source!, l]));
-    for (const harness of harnessNames) {
-      const home = path.join(this.dataDir, 'harnesses', harness, 'home');
+    for (const { harness, home, since } of this.homes()) {
       if (!fs.existsSync(home)) continue;
       for (const file of adapter(harness).sessionFiles(home)) {
         try {
           if (this.notSessions.has(file)) continue;
           const stat = fs.statSync(file);
+          // Sessions from before the harness was connected are not this record's to take.
+          if (since !== undefined && stat.mtimeMs < since) continue;
           if (Date.now() - stat.mtimeMs < QUIET_MS) continue;
           const known = bySource.get(file);
           if (known) {
+            // Recorded here, so this project's: a later fork in this home may start with its lines.
+            if (since !== undefined) this.ownSessionFiles.add(file);
             if (this.running.has(known.manifest.captureId) || stat.size <= known.sourcePosition) continue;
             known.gap('not-recorded-live', 'Lines the session file gained while nothing was recording were read from it; no hooks reported them.');
             this.drain(known, true);
@@ -508,6 +535,11 @@ export class Captures {
           }
           const { sessionId, cwd } = header(harness, file);
           if (!sessionId) { this.notSessions.add(file); continue; }
+          if (since !== undefined) {
+            // Another project's session in the person's own home: never read again.
+            if (!this.inProject(cwd)) { this.notSessions.add(file); continue; }
+            this.ownSessionFiles.add(file);
+          }
           // A record that copies another file of this session (a moved file) is left as it is.
           if (this.find(harness, sessionId)) { this.notSessions.add(file); continue; }
           const workspaceRoot = cwd && fs.existsSync(cwd) ? cwd : path.dirname(this.dataDir);

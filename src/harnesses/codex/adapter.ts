@@ -77,6 +77,7 @@ function usage(entry: any): NeutralUsage[] {
 export const codex: HarnessAdapter = {
   name: 'codex',
   homeEnv: 'CODEX_HOME',
+  defaultHome: ['.codex'],
   resume: sessionId => ['codex', 'resume', sessionId],
   // apply_patch can change several files; shell and MCP calls can write anywhere.
   toolTarget: () => undefined,

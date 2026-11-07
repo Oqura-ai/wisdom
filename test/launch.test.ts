@@ -6,9 +6,9 @@ import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { installPi, launchPi } from '../src/harnesses/pi/launch.js';
-import { staleHooks } from '../src/harnesses/launch.js';
+import { resolveCommand, staleHooks } from '../src/harnesses/launch.js';
 import { installClaudeCode, launchClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installCodex } from '../src/harnesses/codex/launch.js';
 import { startDaemon } from '../src/daemon.js';
@@ -59,6 +59,33 @@ test('track only points a harness at its home; Pi sessions cannot leave it', () 
     assert.equal(claude.env?.CLAUDE_CONFIG_DIR, path.join(data, 'harnesses', 'claude-code', 'home'));
     assert(!claude.args.includes('--plugin-dir'));
   } finally { fs.rmSync(data, { recursive: true, force: true }); }
+});
+
+test('on Windows, a harness installed as an npm or pnpm .cmd shim starts the program the shim names', { skip: process.platform !== 'win32' }, () => {
+  const bin = temp('shims');
+  const saved = process.env.PATH;
+  try {
+    const native = path.join(bin, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+    const script = path.join(bin, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+    fs.mkdirSync(path.dirname(native), { recursive: true }); fs.writeFileSync(native, '');
+    fs.mkdirSync(path.dirname(script), { recursive: true }); fs.writeFileSync(script, "console.log('codex-cli 0.166.0')");
+    // npm's cmd-shim: a native program it starts itself, a script it hands to node.exe beside it or on PATH.
+    fs.writeFileSync(path.join(bin, 'claude.cmd'), '@ECHO off\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n');
+    fs.writeFileSync(path.join(bin, 'codex.cmd'), 'IF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n)\r\n'
+      + 'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
+    // pnpm writes the same path with %~dp0.
+    fs.writeFileSync(path.join(bin, 'pi.cmd'), '@"%~dp0\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
+    process.env.PATH = bin;
+    assert.deepEqual(resolveCommand('claude'), { command: native, args: [] });
+    assert.deepEqual(resolveCommand('codex'), { command: process.execPath, args: [script] });
+    assert.deepEqual(resolveCommand('pi'), { command: process.execPath, args: [script] });
+    const codex = resolveCommand('codex');
+    assert.match(execFileSync(codex.command, [...codex.args, '--version'], { encoding: 'utf8' }), /codex-cli 0\.166\.0/);
+    assert.deepEqual(resolveCommand(path.join(bin, 'codex.cmd')), codex, 'a shim named with --codex-bin is followed too');
+    assert.deepEqual(resolveCommand(script), codex, 'a script named directly runs with node');
+    // Nothing found: started as named, so it fails the way a harness that is not installed does.
+    assert.deepEqual(resolveCommand('wisdom-test-none'), { command: 'wisdom-test-none', args: [] });
+  } finally { process.env.PATH = saved; fs.rmSync(bin, { recursive: true, force: true }); }
 });
 
 test('a project\'s data folder is found from any folder inside it', () => {
@@ -238,7 +265,8 @@ test('resume finds a session only by its full ID', async () => {
       await call(c, '/observe', { harness: 'codex', cwd: workspace, observation: { observationId: randomUUID(), sessionId, type: 'session_started' } });
     }
     const resolved = await call(c, '/resolve', { session: '01a1836b-bbbb' });
-    assert.deepEqual(resolved, { captureId: '01a1836b-bbbb', harness: 'codex', workspaceRoot: fs.realpathSync(workspace) });
+    // Its transcript's place says which home it resumes in; none was reported here.
+    assert.deepEqual(resolved, { captureId: '01a1836b-bbbb', harness: 'codex', workspaceRoot: fs.realpathSync(workspace), source: null });
     for (const partial of ['01a1836b', '01a1836b-b', 'latest']) {
       await assert.rejects(call(c, '/resolve', { session: partial }), /No recorded session has the ID/);
     }

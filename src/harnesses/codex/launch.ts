@@ -2,10 +2,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { home, hookCommand, installSkill, readSettings, saveSettings, withHooks, type Launch } from '../launch.js';
+import { home, hookCommand, installSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, withHooks, withoutHooks, type Command, type Launch, type Place } from '../launch.js';
+import { userHome } from '../index.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
   'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact'] as const;
+
+/** Put Wisdom's hooks in one Codex `hooks.json`, keeping any other hooks there. Returns the command. */
+function writeHooks(dataDir: string, place: Place): string {
+  const file = settingsFile(dataDir, 'codex', place);
+  const settings = readSettings(file);
+  const command = hookCommand('codex', dataDir, place === 'project');
+  settings.hooks = withHooks(settings.hooks, hookEvents, command, () => ({}),
+    event => ({ timeout: event === 'SessionEnd' ? 3 : 40 }));
+  saveSettings(file, settings);
+  return command;
+}
 
 /** Write Wisdom's hooks to `hooks.json` in Codex's home in Wisdom's folder (verified on
  * Codex CLI 0.164.0: listed as user hooks, enabled, untrusted until reviewed in /hooks).
@@ -13,20 +25,33 @@ export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'Pr
  */
 export function installCodex(dataDir: string): { home: string; command: string } {
   const folder = home(dataDir, 'codex');
-  const file = path.join(folder, 'hooks.json');
-  const settings = readSettings(file);
-  const command = hookCommand('codex', dataDir);
-  settings.hooks = withHooks(settings.hooks, hookEvents, command, () => ({}),
-    event => ({ timeout: event === 'SessionEnd' ? 3 : 40 }));
-  saveSettings(file, settings);
+  const command = writeHooks(dataDir, 'home');
   installSkill(folder);
   return { home: folder, command };
 }
 
+/** Wisdom's hooks in the project's `.codex/hooks.json` (verified on Codex CLI 0.166.0: loaded
+ * only once the project is trusted, from its folder or any below it, and listed as project
+ * hooks, untrusted until reviewed in /hooks). Codex uses the person's own home and login.
+ */
+export function connectCodex(dataDir: string): string {
+  writeHooks(dataDir, 'project');
+  return settingsFile(dataDir, 'codex', 'project');
+}
+
+/** Take Wisdom's hooks out of the project's `.codex/hooks.json`, leaving everything else. */
+export function disconnectCodex(dataDir: string): void {
+  const file = settingsFile(dataDir, 'codex', 'project');
+  const settings = readSettings(file);
+  const hooks = withoutHooks(settings.hooks);
+  if (hooks) settings.hooks = hooks; else delete settings.hooks;
+  saveOrRemoveSettings(file, settings);
+}
+
 /** Read hook metadata only. No thread is started and no model is called. */
-export async function inspectHooks(command: string, args: string[], cwd: string, env = process.env): Promise<any> {
+export async function inspectHooks(program: Command, args: string[], cwd: string, env = process.env): Promise<any> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args, 'app-server'], { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(program.command, [...program.args, ...args, 'app-server'], { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let done = false;
     const finish = (error?: Error, result?: unknown) => {
       if (done) return;
@@ -53,16 +78,21 @@ export async function inspectHooks(command: string, args: string[], cwd: string,
   });
 }
 
-export function requireTrustedHooks(result: any, command: string, allowUntrusted = false): void {
+/** Wisdom's hooks in Codex's home are `user` hooks; in a connected project, `project` hooks. */
+export function requireTrustedHooks(result: any, command: string, allowUntrusted = false, place: Place = 'home'): void {
   const entries = result?.data;
   if (!Array.isArray(entries) || entries.length !== 1 || entries[0].errors?.length) {
     throw new Error('Codex could not load Wisdom hooks. Check Codex configuration and managed hook policy.');
   }
   const missing = hookEvents.filter(event => !entries[0].hooks?.some((hook: any) =>
     hook.command === command && hook.eventName === event[0].toLowerCase() + event.slice(1)
-    && hook.source === 'user' && hook.enabled && (allowUntrusted || hook.trustStatus === 'trusted')));
-  if (missing.length) throw new Error('Wisdom hooks are missing, disabled, or untrusted. Run `wisdom track codex --setup-hooks` '
-    + 'with the same --cwd, review Wisdom hooks in /hooks, then quit and retry. Required: ' + missing.join(', '));
+    && hook.source === (place === 'project' ? 'project' : 'user') && hook.enabled && (allowUntrusted || hook.trustStatus === 'trusted')));
+  if (!missing.length) return;
+  throw new Error(place === 'project'
+    ? 'Wisdom hooks in this project are missing, disabled, or untrusted. Start codex in the project, trust the project if it asks, '
+      + 'review Wisdom hooks in /hooks, then quit and retry. Required: ' + missing.join(', ')
+    : 'Wisdom hooks are missing, disabled, or untrusted. Run `wisdom track codex --setup-hooks` '
+      + 'with the same --cwd, review Wisdom hooks in /hooks, then quit and retry. Required: ' + missing.join(', '));
 }
 
 /** Inspect the same config/profile overrides used by the interactive process. */
@@ -102,33 +132,42 @@ export function nodeReplEnabled(configText: string, overrides: string[]): boolea
 export const trustAllWarning = 'WARNING: --trust-all-hooks runs every enabled Codex hook without review for this session, '
   + "including your global hooks and this project's .codex hooks, not only Wisdom's. Use it only in repositories you trust.";
 
+/** Codex with its home in Wisdom's folder, or, in a connected project, with the person's own
+ * home, where the project's hooks record it. Either way its hooks must be trusted first.
+ */
 export async function launchCodex(options: {
-  command?: string; args: string[]; dataDir: string; cliPath: string; cwd: string; setupHooks?: boolean; trustAllHooks?: boolean;
+  command?: string; args: string[]; dataDir: string; cliPath: string; cwd: string; setupHooks?: boolean; trustAllHooks?: boolean; place?: Place;
 }): Promise<Launch> {
-  const command = options.command ?? 'codex';
-  let version: string;
-  try { version = execFileSync(command, ['--version'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
-  catch { throw new Error(`Cannot run Codex (${command}). Install it or pass --codex-bin.`); }
+  const name = options.command ?? 'codex';
+  let program: Command, version: string;
+  try {
+    program = resolveCommand(name);
+    version = execFileSync(program.command, [...program.args, '--version'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch { throw new Error(`Cannot run Codex (${name}). Install it or pass --codex-bin.`); }
+  const { command } = program;
   const match = /codex-cli (\d+)\.(\d+)\.(\d+)/.exec(version);
   if (!match || Number(match[1]) === 0 && Number(match[2]) < 164) throw new Error('Codex CLI 0.164.0 or newer is required.');
-  // Codex keeps its sessions, login, hooks and hook trust in Wisdom's folder, not in ~/.codex.
-  const installed = installCodex(options.dataDir);
-  const env = { CODEX_HOME: installed.home };
+  const own = options.place === 'project';
+  if (own && options.setupHooks) throw new Error('--setup-hooks reviews hooks in Wisdom\'s Codex home; in a connected project, review them in /hooks in codex itself');
+  // Tracked, Codex keeps its sessions, login, hooks and hook trust in Wisdom's folder, not in
+  // ~/.codex. Connected, it keeps its own home; `wisdom connect` wrote the project's hooks.
+  const installed = own ? { home: userHome('codex'), command: hookCommand('codex', options.dataDir, true) } : installCodex(options.dataDir);
+  const env: Record<string, string> = own ? {} : { CODEX_HOME: installed.home };
   const overrides = inspectionArgs(options.args);
   if (options.setupHooks) {
     if (options.args.length) throw new Error('--setup-hooks does not accept Codex arguments');
     if (options.trustAllHooks) throw new Error('--setup-hooks and --trust-all-hooks are alternatives; choose one');
-    return { command, env, args: ['-C', options.cwd], setupOnly: true };
+    return { command, env, args: [...program.args, '-C', options.cwd], setupOnly: true };
   }
-  requireTrustedHooks(await inspectHooks(command, overrides, options.cwd, { ...process.env, ...env }), installed.command, options.trustAllHooks);
+  requireTrustedHooks(await inspectHooks(program, overrides, options.cwd, { ...process.env, ...env }), installed.command, options.trustAllHooks, options.place);
   if (options.trustAllHooks) console.error(trustAllWarning);
-  const configFile = path.join(env.CODEX_HOME, 'config.toml');
+  const configFile = path.join(installed.home, 'config.toml');
   if (nodeReplEnabled(fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : '', overrides)) {
     console.error('Note: the node_repl MCP server is enabled. Commands it runs inside one call are invisible to hooks; '
       + 'Wisdom still records their file changes. Add -- -c mcp_servers.node_repl.enabled=false to see each command.');
   }
   const mcp = ['-c', `mcp_servers.wisdom.command=${JSON.stringify(process.execPath)}`, '-c',
     `mcp_servers.wisdom.args=${JSON.stringify([options.cliPath, 'mcp', '--data', options.dataDir])}`];
-  return { command, env, args: ['-C', options.cwd, ...mcp,
+  return { command, env, args: [...program.args, '-C', options.cwd, ...mcp,
     ...(options.trustAllHooks ? ['--dangerously-bypass-hook-trust'] : []), ...options.args] };
 }
