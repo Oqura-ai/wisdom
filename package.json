@@ -1,6 +1,6 @@
 {
   "name": "@oqura/wisdom",
-  "version": "0.3.0",
+  "version": "0.3.1-beta.0",
   "description": "A local evidence ledger for coding-agent sessions (Claude Code, Codex, Pi), with a live dashboard and two ways to read: glance and open",
   "license": "Apache-2.0",
   "type": "module",
