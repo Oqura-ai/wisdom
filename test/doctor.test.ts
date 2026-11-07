@@ -105,7 +105,8 @@ test('the installed command prints its version, and --cwd works on every project
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-empty-'));
   try {
     const run = (...args: string[]) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8', cwd: os.tmpdir() });
-    assert.match(run('--version').stdout.trim(), /^\d+\.\d+\.\d+$/);
+    // A release (0.3.0) or a prerelease (0.3.1-beta.0).
+    assert.match(run('--version').stdout.trim(), /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/);
     const help = run('--help').stdout;
     assert.doesNotMatch(help, /npm/);
     assert.match(help, /wisdom doctor/);
