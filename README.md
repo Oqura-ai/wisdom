@@ -1,117 +1,103 @@
 # Wisdom
 
-**Know what your coding agent actually did.**
+### The intent behind every change your coding agent makes, readable by you and by any agent
 
+[![npm](https://img.shields.io/npm/v/@oqura/wisdom.svg)](https://www.npmjs.com/package/@oqura/wisdom)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![Node 24+](https://img.shields.io/badge/node-%3E%3D24-green.svg)
-![Claude Code · Codex · Pi](https://img.shields.io/badge/agents-Claude%20Code%20·%20Codex%20·%20Pi-8A2BE2.svg)
 
-## Why we built this
+Wisdom records Claude Code, Codex and Pi sessions on your machine and links every file change to the request, the reasoning and the commands that produced it. You browse sessions in a local dashboard, and any of your agents can query them through a skill, so the next agent starts from what was actually asked, tried and changed.
 
-If you code with agents, you know the moment. You ask Claude to fix a failing test. Twenty minutes later it says *"All tests pass now."* The diff looks fine, so you commit it.
+## Why Wisdom
 
-A week later something breaks, and you go looking for what happened in that session. Was the test fixed, or was the test changed until it passed? Did it run the full suite or one file? What else did it touch? The session is gone. All that's left is a diff and the agent's own summary, and the summary is the agent describing itself.
+Git tells you what changed. It doesn't tell you why. When an agent writes the code, the why lives in its session: what you asked for, what it tried, which command failed, what it decided. Each agent does keep that session locally, but in a form that's hard to use:
 
-We kept running into this, and it gets worse the more you rely on agents:
+- **It isn't linked to the code.** A transcript doesn't tie a file change to the request and the step behind it, and a change made through a shell command doesn't appear as an edit at all.
+- **Each agent has its own format.** Claude Code, Codex and Pi each store sessions in their own internal JSONL, in their own folder. Another agent can't read them, and pasting one in fills its context.
+- **It doesn't last.** Agents clean up old sessions, and the context is gone as soon as you clear, compact or switch tools.
 
-- **You can't check the claim.** "Done, tests pass" is easy to say. What was actually run, what failed, and what was changed along the way usually isn't visible anywhere.
-- **Every new session starts from zero.** The next agent, or the same one tomorrow, doesn't know what was tried last time. You end up explaining it all again.
-- **Switching agents loses the thread.** When Claude runs out mid-task and you open Codex, you're copying context by hand.
-- **Reviewers see the result, not the work.** A teammate gets a clean diff with no idea what was asked, what failed, or what was quietly dropped.
+So the next agent, a teammate reviewing the PR, or you a week later see the code without the intent. Wisdom keeps that intent next to the code:
 
-So we built Wisdom. It sits next to Claude Code, Codex and Pi and records every session as it happens: each prompt, each reply, each command with its real output, and each file change as an actual diff, tied to the step that made it. Nothing is summarized or reworded, and nothing leaves your computer.
+- **Every change, with its reason.** Wisdom observes file changes itself and stores each as a diff, linked to the turn and the tool call that made it, including changes made by shell commands.
+- **One format for every agent.** Claude Code, Codex and Pi sessions are read the same way, turn by turn, in plain text sized for an agent's context.
+- **Agents that query it themselves.** A skill teaches each agent to find the turn behind a change and read the request, the agent's replies and reasoning (where the agent records it; Codex usually encrypts it), the commands and their real output.
+- **Work that moves between agents and people.** `wisdom handoff codex` starts Codex from the Claude session; `wisdom share` sends a session to a teammate with secrets redacted.
+- **Local, and honest about gaps.** Nothing is uploaded or summarized. Whatever Wisdom couldn't record is marked as missing, never filled in.
 
-The record answers those questions directly. You can open the session and see what really happened. Your agent can read it too, so you can just ask *"what did the last session change, and did the tests really pass?"* and get an answer from facts. When you switch to Codex, it starts by reading what Claude did. When a teammate reviews the work, you can send them the session itself, with secrets removed.
+## How it works
 
-## Get started
+```
+Claude Code  ┐
+Codex CLI    ├── hooks ──►  local daemon  ──►  .wisdom/            ──►  dashboard
+Pi           ┘              (127.0.0.1)        SQLite, diffs,           CLI (glance, open)
+                                               transcript copies        agent skill
+```
 
-You need [Node.js 24+](https://nodejs.org) and at least one of Claude Code, Codex or Pi.
+The agent's own hooks send each event to a small daemon on your machine. The daemon saves it in the project's `.wisdom/` folder, along with a byte-for-byte copy of the agent's transcript and the diffs of the files it watches. If the daemon is down, events are kept and recorded when it comes back; the agent is never blocked.
+
+## Quick start
+
+**Step 1:** Install
 
 ```sh
 npm install -g @oqura/wisdom
 ```
 
-Then choose how to record your project.
-
-### Option 1: Simple (recommended)
-
-Keep using your agents exactly as you do now, with your own login.
+**Step 2:** Connect a project
 
 ```sh
 cd your-project
 wisdom connect
-claude          # or codex, or pi
 ```
 
-Start the agent in the project's own folder. The first time, Codex asks you to trust the project and to approve Wisdom's hooks in `/hooks`, and Pi asks you to trust the project. To stop recording, run `wisdom disconnect`.
-
-### Option 2: More control
-
-Each agent gets its own separate home inside the project's `.wisdom/` folder, and Wisdom changes nothing else in your project. It also records what Option 1 can't: sessions started from a subfolder, and Codex in a git worktree. Each agent asks you to log in once for this project.
+**Step 3:** Use your agent as usual
 
 ```sh
-cd your-project
-wisdom init
-wisdom track claude         # or: wisdom track pi
+claude      # or codex, or pi
 ```
 
-For Codex, approve Wisdom's hooks once with `wisdom track codex --setup-hooks` (open `/hooks`, trust them, quit), then use `wisdom track codex`.
-
-You can use both options in the same project. More detail in [two ways to record](docs/usage.md#two-ways-to-record).
-
-### See what happened
+Sessions are recorded with your normal login. Open them with:
 
 ```sh
 wisdom dashboard
 ```
 
-This prints a local address. Open it in your browser to see every session as a conversation, with each command, file change, token count and cost.
+The first time in a project, Codex asks you to trust it and to approve Wisdom's hooks in `/hooks`, and Pi asks you to trust it. On Windows PowerShell with scripts blocked, use `wisdom.cmd` and `npm.cmd`.
 
-> On Windows PowerShell, if scripts are blocked, type `wisdom.cmd` instead of `wisdom` (and `npm.cmd` for npm).
+## Supported agents
 
-## Everyday use
+| Agent | Tested with | Records through | Notes |
+| --- | --- | --- | --- |
+| [Claude Code](https://code.claude.com) | 2.1.319 | Hooks | Start it in the project's folder |
+| [Codex CLI](https://developers.openai.com/codex) | 0.166.0 | Hooks | Trust the project and approve the hooks once |
+| [Pi](https://pi.dev) | 1.2.0 | Extension | Start it in the project's folder and trust the project once |
 
-| You want to… | Do this |
+## Two ways to record
+
+- **`wisdom connect`** (above) records `claude`, `codex` and `pi` with your normal login. It adds Wisdom's hook to the project's agent settings and keeps those files out of git. Claude Code and Pi are recorded when started in the project's folder.
+- **`wisdom init`**, then **`wisdom track claude`** (or `codex`, `pi`), gives each agent its own home inside `.wisdom/` and touches nothing else. Each agent logs in once for that project. Use it to keep everything in one folder, or to record sessions started from a subfolder.
+
+Details in [two ways to record](docs/usage.md#two-ways-to-record).
+
+## Commands
+
+| Command | What it does |
 | --- | --- |
-| See all recorded sessions | `wisdom dashboard`, or `wisdom glance` in the terminal |
-| Read one session in the terminal | `wisdom glance latest`, then `wisdom open t3 --capture latest` for turn 3 in full |
-| Ask your agent about past work | Just ask it, for example: *"look at my last session, what failed?"* |
-| Continue a session later | `wisdom resume <session-id>` (the dashboard shows the exact command) |
-| Move the work to another agent | `wisdom handoff codex` (or `claude`, `pi`): it starts by reading the last session |
-| Give a session to a teammate | `wisdom share <session-id>`, and they run `wisdom import <file>` |
-| Put a session in a PR or an issue | `wisdom export <session-id> --out session.md` |
-| Check that everything works | `wisdom doctor` tells you what's wrong and the command that fixes it |
-| Stop recording a project | Option 1: `wisdom disconnect`. Option 2: just stop using `wisdom track`. Your recordings are kept either way |
+| `wisdom glance [latest]` | List sessions, or show one session turn by turn |
+| `wisdom open t3 --capture latest` | One turn in full: replies, tool calls with output, diffs |
+| `wisdom dashboard` | Print the address of the local dashboard |
+| `wisdom resume <id>` | Continue a session, still recording |
+| `wisdom handoff codex` | Start another agent that reads the last session first |
+| `wisdom share <id>` / `wisdom import <file>` | Send a session to a teammate, read one you received |
+| `wisdom export <id> --out session.md` | A session as Markdown, for a PR or an issue |
+| `wisdom doctor` | Check the setup and print the fix for each problem |
+| `wisdom disconnect` | Stop recording a connected project; recordings are kept |
 
-This is what `wisdom glance latest` shows:
+Full reference in [usage](docs/usage.md).
 
-```text
-session 0f3c8a1e-… · claude-code · closed · version 55
-4 turns · 8 tool calls · 1 failed · 4 changes · 82,138 tokens · $0.0063
+## Finding the intent behind a change
 
-t3  in        Make the tests pass.
-    out       All tests pass now.
-    2 tool calls · changed test/login.test.ts
-```
-
-## How it works
-
-A small hook in the agent's settings passes each event (prompt, reply, command, file change) to a background service on your computer. The service saves it in the project's `.wisdom/` folder, along with the real file diffs it observes itself. With Option 1 the hook sits in your project's agent settings, kept out of git. With Option 2 it sits in the agent's own home inside `.wisdom/`.
-
-Git ignores `.wisdom/`, but keep it private: it holds your sessions in full.
-
-## Your agent can debug its own past
-
-This is where Wisdom pays off day to day. Every agent you connect gets a small skill that teaches it to read the recordings on its own. You don't paste logs or explain history. You ask:
-
-> *"Why does `jev_router/tool.py` look like this? Which session changed it, and was that on purpose?"*
-
-The agent reads in two moves, the way you'd skim a session yourself:
-
-1. **Glance** at the session: every request in full, plus the facts of each turn, such as tool calls, failures and the files changed. It spots the turn that touched the file.
-2. **Open** that turn: what you asked, what the agent replied, every command with its real output, and then every change as a diff, each tied to the step that made it.
-
-Here's a real turn it would read:
+Wisdom puts a skill in each connected agent that teaches it two moves: `glance` to see a session's turns, and `open` to read one turn in full. The session can come from any agent: Codex can read what Claude Code did, and the other way round. Ask something like *"which session changed `tool.py`, and was that on purpose?"* and the agent finds the turn and reads it:
 
 ```text
 t3  in        Add a one-line docstring to main() in jev_router/tool.py.
@@ -126,15 +112,19 @@ p1  src/optim_jev/tools/jev_router/tool.py · modify · +2 −1 · observed duri
     +    mode =sys.argv[1] if len(sys.argv) > 1 else ""
 ```
 
-The request says *docstring*. The reply says *docstring*. The diff shows it also changed the line below. The agent now knows the change, the intent behind it, and where the two don't match. It found this without reading the whole codebase, and without trusting anyone's summary.
+The request and the reply both say docstring; the diff shows the line below changed too. The agent sees the change, the request behind it, and where they differ. More in [agents](docs/agents.md).
 
-The same goes for *"which test failed before you said it passed?"*, *"what did the last session try that didn't work?"* and *"pick up where Claude left off"*. The agent finds its way to the exact turn and reads the evidence, instead of guessing from the current code.
+## Privacy
+
+Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything.
+
+## Status
+
+Early. Tested on Windows; macOS and Linux are in progress. See [limitations](docs/limitations.md) and the [roadmap](docs/roadmap.md).
 
 ## Documentation
 
-[Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Limitations](docs/limitations.md) · [Roadmap](docs/roadmap.md) · [All docs](docs/index.md)
-
-Wisdom is early and has been tested on Windows so far. macOS and Linux are next. See [limitations](docs/limitations.md).
+[Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)
 
 ## Contributing
 
@@ -143,7 +133,7 @@ git clone https://github.com/Oqura-ai/wisdom.git && cd wisdom
 npm ci && npm test
 ```
 
-Start with [development](docs/development.md) and the [data policy](docs/policy.md). Coding agents working on this repo should read [AGENTS.md](AGENTS.md).
+See [development](docs/development.md) and the [data policy](docs/policy.md). Coding agents working on this repository should start with [AGENTS.md](AGENTS.md).
 
 ## License
 
