@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@oqura/wisdom"><img src="https://img.shields.io/npm/v/@oqura/wisdom.svg" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@oqura/wisdom"><img src="https://img.shields.io/badge/npm-%40oqura%2Fwisdom-CB3837?logo=npm" alt="npm: @oqura/wisdom"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D24-green.svg" alt="Node 24+">
 </p>
