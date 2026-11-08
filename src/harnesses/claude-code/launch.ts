@@ -53,5 +53,6 @@ export function launchClaudeCode(options: { command?: string; args: string[]; da
   catch { throw new Error(`Cannot run Claude Code (${name}). Install it or pass --claude-bin.`); }
   const mcp = { mcpServers: { wisdom: { command: process.execPath, args: [options.cliPath, 'mcp', '--data', options.dataDir] } } };
   return { command: program.command, env: options.place === 'project' ? {} : { CLAUDE_CONFIG_DIR: installClaudeCode(options.dataDir) },
-    args: [...program.args, '--mcp-config', JSON.stringify(mcp), ...options.args] };
+    // `--mcp-config` takes several values: written apart, it would also take a prompt that follows.
+    args: [...program.args, `--mcp-config=${JSON.stringify(mcp)}`, ...options.args] };
 }

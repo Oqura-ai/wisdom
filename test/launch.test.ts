@@ -58,6 +58,10 @@ test('track only points a harness at its home; Pi sessions cannot leave it', () 
     const claude = launchClaudeCode({ command: process.execPath, args: [], dataDir: data, cliPath: 'cli.js' });
     assert.equal(claude.env?.CLAUDE_CONFIG_DIR, path.join(data, 'harnesses', 'claude-code', 'home'));
     assert(!claude.args.includes('--plugin-dir'));
+    // A prompt after the MCP config stays the prompt (a new handoff session starts with one).
+    const prompted = launchClaudeCode({ command: process.execPath, args: ['Continue the work'], dataDir: data, cliPath: 'cli.js' });
+    assert.match(prompted.args.at(-2)!, /^--mcp-config=\{/);
+    assert.equal(prompted.args.at(-1), 'Continue the work');
   } finally { fs.rmSync(data, { recursive: true, force: true }); }
 });
 
