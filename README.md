@@ -136,10 +136,6 @@ More in [dashboard](docs/dashboard.md).
 
 Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything.
 
-## Status
-
-Early. Tested on Windows; macOS and Linux are in progress. See [limitations](docs/limitations.md) and the [roadmap](docs/roadmap.md).
-
 ## Documentation
 
 [Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)
