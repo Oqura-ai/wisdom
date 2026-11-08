@@ -1,10 +1,12 @@
-# Wisdom
-
-### The intent behind every change your coding agent makes, readable by you and by any agent
+<p align="center">
+  <img src="docs/assets/wisdom-banner.svg" alt="Wisdom — The intent behind every change your coding agent makes, readable by you and by any agent" width="1200">
+</p>
 
 [![npm](https://img.shields.io/npm/v/@oqura/wisdom.svg)](https://www.npmjs.com/package/@oqura/wisdom)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![Node 24+](https://img.shields.io/badge/node-%3E%3D24-green.svg)
+
+# Wisdom
 
 Wisdom records Claude Code, Codex and Pi sessions on your machine and links every file change to the request, the reasoning and the commands that produced it. You browse sessions in a local dashboard, and any of your agents can query them through a skill, so the next agent starts from what was actually asked, tried and changed.
 
@@ -68,9 +70,9 @@ The first time in a project, Codex asks you to trust it and to approve Wisdom's 
 
 | Agent | Tested with | Records through | Notes |
 | --- | --- | --- | --- |
-| [Claude Code](https://code.claude.com) | 2.1.319 | Hooks | Start it in the project's folder |
-| [Codex CLI](https://developers.openai.com/codex) | 0.166.0 | Hooks | Trust the project and approve the hooks once |
-| [Pi](https://pi.dev) | 1.2.0 | Extension | Start it in the project's folder and trust the project once |
+| <img src="dashboard/assets/icons/claude-code.svg" alt="" width="24" height="24" align="absmiddle"> &nbsp; [Claude Code](https://code.claude.com) | 2.1.319 | Hooks | Start it in the project's folder |
+| <img src="dashboard/assets/icons/codex.png" alt="" width="24" height="24" align="absmiddle"> &nbsp; [Codex CLI](https://developers.openai.com/codex) | 0.166.0 | Hooks | Trust the project and approve the hooks once |
+| <img src="dashboard/assets/icons/pi.svg" alt="" width="24" height="24" align="absmiddle"> &nbsp; [Pi](https://pi.dev) | 1.2.0 | Extension | Start it in the project's folder and trust the project once |
 
 ## Two ways to record
 

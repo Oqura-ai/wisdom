@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title description">
+  <title id="title">Wisdom</title>
+  <desc id="description">The intent behind every change your coding agent makes, readable by you and by any agent.</desc>
+  <defs>
+    <linearGradient id="paper" x2="1" y2="1">
+      <stop stop-color="#fbfdff"/>
+      <stop offset="1" stop-color="#eef3f8"/>
+    </linearGradient>
+    <clipPath id="face-outline">
+      <circle cx="17" cy="17" r="16.5"/>
+    </clipPath>
+    <!-- The landing-page wordmark uses Georgia and this blue bot in place of its o. -->
+    <g id="face">
+      <circle cx="17" cy="17" r="16.5" fill="#c6d9e8"/>
+      <g clip-path="url(#face-outline)">
+        <ellipse cx="22.1" cy="28.9" rx="23.8" ry="13.6" transform="rotate(-25 22.1 28.9)" fill="#6a8da3" opacity=".17"/>
+        <ellipse cx="3.4" cy="10.2" rx="8.5" ry="20.4" transform="rotate(25 3.4 10.2)" fill="#fff" opacity=".27"/>
+      </g>
+      <circle cx="17" cy="17" r="16.5" fill="none" stroke="#9fb3c7"/>
+      <g fill="#344d67">
+        <rect x="10.5" y="13.4" width="3.3" height="7.2" rx="2"/>
+        <rect x="20.2" y="13.4" width="3.3" height="7.2" rx="2"/>
+      </g>
+    </g>
+  </defs>
+
+  <rect x=".5" y=".5" width="1199" height="399" rx="24" fill="url(#paper)" stroke="#d8e1ec"/>
+
+  <g fill="#344d67" font-family="Georgia, 'Times New Roman', serif" font-size="64" letter-spacing="-2.7">
+    <text x="489" y="94">wisd</text>
+    <use href="#face" transform="translate(613 59) scale(1.059)"/>
+    <text x="651" y="94">m</text>
+  </g>
+
+  <g text-anchor="middle" font-family="Arial, Helvetica, sans-serif">
+    <text x="600" y="174" fill="#344d67" font-size="44" letter-spacing="-1.5">The intent behind every change</text>
+    <text x="600" y="226" fill="#344d67" font-size="44" letter-spacing="-1.5">your coding agent makes.</text>
+    <text x="600" y="271" fill="#6f87a1" font-size="24" letter-spacing="-.4">Readable by you and by any agent.</text>
+  </g>
+
+  <!-- A quiet echo of the landing page's agents and shared ledger. -->
+  <g fill="none" stroke="#bdcddd" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M450 330h96m108 0h96"/>
+    <path d="m539 326 7 4-7 4m122-8-7 4 7 4"/>
+    <rect x="569" y="316" width="62" height="37" rx="7" fill="#dbe5ef"/>
+    <rect x="565" y="311" width="70" height="37" rx="7" fill="#e8eff6"/>
+    <rect x="561" y="306" width="78" height="37" rx="7" fill="#fcfdff"/>
+    <path d="M576 318h22m-22 11h48"/>
+  </g>
+  <use href="#face" x="414" y="313"/>
+  <use href="#face" x="752" y="313"/>
+</svg>
