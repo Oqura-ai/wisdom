@@ -116,6 +116,20 @@ p1  src/optim_jev/tools/jev_router/tool.py · modify · +2 −1 · observed duri
 
 The request and the reply both say docstring; the diff shows the line below changed too. The agent sees the change, the request behind it, and where they differ. More in [agents](docs/agents.md).
 
+## Dashboard
+
+`wisdom dashboard` opens a local viewer for every session in the project, live while the agent runs.
+
+| Overview | Chat view |
+| --- | --- |
+| ![Overview: every session across Claude Code, Codex and Pi, with tokens and the most-changed files](https://raw.githubusercontent.com/Oqura-ai/wisdom/main/docs/assets/screenshots/overview.webp) | ![Chat view: one request with its steps, a failed test run and the fix](https://raw.githubusercontent.com/Oqura-ai/wisdom/main/docs/assets/screenshots/chat.webp) |
+
+| Dev view | An agent reading a session |
+| --- | --- |
+| ![Dev view: the tree of request, tool calls and file changes, with a diff in the inspector](https://raw.githubusercontent.com/Oqura-ai/wisdom/main/docs/assets/screenshots/dev.webp) | ![Claude Code answering from the record with wisdom glance and wisdom open](https://raw.githubusercontent.com/Oqura-ai/wisdom/main/docs/assets/screenshots/agent.webp) |
+
+More in [dashboard](docs/dashboard.md).
+
 ## Privacy
 
 Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything.
