@@ -1,14 +1,16 @@
+# Wisdom
+
 <p align="center">
   <img src="docs/assets/wisdom-banner.svg" alt="Wisdom — The intent behind every change your coding agent makes, readable by you and by any agent" width="1200">
 </p>
 
-# Wisdom
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oqura/wisdom"><img src="https://img.shields.io/npm/v/@oqura/wisdom.svg" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D24-green.svg" alt="Node 24+">
+</p>
 
 Wisdom records Claude Code, Codex and Pi sessions on your machine and links every file change to the request, the reasoning and the commands that produced it. You browse sessions in a local dashboard, and any of your agents can query them through a skill, so the next agent starts from what was actually asked, tried and changed.
-
-[![npm](https://img.shields.io/npm/v/@oqura/wisdom.svg)](https://www.npmjs.com/package/@oqura/wisdom)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Node 24+](https://img.shields.io/badge/node-%3E%3D24-green.svg)
 
 ## Why Wisdom
 
