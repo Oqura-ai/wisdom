@@ -14,19 +14,13 @@ Wisdom records Claude Code, Codex and Pi sessions on your machine and links ever
 
 ## Why Wisdom
 
-Git tells you what changed. It doesn't tell you why. When an agent writes the code, the why lives in its session: what you asked for, what it tried, which command failed, what it decided. Each agent does keep that session locally, but in a form that's hard to use:
+Agent sessions can add useful context to a diff: what you asked for, what the agent tried and how it checked the result. Revisiting that context can take a little digging, especially across different tools.
 
-- **It isn't linked to the code.** A transcript doesn't tie a file change to the request and the step behind it, and a change made through a shell command doesn't appear as an edit at all.
-- **Each agent has its own format.** Claude Code, Codex and Pi each store sessions in their own internal JSONL, in their own folder. Another agent can't read them, and pasting one in fills its context.
-- **It doesn't last.** Agents clean up old sessions, and the context is gone as soon as you clear, compact or switch tools.
+Wisdom keeps a local record you and your agents can read:
 
-So the next agent, a teammate reviewing the PR, or you a week later see the code without the intent. Wisdom keeps that intent next to the code:
-
-- **Every change, with its reason.** Wisdom observes file changes itself and stores each as a diff, linked to the turn and the tool call that made it, including changes made by shell commands.
-- **One format for every agent.** Claude Code, Codex and Pi sessions are read the same way, turn by turn, in plain text sized for an agent's context.
-- **Agents that query it themselves.** A skill teaches each agent to find the turn behind a change and read the request, the agent's replies and reasoning (where the agent records it; Codex usually encrypts it), the commands and their real output.
-- **Work that moves between agents and people.** `wisdom handoff codex` starts Codex from the Claude session; `wisdom share` sends a session to a teammate with secrets redacted.
-- **Local, and honest about gaps.** Nothing is uploaded or summarized. Whatever Wisdom couldn't record is marked as missing, never filled in.
+- File diffs alongside the requests and tool calls recorded around them.
+- A common way to browse Claude Code, Codex and Pi sessions, one turn at a time.
+- Session history to help with reviews, follow-up work and handoffs between agents.
 
 ## How it works
 
