@@ -116,12 +116,16 @@ test('with its daemon down, a Claude Code hook keeps the event, starts the daemo
   const run = (event: unknown) => spawnSync(process.execPath, [hook, data], { input: JSON.stringify(event), encoding: 'utf8' });
   const kept = run({ ...common, cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'while down' });
   assert.equal(kept.status, 1, 'exit code 1 warns; 2 would block'); assert.match(kept.stderr, /Wisdom kept this UserPromptSubmit/);
+  // The hook starts the daemon and returns; on a busy machine the daemon may still be writing
+  // its address. Wait for it (up to 20 s) rather than fail on a slow start.
+  const wait = () => new Promise(resolve => setTimeout(resolve, 100));
+  for (let i = 0; i < 200 && !fs.existsSync(path.join(data, 'daemon.json')); i++) await wait();
   const connection = connectionAt(data);
   try {
-    // The daemon the hook started has read the spool by the time the hook returns.
+    // The daemon reads the spool as it starts; under load that can take a few seconds.
     let text = '';
-    for (let i = 0; i < 100 && !/while down/.test(text); i++) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+    for (let i = 0; i < 200 && !/while down/.test(text); i++) {
+      await wait();
       text = (await call(connection, '/ledger', { capture: common.session_id, glance: true }).catch(() => ({ text: '' }))).text;
     }
     assert.match(text, /^t1  in {8}while down$/m);

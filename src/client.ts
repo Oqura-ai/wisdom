@@ -88,8 +88,13 @@ export async function ensureDaemon(dataDir: string, port?: number, dashboard = t
   };
   const existing = await connect();
   if (existing) {
-    if (existing.health.captureApi !== CAPTURE_API) throw new Error(`The running Wisdom daemon (PID ${existing.connection.pid}) is from an older build. `
+    const running = Number(existing.health.captureApi);
+    // Either side can be the older one: a daemon left running after an upgrade, or an older
+    // `wisdom` command (a global install) next to a daemon started from a newer build.
+    if (running < CAPTURE_API) throw new Error(`The running Wisdom daemon (PID ${existing.connection.pid}) is from an older build. `
       + 'Stop it with `wisdom daemon stop` (any active recording becomes interrupted), then retry.');
+    if (running !== CAPTURE_API) throw new Error(`This wisdom command (${fileURLToPath(new URL('./cli.js', import.meta.url))}) is older than the running daemon `
+      + `(PID ${existing.connection.pid}). Use the copy that started the daemon, or update this one: npm install -g @oqura/wisdom@latest`);
     return existing.connection;
   }
   fs.mkdirSync(dataDir, { recursive: true });
