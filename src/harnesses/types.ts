@@ -95,6 +95,9 @@ export interface HarnessAdapter {
   /** Besides its transcript, the files and folders in the harness's home that hold only this
    * session, deleted with it. A file every session shares (a prompt history) is not listed. */
   sessionTraces(home: string, sessionId: string): string[];
+  /** Files in the harness's home that every session shares, one JSON line each (a prompt history),
+   * and the session a line belongs to. Deleting a session takes out only its own lines. */
+  sharedHistory(home: string): { file: string; session: (entry: any) => string | undefined }[];
   /** For `wisdom clone`: one transcript line of session `from`, rewritten to name the new
    * session and, through `move`, the folder it now runs in. Lines that name neither stay as they are. */
   cloneLine(entry: any, clone: { from: string; sessionId: string; move: (folder: string) => string }): any;

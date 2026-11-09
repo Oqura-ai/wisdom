@@ -10,7 +10,9 @@ export async function view<T = any>(request: unknown): Promise<T> {
 /** What deleting one session would do. `harnessCopy`: a connected session's own files in the
  * person's harness home, deleted only when asked. `outside`: files that stay whatever is chosen. */
 export interface RemovalPlan { session: string; harness: string; status: string; recording: boolean; files: string[]; harnessCopy: string[];
-  outside: string[]; bytes: number; harnessCopyBytes: number; linked: { session: string; harness: string; kind: SessionLink['kind'] }[] }
+  outside: string[]; bytes: number; harnessCopyBytes: number; linked: { session: string; harness: string; kind: SessionLink['kind'] }[];
+  /** Its lines in a harness's shared prompt history; `harnessCopy` ones go only with the harness's own copy. */
+  history: { file: string; lines: number; harnessCopy: boolean }[] }
 /** One session's outcome: `error` when it was refused, otherwise what was removed and kept. */
 export interface DeleteResult { session: string; removed?: string[]; kept?: string[]; error?: string }
 

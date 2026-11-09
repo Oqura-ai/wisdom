@@ -35,7 +35,10 @@ const SCAN_MS = 10_000;
 export interface LinkedSession { session: string; harness: string; kind: 'continues' | 'continued-after' | 'cloned' | 'continued-by' | 'cloned-by' }
 
 export interface RemovalPlan { session: string; harness: string; status: string; recording: boolean;
-  files: string[]; harnessCopy: string[]; outside: string[]; bytes: number; harnessCopyBytes: number; linked: LinkedSession[] }
+  files: string[]; harnessCopy: string[]; outside: string[]; bytes: number; harnessCopyBytes: number; linked: LinkedSession[];
+  /** Its lines in files every session shares (a prompt history). Those in the person's own harness
+   * home (`harnessCopy`) go only with the harness's copy. */
+  history: { file: string; lines: number; harnessCopy: boolean }[] }
 
 /** Owns session lifecycle. Every harness session inside Wisdom's homes gets one record:
  * from its hooks while they report, and from its own file when they did not.
@@ -598,10 +601,19 @@ export class Captures {
       } catch { /* not a note */ }
     }
     const removed: string[] = [], kept: string[] = [];
+    const reason = (error: unknown) => error instanceof Error ? error.message : String(error);
     for (const target of targets) {
       if (!allowed.has(target)) { kept.push(target); continue; }
       try { fs.rmSync(target, { recursive: true, force: true }); removed.push(target); }
-      catch (error) { kept.push(`${target} (${error instanceof Error ? error.message : String(error)})`); }
+      catch (error) { kept.push(`${target} (${reason(error)})`); }
+    }
+    const reader = adapter(plan.harness);
+    for (const { file, lines, harnessCopy } of plan.history) {
+      const label = `${file} (${lines} line${lines === 1 ? '' : 's'} of this session)`;
+      if (harnessCopy && !options.harnessCopy) { kept.push(label); continue; }
+      const sessionOf = reader.sharedHistory(path.dirname(file)).find(shared => shared.file === file)!.session;
+      try { const taken = dropLines(file, line => sessionOf(line) === id); removed.push(`${file} (${taken} line${taken === 1 ? '' : 's'} of this session)`); }
+      catch (error) { kept.push(`${label}: ${reason(error)}`); }
     }
     return { session: id, removed, kept };
   }
@@ -650,9 +662,13 @@ export class Captures {
     for (const record of this.database.records("type='session_link' AND capture_id=?", [id])) {
       if (record.link?.from) note(record.link.from, record.link.kind);
     }
+    const homes = [{ home: harnessHome(this.dataDir, harness), harnessCopy: false }, ...connectedHome ? [{ home: connectedHome, harnessCopy: true }] : []];
+    const history = homes.flatMap(({ home, harnessCopy }) => reader.sharedHistory(home)
+      .map(({ file, session }) => ({ file, lines: countLines(file, line => session(line) === id), harnessCopy })))
+      .filter(entry => entry.lines > 0);
     return { session: id, harness, status, recording: this.running.has(id), files, harnessCopy, outside,
       bytes: files.reduce((sum, file) => sum + size(file), 0), harnessCopyBytes: harnessCopy.reduce((sum, file) => sum + size(file), 0),
-      linked: [...linked.values()] };
+      linked: [...linked.values()], history };
   }
 
   close(id: string, reason = 'quit', interrupted = false): void {
@@ -771,6 +787,38 @@ function deletedFile(dataDir: string): string {
 function readDeleted(dataDir: string): string[] {
   try { const list = JSON.parse(fs.readFileSync(deletedFile(dataDir), 'utf8')); return Array.isArray(list) ? list.map(String) : []; }
   catch { return []; }
+}
+
+/** JSON lines of a shared file that `mine` claims; a line that is not JSON is never claimed. */
+function countLines(file: string, mine: (entry: any) => boolean): number {
+  let text: string;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return 0; }
+  return text.split('\n').filter(line => claims(line, mine)).length;
+}
+
+function claims(line: string, mine: (entry: any) => boolean): boolean {
+  try { return mine(JSON.parse(line)); } catch { return false; }
+}
+
+/** Take a session's lines out of a file its harness shares between sessions, keeping every other
+ * byte. The harness may add a line meanwhile, so the file is rewritten only if it did not change
+ * while it was read; otherwise it is read again (three tries, then it is left as it was).
+ */
+function dropLines(file: string, mine: (entry: any) => boolean): number {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = fs.statSync(file);
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    const kept = lines.filter(line => !claims(line, mine));
+    const taken = lines.length - kept.length;
+    if (!taken) return 0;
+    const temporary = `${file}.wisdom-${process.pid}.tmp`;
+    fs.writeFileSync(temporary, kept.join('\n'));
+    const now = fs.statSync(file);
+    if (now.size !== before.size || now.mtimeMs !== before.mtimeMs) { fs.rmSync(temporary, { force: true }); continue; }
+    fs.renameSync(temporary, file);
+    return taken;
+  }
+  throw new Error('the harness kept writing to it; try again when it is idle');
 }
 
 /** Bytes in a file, or in every file below a folder. */

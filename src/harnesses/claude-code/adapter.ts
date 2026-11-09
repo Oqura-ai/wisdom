@@ -77,6 +77,8 @@ export const claudeCode: HarnessAdapter = {
   // Its subagents' folder beside the transcript, its edit checkpoints and its environment.
   sessionTraces: (home, sessionId) => [...subfolders(path.join(home, 'projects')).map(folder => path.join(folder, sessionId)),
     path.join(home, 'file-history', sessionId), path.join(home, 'session-env', sessionId)],
+  // Every prompt typed, from every session: what the up arrow recalls.
+  sharedHistory: home => [{ file: path.join(home, 'history.jsonl'), session: entry => typeof entry?.sessionId === 'string' ? entry.sessionId : undefined }],
   nativeEntry: entry => ({ id: entry?.uuid, parentId: entry?.parentUuid, timestamp: entry?.timestamp,
     kind: String(entry?.type ?? 'unknown'), messages: messages(entry), usage: usage(entry) }),
 };

@@ -173,7 +173,9 @@ Open a session in the dashboard and press **Delete**. Nothing is deleted until y
 - **A connected session's own copy:** for a session recorded with `wisdom connect`, the harness keeps its transcript in your own harness folder (such as `~/.claude`). A checkbox, off by default, deletes it too; then the harness can no longer resume the session. Left off, the harness can still resume it, but Wisdom does not record it again.
 - **Refused:** a session still recording, until it ends.
 
-Deleting cannot be undone. Wisdom keeps only a hash of the session's ID (`.wisdom/deleted.json`), so it never records that session again. Other sessions' prompts and tool output are not edited, so they may still mention its ID, and the harness's shared history files are not changed.
+Deleting cannot be undone. Wisdom keeps only a hash of the session's ID (`.wisdom/deleted.json`), so it never records that session again. Other sessions' prompts and tool output are not edited, so they may still mention its ID.
+
+**Shared prompt history.** A harness also keeps files every session shares: Claude Code's `history.jsonl` (what its up arrow recalls), and Codex's `history.jsonl` and `session_index.jsonl`. Deleting a session takes only its own lines out of them and leaves every other byte as it was; in a connected session's own harness folder, only when the harness's copy is ticked. If the harness keeps writing to the file while Wisdom reads it, Wisdom tries three times, then leaves the file as it was and says so. Codex's own databases (`state_*.sqlite`, `thread_history_*.sqlite`) are never edited, since their layout can change with any Codex version, so a Codex session's text can remain there.
 
 ## Reading a session
 

@@ -32,7 +32,10 @@ export function DeleteDialog({ sessions, titles, onClose, onDeleted }: { session
 
   const ready = (plans ?? []).filter((p): p is RemovalPlan => !('error' in p) && !p.recording);
   const refused = (plans ?? []).filter(p => 'error' in p || p.recording);
-  const copies = ready.filter(p => p.harnessCopy.length > 0);
+  const copies = ready.filter(p => p.harnessCopy.length > 0 || p.history.some(h => h.harnessCopy));
+  // Lines in a harness's own prompt history (what its up arrow recalls) that go with the session.
+  const historyLines = (copy: boolean) => ready.flatMap(p => p.history.filter(h => h.harnessCopy === copy));
+  const lineCount = (entries: { lines: number }[]) => plural(entries.reduce((sum, h) => sum + h.lines, 0), 'line');
   const linked = ready.flatMap(p => p.linked.map(link => ({ ...link, of: p.session })));
   const total = ready.reduce((sum, p) => sum + p.bytes + (harnessCopy ? p.harnessCopyBytes : 0), 0);
   const name = (id: string) => titles.get(id) ?? id.slice(0, 8);
@@ -82,6 +85,10 @@ export function DeleteDialog({ sessions, titles, onClose, onDeleted }: { session
           <p className="small">{ready.length > 1 ? 'Their records, evidence and transcripts' : 'Its record, evidence and transcript'} in this project
             are deleted for good. Sessions that link to {ready.length > 1 ? 'them' : 'it'} will say “a deleted session”. Their own prompts and
             tool output are not changed, so they may still mention {ready.length > 1 ? 'an ID' : 'its ID'}.</p>
+          {historyLines(false).length > 0 && (
+            <div className="small">{ready.length > 1 ? 'Their' : 'Its'} prompts also leave the harness’s prompt history ({lineCount(historyLines(false))}); every other line stays:
+              <ul className="paths">{historyLines(false).map(h => <li key={h.file}><code>{h.file}</code></li>)}</ul></div>
+          )}
 
           {linked.length > 0 && (
             <div className="delete-warn">
@@ -97,7 +104,8 @@ export function DeleteDialog({ sessions, titles, onClose, onDeleted }: { session
               <input type="checkbox" checked={harnessCopy} onChange={e => setHarnessCopy(e.target.checked)} />
               <span>Also delete {copies.length === 1 ? `${harnessLabel[copies[0]!.harness] ?? copies[0]!.harness}’s own copy` : 'the harnesses’ own copies'} ({bytes(copies.reduce((s, p) => s + p.harnessCopyBytes, 0))}).
                 Without it, the harness can still resume the session, but Wisdom will not record it again.
-                <ul className="paths">{copies.flatMap(p => p.harnessCopy).map(path => <li key={path}><code>{path}</code></li>)}</ul></span>
+                <ul className="paths">{copies.flatMap(p => p.harnessCopy).map(path => <li key={path}><code>{path}</code></li>)}
+                  {historyLines(true).map(h => <li key={h.file}><code>{h.file}</code> · {plural(h.lines, 'line')} of this session; every other line stays</li>)}</ul></span>
             </label>
           )}
 

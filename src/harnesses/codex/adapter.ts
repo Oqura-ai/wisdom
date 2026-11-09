@@ -109,6 +109,12 @@ export const codex: HarnessAdapter = {
   sessionFiles: home => jsonlFiles(path.join(home, 'sessions'), 3),
   // Everything else Codex keeps about a session is in files and databases all sessions share.
   sessionTraces: () => [],
+  // Its prompt history, and its list of sessions with their names. Its own databases are not edited:
+  // their layout is Codex's and can change with any version.
+  sharedHistory: home => [
+    { file: path.join(home, 'history.jsonl'), session: entry => typeof entry?.session_id === 'string' ? entry.session_id : undefined },
+    { file: path.join(home, 'session_index.jsonl'), session: entry => typeof entry?.id === 'string' ? entry.id : undefined },
+  ],
   // The session's own header names it and its folders; a turn's context names its folder.
   cloneLine: (entry, { from, sessionId, move }) => {
     const payload = entry?.payload;

@@ -234,3 +234,45 @@ test('a preview deletes nothing and names the linked sessions still recording', 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('deleting a session takes only its own lines out of the history every session shares', () => {
+  const { root, data } = project();
+  const ownHome = harnessHome(data, 'claude-code');
+  const personal = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-own-claude-'));
+  fs.writeFileSync(path.join(data, 'connected.json'), JSON.stringify({ 'claude-code': { since: new Date(0).toISOString(), home: personal } }));
+  const line = (sessionId: string, prompt: string) => JSON.stringify({ display: prompt, timestamp: 1, project: root, sessionId });
+  // Another session's lines, a line that is not JSON, and Windows line ends must all survive byte for byte.
+  const history = (home: string) => {
+    fs.mkdirSync(home, { recursive: true });
+    const file = path.join(home, 'history.jsonl');
+    fs.writeFileSync(file, [line('keep', 'first'), line('drop', 'secret prompt'), 'not json', line('keep', 'second') + '\r', line('drop', 'another'), ''].join('\n'));
+    return file;
+  };
+  const own = history(ownHome), theirs = history(personal);
+  const expected = [line('keep', 'first'), 'not json', line('keep', 'second') + '\r', ''].join('\n');
+  const before = fs.readFileSync(theirs, 'utf8');
+  const captures = new Captures(data);
+  try {
+    for (const id of ['drop', 'drop-too']) {
+      captures.route(hookSchema.parse(event(root, 'claude-code', id, 'input', {}, 'hi')));
+      captures.close(id);
+    }
+    const plan = captures.removal('drop');
+    assert.deepEqual(plan.history, [{ file: own, lines: 2, harnessCopy: false }, { file: theirs, lines: 2, harnessCopy: true }]);
+
+    const result = captures.remove('drop');
+    assert.equal(fs.readFileSync(own, 'utf8'), expected);
+    assert.ok(result.removed.includes(`${own} (2 lines of this session)`));
+    // The person's own history changes only when the harness's copy is asked for.
+    assert.equal(fs.readFileSync(theirs, 'utf8'), before);
+    assert.ok(result.kept.includes(`${theirs} (2 lines of this session)`));
+
+    fs.writeFileSync(theirs, before.replaceAll('"drop"', '"drop-too"'));
+    captures.remove('drop-too', { harnessCopy: true });
+    assert.equal(fs.readFileSync(theirs, 'utf8'), expected);
+  } finally {
+    captures.shutdown(); captures.database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(personal, { recursive: true, force: true });
+  }
+});
