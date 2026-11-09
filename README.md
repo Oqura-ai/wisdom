@@ -30,12 +30,9 @@ So the next agent, a teammate reviewing the PR, or you a week later see the code
 
 ## How it works
 
-```
-Claude Code  ┐
-Codex CLI    ├── hooks ──►  local daemon  ──►  .wisdom/            ──►  dashboard
-Pi           ┘              (127.0.0.1)        SQLite, diffs,           CLI (glance, open)
-                                               transcript copies        agent skill
-```
+<p align="center">
+  <img src="docs/assets/how-it-works.png" alt="Claude Code, Codex CLI and Pi send events through hooks or an extension to a local daemon on 127.0.0.1, which saves them in .wisdom/ (SQLite, diffs, transcript copies). The dashboard, the CLI (glance, open) and the agent skill read it. Nothing is uploaded or summarized." width="900">
+</p>
 
 The agent's own hooks send each event to a small daemon on your machine. The daemon saves it in the project's `.wisdom/` folder, along with a byte-for-byte copy of the agent's transcript and the diffs of the files it watches. If the daemon is down, events are kept and recorded when it comes back; the agent is never blocked.
 
@@ -136,6 +133,13 @@ More in [dashboard](docs/dashboard.md).
 
 Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything.
 
+<<<<<<< HEAD
+=======
+## Status
+
+Early. Tested on Windows, macOS and Linux. See [limitations](docs/limitations.md) and the [roadmap](docs/roadmap.md).
+
+>>>>>>> b8d7c0b (docs: how-it-works diagram in the README)
 ## Documentation
 
 [Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)

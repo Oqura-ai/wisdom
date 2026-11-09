@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Wisdom works</title>
+<!-- Source of docs/assets/how-it-works.png. Theme from the landing page and product demo. -->
+<style>
+  :root { --paper:#f6f8fb; --ink:#344d67; --soft:#6f87a1; --muted:#7a8da3; --line:#d8e1ec;
+          --surface:#fcfdff; --blue:#c6d9e8; --sage:#cfdfd1; --peach:#e8d2c5; --lilac:#d9d1e8; --sand:#e7dfc2; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--paper); }
+  svg { display:block; width:100%; max-width:1600px; height:auto; margin:0 auto; font-family:Arial,Helvetica,sans-serif; }
+  text { fill:var(--ink); }
+  .eyebrow { font-size:14px; letter-spacing:2.8px; fill:var(--muted); }
+  .name { font-size:22px; }
+  .serif { font-family:Georgia,'Times New Roman',serif; }
+  .head { font-size:25px; letter-spacing:-.5px; }
+  .mono { font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:14px; fill:var(--soft); }
+  .small { font-size:15px; fill:var(--soft); }
+  .note { font-family:Georgia,'Times New Roman',serif; font-style:italic; font-size:18px; fill:var(--soft); }
+  .card { fill:var(--surface); stroke:#d1deea; stroke-width:1.5; filter:url(#depth); }
+  .wire { fill:none; stroke:#aec2d5; stroke-width:2; stroke-linecap:round; }
+  .local { fill:#eef3f8; fill-opacity:.55; stroke:#c4d3e3; stroke-width:1.5; stroke-dasharray:5 6; }
+  .tile { fill:#e1e9f3; stroke:#bacddd; }
+  .cell { stroke:none; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 1600 560" role="img" aria-labelledby="t d">
+  <title id="t">How Wisdom works</title>
+  <desc id="d">Claude Code, Codex CLI and Pi send events through hooks or an extension to a local daemon on 127.0.0.1, which never blocks the agent and saves them in the project's .wisdom folder: SQLite, diffs and transcript copies. The dashboard, the CLI (glance, open) and the agent skill read it. Nothing is uploaded or summarized.</desc>
+  <defs>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fcfdff"/><stop offset="1" stop-color="#eef3f8"/></linearGradient>
+    <filter id="depth" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#405d7e" flood-opacity=".10"/>
+    </filter>
+    <marker id="tip" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M3 2 L10 6 L3 10" fill="none" stroke="#8fa8bf" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <!-- The Wisdom bot face (from the banner), radius 22; fill comes from the circle drawn under it. -->
+    <clipPath id="fc"><circle cx="0" cy="0" r="22"/></clipPath>
+    <g id="face-detail">
+      <g clip-path="url(#fc)">
+        <ellipse cx="6.8" cy="15.8" rx="31.7" ry="18.1" transform="rotate(-25 6.8 15.8)" fill="#6a8da3" opacity=".17"/>
+        <ellipse cx="-18" cy="-9" rx="11.3" ry="27.2" transform="rotate(25 -18 -9)" fill="#fff" opacity=".27"/>
+      </g>
+      <circle r="22" fill="none" stroke="#9fb3c7" stroke-width="1.3"/>
+      <rect x="-8.6" y="-4.8" width="4.4" height="9.6" rx="2.4" fill="#344d67"/>
+      <rect x="4.3" y="-4.8" width="4.4" height="9.6" rx="2.4" fill="#344d67"/>
+    </g>
+  </defs>
+
+  <rect x=".75" y=".75" width="1598.5" height="558.5" rx="24" fill="url(#paper)" stroke="#d4deea" stroke-width="1.5"/>
+
+  <!-- Column labels -->
+  <text x="80" y="76" class="eyebrow">YOUR AGENTS</text>
+  <text x="450" y="76" class="eyebrow">ON YOUR MACHINE</text>
+  <text x="1220" y="76" class="eyebrow">READ IT</text>
+
+  <!-- Everything inside stays local -->
+  <rect x="425" y="96" width="690" height="338" rx="20" class="local"/>
+
+  <!-- Wires: agents -> daemon -> .wisdom/ -> readers -->
+  <path class="wire" d="M362 151 C410 151 404 265 446 265" marker-end="url(#tip)"/>
+  <path class="wire" d="M362 266 L446 266" marker-end="url(#tip)"/>
+  <path class="wire" d="M362 381 C410 381 404 267 446 267" marker-end="url(#tip)"/>
+  <path class="wire" d="M712 265 L786 265" marker-end="url(#tip)"/>
+  <text x="749" y="253" class="mono" text-anchor="middle">saves</text>
+  <path class="wire" d="M1092 265 C1150 265 1150 151 1216 151" marker-end="url(#tip)"/>
+  <path class="wire" d="M1092 265 L1216 265" marker-end="url(#tip)"/>
+  <path class="wire" d="M1092 265 C1150 265 1150 381 1216 381" marker-end="url(#tip)"/>
+
+  <!-- Agents -->
+  <g>
+    <rect x="80" y="106" width="280" height="90" rx="16" class="card"/>
+    <g transform="translate(128 151)"><circle r="22" fill="#e8d2c5"/><use href="#face-detail"/></g>
+    <text x="168" y="146" class="name">Claude Code</text>
+    <text x="168" y="171" class="mono">hooks</text>
+  </g>
+  <g>
+    <rect x="80" y="221" width="280" height="90" rx="16" class="card"/>
+    <g transform="translate(128 266)"><circle r="22" fill="#cfdfd1"/><use href="#face-detail"/></g>
+    <text x="168" y="261" class="name">Codex CLI</text>
+    <text x="168" y="286" class="mono">hooks</text>
+  </g>
+  <g>
+    <rect x="80" y="336" width="280" height="90" rx="16" class="card"/>
+    <g transform="translate(128 381)"><circle r="22" fill="#d9d1e8"/><use href="#face-detail"/></g>
+    <text x="168" y="376" class="name">Pi</text>
+    <text x="168" y="401" class="mono">extension</text>
+  </g>
+
+  <!-- Local daemon -->
+  <g>
+    <rect x="450" y="190" width="260" height="150" rx="16" class="card"/>
+    <rect x="476" y="216" width="46" height="48" rx="14" fill="#3d5672"/>
+    <g fill="#7896b7"><rect x="488" y="238.5" width="4" height="4" rx="1"/><rect x="497" y="238.5" width="4" height="4" rx="1"/><rect x="506" y="238.5" width="4" height="4" rx="1"/></g>
+    <text x="538" y="238" class="serif head">Local daemon</text>
+    <text x="538" y="261" class="mono">127.0.0.1</text>
+    <line x1="476" y1="288" x2="684" y2="288" stroke="#e4ebf3" stroke-width="1.5"/>
+    <text x="476" y="316" class="small">never blocks the agent</text>
+  </g>
+
+  <!-- .wisdom/ -->
+  <g>
+    <rect x="790" y="150" width="300" height="230" rx="16" class="card"/>
+    <text x="816" y="192" class="serif head">.wisdom/</text>
+    <text x="816" y="215" class="small">in the project, captured as it happens</text>
+    <text x="816" y="261" class="mono" style="fill:var(--ink)">SQLite</text>
+    <text x="816" y="300" class="mono" style="fill:var(--ink)">diffs</text>
+    <text x="816" y="339" class="mono" style="fill:var(--ink)">transcript copies</text>
+    <g class="cell">
+      <rect x="980" y="244" width="18" height="22" rx="3" fill="#c6d9e8"/><rect x="1002" y="244" width="18" height="22" rx="3" fill="#c6d9e8"/><rect x="1024" y="244" width="18" height="22" rx="3" fill="#cfdfd1"/><rect x="1046" y="244" width="18" height="22" rx="3" fill="#edf2f7"/>
+      <rect x="980" y="283" width="18" height="22" rx="3" fill="#e8d2c5"/><rect x="1002" y="283" width="18" height="22" rx="3" fill="#cfdfd1"/><rect x="1024" y="283" width="18" height="22" rx="3" fill="#edf2f7"/><rect x="1046" y="283" width="18" height="22" rx="3" fill="#edf2f7"/>
+      <rect x="1068" y="244" width="0" height="0"/>
+      <rect x="980" y="322" width="18" height="22" rx="3" fill="#d9d1e8"/><rect x="1002" y="322" width="18" height="22" rx="3" fill="#e8d2c5"/><rect x="1024" y="322" width="18" height="22" rx="3" fill="#c6d9e8"/><rect x="1046" y="322" width="18" height="22" rx="3" fill="#e7dfc2"/>
+    </g>
+  </g>
+
+  <!-- Readers -->
+  <g>
+    <rect x="1220" y="106" width="300" height="90" rx="16" class="card"/>
+    <rect x="1246" y="131.5" width="39" height="39" rx="10" class="tile"/>
+    <g fill="#9fb3c7"><rect x="1255" y="141" width="9" height="9" rx="2"/><rect x="1267" y="141" width="9" height="9" rx="2"/><rect x="1255" y="153" width="21" height="8" rx="2"/></g>
+    <text x="1303" y="146" class="name">Dashboard</text>
+    <text x="1303" y="171" class="mono">live viewer</text>
+  </g>
+  <g>
+    <rect x="1220" y="221" width="300" height="90" rx="16" class="card"/>
+    <rect x="1246" y="246.5" width="39" height="39" rx="10" class="tile"/>
+    <text x="1265.5" y="271" class="mono" text-anchor="middle" style="fill:var(--ink);font-size:15px">&gt;_</text>
+    <text x="1303" y="261" class="name">CLI</text>
+    <text x="1303" y="286" class="mono">glance · open</text>
+  </g>
+  <g>
+    <rect x="1220" y="336" width="300" height="90" rx="16" class="card"/>
+    <g transform="translate(1265.5 381)"><g transform="scale(.89)"><circle r="22" fill="#c6d9e8"/><use href="#face-detail"/></g></g>
+    <text x="1303" y="376" class="name">Agent skill</text>
+    <text x="1303" y="401" class="mono">any agent queries it</text>
+  </g>
+
+  <!-- Footnote -->
+  <line x1="787" y1="476" x2="813" y2="476" stroke="#b5c7d8"/>
+  <text x="800" y="510" class="note" text-anchor="middle">Nothing is uploaded or summarized. What couldn't be recorded is marked as missing.</text>
+</svg>
+</body>
+</html>
