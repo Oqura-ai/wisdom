@@ -43,7 +43,7 @@ Your harness keeps its sessions in its own home (`~/.claude`, `~/.codex`, `~/.pi
 
 ### Tracked recording
 
-**The harness home is the fence.** Each harness keeps all its own files in `.wisdom/harnesses/<harness>/home/`: settings with Wisdom's hooks, login, and sessions (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`). Any process that uses that home loads the hooks, however it was started: a `/fork` running in the background, a `/branch`, a resume, a worktree. So every session there is recorded. `~/.claude`, `~/.codex` and `~/.pi/agent` are never touched, and a plain `claude`, `codex` or `pi` doesn't see these sessions; it records only if the project is connected.
+**The harness home is the fence.** Each harness keeps all its own files in `.wisdom/harnesses/<harness>/home/`: settings with Wisdom's hooks, login, and sessions (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`). Any process that uses that home loads the hooks, however it was started: a `/fork` running in the background, a `/branch`, a resume, a worktree. So every session there is recorded. `~/.claude`, `~/.codex` and `~/.pi/agent` are never touched (unless you choose to delete a connected session's own copy there, see [deleting a session](#deleting-a-session)), and a plain `claude`, `codex` or `pi` doesn't see these sessions; it records only if the project is connected.
 
 `wisdom track` is the short way to start a harness with its home set. It also starts the daemon, and passes the optional `ledger` MCP tool to Claude Code and Codex. Each home holds the skill that teaches agents to read recordings. See [agents](agents.md).
 
@@ -157,6 +157,24 @@ A Markdown document for people who don't have Wisdom: a PR description, an issue
 
 The same check for secrets as `wisdom share` runs first, with the same choices: redact, keep, or cancel, and `--redact` or `--keep-secrets` when there's no terminal to ask. Messages go to stderr, so `--out -` prints only the document. Your own sessions and shared ones both export; a shared one says so.
 
+## Health, storage and repair in the dashboard
+
+- **Health:** a line at the top of every page runs the same checks as `wisdom doctor`, in the background, and refreshes every minute. It stays quiet when recording works; open it for each check and the command that fixes it.
+- **Repair:** when a harness's hooks point to a copy of Wisdom that moved or is another one, or its reading skill is missing or older, **Repair…** rewrites them the way `wisdom init` or `wisdom connect` would. It first copies every file it changes into `.wisdom/backups/<time>/`, and each backup can be restored from the same place. Sessions already running keep the hooks they started with until they restart, and Codex runs changed hooks only after you review them again in `/hooks`. A project settings file that git tracks is never rewritten.
+- **What stays in the terminal:** starting and stopping the daemon. The dashboard is served by the daemon, so it can't start it, and stopping it would close the page.
+- **Storage:** the overview shows the project's disk space: each session's evidence, the database, each harness home in `.wisdom`, and the rest, with the largest sessions. **Clean up…** lists sessions not active for 30 days (change the number), to pick one by one or delete all; the delete dialog below then shows exactly what goes. Nothing is ever deleted on a schedule.
+
+## Deleting a session
+
+Open a session in the dashboard and press **Delete**. Nothing is deleted until you have read what goes and confirmed:
+
+- **What goes:** the session's record and evidence (`.wisdom/harnesses/<harness>/<id>/`), and its transcript and other per-session files in the project's harness home. The dialog lists them with their size. Deleted rows are overwritten inside `ledger.sqlite`, not just unlinked.
+- **Linked sessions:** a session that continues it, or was cloned from it, keeps its own evidence and now says `continues a deleted session`. If one of them is still recording, the dialog names it: its agent may still read the session you are deleting, and those reads will fail.
+- **A connected session's own copy:** for a session recorded with `wisdom connect`, the harness keeps its transcript in your own harness folder (such as `~/.claude`). A checkbox, off by default, deletes it too; then the harness can no longer resume the session. Left off, the harness can still resume it, but Wisdom does not record it again.
+- **Refused:** a session still recording, until it ends.
+
+Deleting cannot be undone. Wisdom keeps only a hash of the session's ID (`.wisdom/deleted.json`), so it never records that session again. Other sessions' prompts and tool output are not edited, so they may still mention its ID, and the harness's shared history files are not changed.
+
 ## Reading a session
 
 ```sh
@@ -210,6 +228,8 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
   ledger.sqlite-wal            # SQLite may keep sidecar files while running
   ledger.sqlite-shm
   spool/<harness>/<session>/   # Events a hook kept while the daemon was down
+  deleted.json                 # Hashes of deleted sessions' IDs, never recorded again
+  backups/<time>/              # Files a dashboard repair changed, as they were before
   harnesses/<harness>/home/    # The harness's own folder: settings with Wisdom's hooks,
                                # login, Codex hook trust, and its native sessions (source of truth)
   harnesses/<harness>/<capture-id>/   # pi, claude-code, codex: one directory per capture

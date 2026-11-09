@@ -8,19 +8,11 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 
 | Work | What you get | Effort | Status |
 | --- | --- | --- | --- |
-| npm package with a built-in dashboard | Install with one command | M | Done, not yet published |
-| `wisdom doctor` | One command that says what's wrong and how to fix it | M | Done |
-| Handoff between sessions and harnesses | `wisdom handoff`: a new or existing session reads another session first, and both show the link | S | Done |
-| Share a session as one file | `wisdom share`: one file with no logins, after a secret check that redacts, keeps or cancels | M | Done |
-| Read shared sessions | `wisdom import`: a teammate's file, read-only, in glance, open and the dashboard | M–L | Done |
-| Export as Markdown | `wisdom export`: a session anyone can read in a PR, an issue or docs, after a secret check | S | Done |
-| Clone a session | `wisdom clone`: carry your own or a teammate's session on in the same harness, recorded from the clone onward | M | Done; other logins untested |
-| Health and controls in the dashboard | See problems, and start, stop or repair from a project's own dashboard | M | Under discussion |
-| Storage and delete | See how much space sessions use, and delete one with a confirmation | M | Planned |
+| Health and controls in the dashboard | See problems, and repair hooks (backed up, restorable) from a project's own dashboard | M | Done |
+| Storage and delete | See how much space sessions use, and delete one or many old ones with a confirmation | M | Done |
 | Search across sessions | Find a prompt, reply, command or file name, then jump to it | L | Planned |
 | Mark failed subagents, link forks to parents | Fewer sessions that look complete when they aren't | M | Planned |
-| Tested on macOS and Linux | A promise beyond Windows | M | Planned |
-| Connect projects | `wisdom connect`: run plain `claude`, `codex` or `pi` with your normal login and still record, in a project you choose | L | Done |
+| Clone under another login | `wisdom clone` of a teammate's session, confirmed to resume under your own login | S | Untested |
 
 ## Next: record without the extra setup
 

@@ -107,6 +107,8 @@ export const codex: HarnessAdapter = {
   },
   // sessions/YYYY/MM/DD/rollout-….jsonl
   sessionFiles: home => jsonlFiles(path.join(home, 'sessions'), 3),
+  // Everything else Codex keeps about a session is in files and databases all sessions share.
+  sessionTraces: () => [],
   // The session's own header names it and its folders; a turn's context names its folder.
   cloneLine: (entry, { from, sessionId, move }) => {
     const payload = entry?.payload;

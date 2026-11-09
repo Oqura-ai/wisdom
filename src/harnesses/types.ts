@@ -92,6 +92,9 @@ export interface HarnessAdapter {
   nativePrompt(entry: any): string | undefined;
   /** Candidate session files in the harness's home (inside Wisdom's data folder). */
   sessionFiles(home: string): string[];
+  /** Besides its transcript, the files and folders in the harness's home that hold only this
+   * session, deleted with it. A file every session shares (a prompt history) is not listed. */
+  sessionTraces(home: string, sessionId: string): string[];
   /** For `wisdom clone`: one transcript line of session `from`, rewritten to name the new
    * session and, through `move`, the folder it now runs in. Lines that name neither stay as they are. */
   cloneLine(entry: any, clone: { from: string; sessionId: string; move: (folder: string) => string }): any;
@@ -120,6 +123,11 @@ export function jsonlFiles(dir: string, depth: number): string[] {
     if (depth > 0) return entry.isDirectory() ? jsonlFiles(full, depth - 1) : [];
     return entry.isFile() && entry.name.endsWith('.jsonl') ? [full] : [];
   });
+}
+
+/** The folders directly inside `dir`, as full paths. */
+export function subfolders(dir: string): string[] {
+  try { return fs.readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => path.join(dir, entry.name)); } catch { return []; }
 }
 
 /** Text blocks of a message's content, joined; undefined when there are none. */

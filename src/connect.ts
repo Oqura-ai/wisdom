@@ -57,7 +57,7 @@ export function disconnect(dataDir: string): Connectable[] {
 }
 
 /** Whether git tracks a file. Without git, or outside a repository, nothing is tracked. */
-function trackedByGit(project: string, file: string): boolean {
+export function trackedByGit(project: string, file: string): boolean {
   try {
     execFileSync('git', ['ls-files', '--error-unmatch', '--', path.relative(project, file).replaceAll('\\', '/')], { cwd: project, windowsHide: true, stdio: 'ignore' });
     return true;

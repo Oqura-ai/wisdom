@@ -8,9 +8,8 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 
 | Limitation | What it means for you | Effort |
 | --- | --- | --- |
-| Tested on Windows only | macOS and Linux are expected to work, but no real session has been recorded on them. | M |
 | Each project stands alone | By design, each project has its own daemon, dashboard and address, and there is no view across projects. | By design |
-| The dashboard is read-only | Start, stop, repair and delete all happen in the terminal. | M |
+| The daemon starts and stops in the terminal | The dashboard deletes sessions and repairs hooks, but it is served by the daemon, so it can't start it and stopping it would close the page. | By design |
 | At most about 20 projects running at once | Each running project takes a pair of ports, and each daemon and dashboard stay in memory. | L |
 | No search | You read one session at a time. | L |
 | No delete command | Removing one recording means editing `.wisdom/` by hand. | M |

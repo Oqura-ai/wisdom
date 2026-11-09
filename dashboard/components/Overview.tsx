@@ -4,12 +4,14 @@ import type { ProjectStats, Session } from '@/lib/api';
 import { HarnessIcon, HarnessBadge, StatusDot, cost, harnessLabel, plural, projectName, sessionLength, since, tokens } from './bits';
 import { SessionTitle } from './SessionList';
 import { TokenBar } from './TokenBar';
+import { StorageCard } from './Storage';
 
 /** Project view. Every row fills its width: totals, one card per harness (sharing the
  * row evenly), models, then tool usage beside hot files, then captures. Sections with
  * no data are left out rather than shown as empty boxes.
  */
-export function Overview({ stats, sessions, titles, harness, onOpen }: { stats: ProjectStats; sessions: Session[]; titles: Map<string, string>; harness?: string; onOpen: (id: string) => void }) {
+export function Overview({ stats, sessions, titles, harness, onOpen, onDeleted }: { stats: ProjectStats; sessions: Session[]; titles: Map<string, string>; harness?: string;
+  onOpen: (id: string) => void; onDeleted: () => void }) {
   const harnesses = stats.harnesses.filter(h => !harness || h.harness === harness);
   const tools = stats.toolUsage.filter(t => !harness || t.harness === harness).slice(0, 10);
   const maxCalls = Math.max(1, ...tools.map(t => t.calls));
@@ -118,6 +120,8 @@ export function Overview({ stats, sessions, titles, harness, onOpen }: { stats: 
           )}
         </div>
       )}
+
+      <StorageCard sessions={stats.sessions} titles={titles} onOpen={onOpen} onDeleted={onDeleted} />
 
       <section className="card">
         <h2>Sessions</h2>

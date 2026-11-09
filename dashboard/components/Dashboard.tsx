@@ -5,6 +5,7 @@ import { firstPrompt, view as read, type Project, type ProjectStats, type Sessio
 import { Overview } from './Overview';
 import { SessionList } from './SessionList';
 import { WorkTree } from './WorkTree';
+import { HealthStrip } from './HealthStrip';
 import { DisplayMenu, HarnessBadge, LiveBadge, Wordmark, projectName, shortPath } from './bits';
 
 type Live = { status: 'connecting' | 'live' | 'offline'; readVersion?: number; error?: string };
@@ -75,6 +76,8 @@ export function Dashboard() {
   const [stats, setStats] = useState<ProjectStats>();
   const [shared, setShared] = useState<Session[]>([]);
   const [error, setError] = useState<string>();
+  // A delete removes rows without moving the version, so it asks for a fresh read itself.
+  const [deletions, setDeletions] = useState(0);
   // The session drawer floats over the page; the main view always keeps the full width.
   const [drawer, setDrawer] = useState(false);
   useEffect(() => {
@@ -89,12 +92,12 @@ export function Dashboard() {
     if (live.status !== 'live') return;
     read<{ projects: Project[] }>({ view: 'projects' }).then(result => { setProjects(result.projects); setError(undefined); }, e => setError(e.message));
     read<{ sessions: Session[] }>({ view: 'shared' }).then(result => setShared(result.sessions), e => setError(e.message));
-  }, [live.status, live.readVersion]);
+  }, [live.status, live.readVersion, deletions]);
   const workspace = view.workspace ?? projects?.[0]?.workspaceRoot;
   useEffect(() => {
     if (live.status !== 'live' || !workspace) return;
     read<ProjectStats>({ view: 'project', workspaceRoot: workspace }).then(setStats, e => setError(e.message));
-  }, [live.status, live.readVersion, workspace]);
+  }, [live.status, live.readVersion, workspace, deletions]);
 
   // Most recently active first, the same order and time everywhere sessions are listed.
   const sessions = useMemo(() => (stats?.sessions ?? []).filter(s => !view.harness || s.harness === view.harness)
@@ -130,6 +133,7 @@ export function Dashboard() {
         <DisplayMenu />
       </header>
 
+      {live.status === 'live' && <HealthStrip recording={stats?.sessions.filter(s => s.status === 'recording').length ?? 0} />}
       {live.status === 'offline' && <div className="banner">Daemon offline: {live.error}. Start it with <code>wisdom daemon start</code>; this page reconnects by itself.</div>}
       {error && live.status === 'live' && <div className="banner">{error}</div>}
 
@@ -153,8 +157,10 @@ export function Dashboard() {
 
         <main className="main" ref={main}>
           {selected
-            ? <WorkTree key={selected.captureId} session={selected} readVersion={live.readVersion} onBack={() => setView({ capture: undefined })} onOpen={capture => setView({ capture })} />
-            : stats ? <Overview stats={stats} sessions={sessions} titles={titles} harness={view.harness} onOpen={capture => setView({ capture })} />
+            ? <WorkTree key={selected.captureId} session={selected} readVersion={live.readVersion} titles={titles} onBack={() => setView({ capture: undefined })}
+                onOpen={capture => setView({ capture })} onDeleted={() => { setView({ capture: undefined }); setDeletions(n => n + 1); }} />
+            : stats ? <Overview stats={stats} sessions={sessions} titles={titles} harness={view.harness} onOpen={capture => setView({ capture })}
+                onDeleted={() => setDeletions(n => n + 1)} />
             : <div className="empty">{projects && !projects.length
               ? <>No sessions recorded here yet. Start one with <code>wisdom track pi|claude|codex</code>.
                   {shared.length > 0 && <> {shared.length === 1 ? 'One session' : `${shared.length} sessions`} shared with you {shared.length === 1 ? 'is' : 'are'} under <button className="plain link" onClick={() => setDrawer(true)}>Sessions</button>.</>}</>

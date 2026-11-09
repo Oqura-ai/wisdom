@@ -84,14 +84,14 @@ async function main(): Promise<void> {
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
-      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
+      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
   if (!command || values.help) { console.log(help); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
-    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
+    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
@@ -120,7 +120,10 @@ async function main(): Promise<void> {
   }
   if (command === 'doctor') {
     const checks = await diagnose(dataDir);
-    console.log(formatChecks(path.dirname(dataDir), checks));
+    // --json: for the dashboard's health strip, which the daemon fills by running this.
+    if (values.json) console.log(JSON.stringify({ version: wisdomVersion(), project: path.dirname(dataDir),
+      checks: checks.map(({ level, name, detail, fix }) => ({ level, name, detail, fix })) }));
+    else console.log(formatChecks(path.dirname(dataDir), checks));
     if (checks.some(check => check.level === 'problem')) process.exitCode = 1;
     return;
   }

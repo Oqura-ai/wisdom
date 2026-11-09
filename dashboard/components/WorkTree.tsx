@@ -7,6 +7,7 @@ import { Inspector } from './Inspector';
 import { BackButton, Face, HarnessIcon, StatusDot, UserAvatar, cost, harnessLabel, plural, sessionLength, since, tokens } from './bits';
 import { TokenBar } from './TokenBar';
 import { ChatView, toolTargets } from './ChatView';
+import { DeleteDialog } from './DeleteDialog';
 
 type View = 'chat' | 'dev';
 function useView(): [View, (view: View) => void] {
@@ -20,7 +21,9 @@ function useView(): [View, (view: View) => void] {
  */
 const linkLabel = { continues: 'continues', 'continued-after': 'continued after', 'continued-by': 'continued by', cloned: 'cloned from', 'cloned-by': 'cloned into' } as const;
 
-export function WorkTree({ session, readVersion, onBack, onOpen }: { session: Session; readVersion?: number; onBack: () => void; onOpen: (captureId: string) => void }) {
+export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDeleted }: { session: Session; readVersion?: number; titles: Map<string, string>;
+  onBack: () => void; onOpen: (captureId: string) => void; onDeleted: () => void }) {
+  const [deleting, setDeleting] = useState(false);
   const [data, setData] = useState<{ readVersion: number; events: EventRecord[]; usage: EventRecord[] }>();
   const [error, setError] = useState<string>();
   const [selected, setSelected] = useState<TreeNode>();
@@ -89,6 +92,10 @@ export function WorkTree({ session, readVersion, onBack, onOpen }: { session: Se
               title={option === 'chat' ? 'Read the session like a conversation' : 'Records, links and evidence'}>{option}</button>
           ))}
         </span>
+        {/* A shared copy is someone else's recording, read-only here. */}
+        {!session.shared && <button className="ghost delete" onClick={() => setDeleting(true)}
+          title={session.status === 'recording' ? 'It can be deleted once it stops recording' : 'Delete this session'}>Delete</button>}
+        {deleting && <DeleteDialog sessions={[session.captureId]} titles={titles} onClose={() => setDeleting(false)} onDeleted={onDeleted} />}
       </div>
       {session.shared ? (
         <div className="resume-line shared-line">
@@ -105,8 +112,12 @@ export function WorkTree({ session, readVersion, onBack, onOpen }: { session: Se
       )}
       {session.links.length > 0 && (
         <div className="session-links">
-          {session.links.map(link => (
-            <button key={`${link.kind}-${link.session}`} className="session-link" onClick={() => onOpen(link.session)} title={`Open ${link.session}`}>
+          {session.links.map((link, index) => link.session === undefined ? (
+            <span key={`${link.kind}-deleted-${index}`} className="session-link" title="A person deleted that session">
+              <span className="label">{linkLabel[link.kind]}</span> a deleted session
+            </span>
+          ) : (
+            <button key={`${link.kind}-${link.session}`} className="session-link" onClick={() => onOpen(link.session!)} title={`Open ${link.session}`}>
               <span className="label">{linkLabel[link.kind]}</span>
               {link.harness && <HarnessIcon harness={link.harness} />}
               <code>{link.session.slice(0, 8)}</code>
@@ -137,10 +148,12 @@ export function WorkTree({ session, readVersion, onBack, onOpen }: { session: Se
       )}
       {view === 'chat' && session.links.filter(link => link.kind === 'cloned').map(link => (
         // The copied turns live in the session they happened in; this only points there.
-        <details key={link.session} className="cloned-history">
+        <details key={link.session ?? 'deleted'} className="cloned-history">
           <summary>Cloned history{link.turns !== undefined && ` · ${plural(link.turns, 'turn')}`}</summary>
-          <p>These turns happened in session <code>{link.session.slice(0, 8)}</code> before it was cloned. Their prompts, tool calls and changes are read there, not repeated here.</p>
-          <button className="ghost" onClick={() => onOpen(link.session)}>Open them</button>
+          {link.session === undefined
+            ? <p>These turns happened in a session that has since been deleted; they can no longer be read.</p>
+            : <><p>These turns happened in session <code>{link.session.slice(0, 8)}</code> before it was cloned. Their prompts, tool calls and changes are read there, not repeated here.</p>
+              <button className="ghost" onClick={() => onOpen(link.session!)}>Open them</button></>}
         </details>
       ))}
       {view === 'chat' && data && <ChatView session={session} readVersion={data.readVersion} requests={requests} usage={usage.byRequest} />}

@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createTwoFilesPatch } from 'diff';
-import { Ledger, writeJson } from './ledger.js';
+import { Ledger, hash, writeJson } from './ledger.js';
 import { LedgerDatabase } from './database.js';
 import { SessionFiles, scope } from './workspace.js';
 import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from './schema.js';
 import { adapter, harnessNames } from './harnesses/index.js';
 import type { NativeEntry } from './harnesses/types.js';
 import { surfaceText } from './content.js';
-import { cloneNote, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch } from './paths.js';
+import { cloneNote, harnessHome, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch, type Connected } from './paths.js';
 
 interface RunningCapture {
   ledger: Ledger;
@@ -31,6 +31,12 @@ const IDLE_MS = 10 * 60_000;
 const QUIET_MS = 2 * 60_000;
 const SCAN_MS = 10_000;
 
+/** A session linked to one being deleted that is still recording: it may still read it. */
+export interface LinkedSession { session: string; harness: string; kind: 'continues' | 'continued-after' | 'cloned' | 'continued-by' | 'cloned-by' }
+
+export interface RemovalPlan { session: string; harness: string; status: string; recording: boolean;
+  files: string[]; harnessCopy: string[]; outside: string[]; bytes: number; harnessCopyBytes: number; linked: LinkedSession[] }
+
 /** Owns session lifecycle. Every harness session inside Wisdom's homes gets one record:
  * from its hooks while they report, and from its own file when they did not.
  */
@@ -46,9 +52,12 @@ export class Captures {
   private notSessions = new Set<string>();
   /** This project's session files found in a connected harness's own home. */
   private ownSessionFiles = new Set<string>();
+  /** SHA-256 of each session a person deleted: never recorded again, from a hook or a file. */
+  private deleted: Set<string>;
 
   constructor(readonly dataDir: string) {
     fs.mkdirSync(dataDir, { recursive: true });
+    this.deleted = new Set(readDeleted(dataDir));
     this.database = new LedgerDatabase(path.join(dataDir, 'ledger.sqlite'));
     try {
       const project = movedFrom(dataDir);
@@ -96,6 +105,8 @@ export class Captures {
    */
   route(event: HookEvent): LedgerRecord | undefined {
     const { harness, observation } = event;
+    // A deleted session stays deleted, even if its harness goes on (a connected session resumed later).
+    if (this.isDeleted(observation.sessionId)) return undefined;
     if (!event.late) this.drainSpool(harness, observation.sessionId);
     let ledger = this.find(harness, observation.sessionId);
     const opened = !ledger;
@@ -133,6 +144,12 @@ export class Captures {
    */
   private linkClone(ledger: Ledger, clone: CloneNote): void {
     const turns = `${clone.turns} turn${clone.turns === 1 ? '' : 's'}`;
+    // The session it was cloned from may have been deleted before this clone first ran.
+    if (!clone.from) {
+      ledger.append({ type: 'session_link', link: { kind: 'cloned', fromDeleted: true, turns: clone.turns }, summary: `cloned from a deleted session · ${turns}` });
+      ledger.gap('history-cloned', `The first ${turns} happened in a deleted session; their file changes were made there, not here.`);
+      return;
+    }
     ledger.append({ type: 'session_link', link: { kind: 'cloned', from: clone.from, fromHarness: clone.fromHarness, version: clone.version, turns: clone.turns },
       summary: `cloned from ${clone.from} (${clone.fromHarness}) at version ${clone.version} · ${turns}` });
     ledger.gap('history-cloned', `The first ${turns} happened in ${clone.from}; their file changes were made there, not here.`);
@@ -534,7 +551,7 @@ export class Captures {
             continue;
           }
           const { sessionId, cwd } = header(harness, file);
-          if (!sessionId) { this.notSessions.add(file); continue; }
+          if (!sessionId || this.isDeleted(sessionId)) { this.notSessions.add(file); continue; }
           if (since !== undefined) {
             // Another project's session in the person's own home: never read again.
             if (!this.inProject(cwd)) { this.notSessions.add(file); continue; }
@@ -550,6 +567,92 @@ export class Captures {
         }
       }
     }
+  }
+
+  isDeleted(sessionId: string): boolean { return this.deleted.has(hash(sessionId)); }
+
+  /** A person deletes a session: its record, its evidence folder, and its files in this
+   * project's harness homes. A connected session's files in the person's own harness home
+   * were made for this project too, but deleting them also ends the harness's own resume,
+   * so they go only when asked (`harnessCopy`); otherwise they are listed as `kept`. Nothing
+   * else outside the data folder is touched. A session still recording is refused. Its ID is
+   * remembered only as a hash, so it is never recorded again.
+   */
+  remove(id: string, options: { harnessCopy?: boolean } = {}): { session: string; removed: string[]; kept: string[] } {
+    const plan = this.removal(id);
+    if (plan.recording) throw new Error(`Session ${id} is still recording; it can be deleted once it ends.`);
+    const allowed = new Set([...plan.files, ...options.harnessCopy ? plan.harnessCopy : []]);
+    const targets = [...plan.files, ...plan.harnessCopy, ...plan.outside];
+    // Remembered first, so a scan between the steps below cannot record it again.
+    this.deleted.add(hash(id));
+    writeJson(deletedFile(this.dataDir), [...this.deleted].sort());
+    this.database.forget(id);
+    this.ledgers.delete(id);
+    // A clone of it not yet recorded still links to it, as a deleted session.
+    const clones = path.join(this.dataDir, 'clones');
+    for (const name of fs.existsSync(clones) ? fs.readdirSync(clones).filter(name => name.endsWith('.json')) : []) {
+      const file = path.join(clones, name);
+      try {
+        const note = JSON.parse(fs.readFileSync(file, 'utf8')) as CloneNote;
+        if (note.from === id) { const { from: _from, ...rest } = note; writeJson(file, rest); }
+      } catch { /* not a note */ }
+    }
+    const removed: string[] = [], kept: string[] = [];
+    for (const target of targets) {
+      if (!allowed.has(target)) { kept.push(target); continue; }
+      try { fs.rmSync(target, { recursive: true, force: true }); removed.push(target); }
+      catch (error) { kept.push(`${target} (${error instanceof Error ? error.message : String(error)})`); }
+    }
+    return { session: id, removed, kept };
+  }
+
+  /** Where this project's disk space goes: the database, each session's evidence folder, and each
+   * harness home in `.wisdom` (its settings, login and the harness's own session files). */
+  storage(): { total: number; database: number; sessions: { session: string; harness: string; bytes: number }[];
+    homes: { harness: string; bytes: number }[]; other: number } {
+    const database = ['ledger.sqlite', 'ledger.sqlite-wal', 'ledger.sqlite-shm'].reduce((sum, name) => sum + size(path.join(this.dataDir, name)), 0);
+    const sessions = [...this.ledgers.values()].map(ledger => ({ session: ledger.manifest.captureId, harness: ledger.manifest.harness, bytes: size(ledger.dir) }))
+      .sort((a, b) => b.bytes - a.bytes);
+    const homes = harnessNames.map(harness => ({ harness, bytes: size(harnessHome(this.dataDir, harness)) })).filter(home => home.bytes > 0);
+    const total = size(this.dataDir);
+    const counted = database + sessions.reduce((sum, s) => sum + s.bytes, 0) + homes.reduce((sum, h) => sum + h.bytes, 0);
+    return { total, database, sessions, homes, other: Math.max(0, total - counted) };
+  }
+
+  /** What deleting a session would do, for a person to read before confirming: the files that
+   * go (`files`), a connected session's files in the person's own harness home that go only
+   * when asked (`harnessCopy`), files that stay whatever is chosen (`outside`), their size, and
+   * the sessions linked to it that are still recording, which may still read it.
+   */
+  removal(id: string): RemovalPlan {
+    const ledger = this.get(id);
+    const { harness, source, status } = ledger.manifest;
+    const reader = adapter(harness);
+    const connectedHome = readConnected(this.dataDir)[harness as keyof Connected]?.home;
+    const targets = [...new Set([ledger.dir, cloneNote(this.dataDir, id), path.join(spoolDir(this.dataDir), harness, id),
+      ...source ? [source] : [], ...reader.sessionTraces(harnessHome(this.dataDir, harness), id),
+      ...connectedHome ? reader.sessionTraces(connectedHome, id) : []])].filter(target => fs.existsSync(target));
+    // Outside the data folder, only what is in the connected home, and a transcript only when
+    // its own lines say it is this session: a wrong path in a record never deletes another file.
+    const ours = (target: string) => !!connectedHome && inside(connectedHome, target)
+      && (target !== source || header(harness, target).sessionId === id);
+    const files = targets.filter(target => inside(this.dataDir, target));
+    const harnessCopy = targets.filter(target => !files.includes(target) && ours(target));
+    const outside = targets.filter(target => !files.includes(target) && !harnessCopy.includes(target));
+    const linked = new Map<string, LinkedSession>();
+    const note = (other: string, kind: LinkedSession['kind']) => {
+      const manifest = this.ledgers.get(other)?.manifest;
+      if (manifest && other !== id && this.running.has(other)) linked.set(other, { session: other, harness: manifest.harness, kind });
+    };
+    for (const record of this.database.records("type='session_link' AND json_extract(body,'$.link.from')=?", [id])) {
+      note(record.captureId, record.link!.kind === 'cloned' ? 'cloned-by' : 'continued-by');
+    }
+    for (const record of this.database.records("type='session_link' AND capture_id=?", [id])) {
+      if (record.link?.from) note(record.link.from, record.link.kind);
+    }
+    return { session: id, harness, status, recording: this.running.has(id), files, harnessCopy, outside,
+      bytes: files.reduce((sum, file) => sum + size(file), 0), harnessCopyBytes: harnessCopy.reduce((sum, file) => sum + size(file), 0),
+      linked: [...linked.values()] };
   }
 
   close(id: string, reason = 'quit', interrupted = false): void {
@@ -658,6 +761,31 @@ function isOlder(a: NativeLines, b: NativeLines): boolean {
   const [first, second] = [a.dated[0]?.[1], b.dated[0]?.[1]];
   if (!first || !second) return false;
   return first === second ? a.created < b.created : first < second;
+}
+
+/** Hashes of deleted sessions' IDs: enough to refuse them, not to say what they were. */
+function deletedFile(dataDir: string): string {
+  return path.join(dataDir, 'deleted.json');
+}
+
+function readDeleted(dataDir: string): string[] {
+  try { const list = JSON.parse(fs.readFileSync(deletedFile(dataDir), 'utf8')); return Array.isArray(list) ? list.map(String) : []; }
+  catch { return []; }
+}
+
+/** Bytes in a file, or in every file below a folder. */
+function size(target: string): number {
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isDirectory()) return stat.size;
+    return fs.readdirSync(target).reduce((sum, name) => sum + size(path.join(target, name)), 0);
+  } catch { return 0; }
+}
+
+/** Whether `file` is inside `folder` (and is not the folder itself). */
+function inside(folder: string, file: string): boolean {
+  const relative = path.relative(path.resolve(folder), path.resolve(file));
+  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 function readCloneNote(dataDir: string, sessionId: string): CloneNote | undefined {

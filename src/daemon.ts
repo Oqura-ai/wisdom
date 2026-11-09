@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
+import { backups, repair, repairTargets, restore } from './repair.js';
 import { Captures } from './captures.js';
 import { SharedLibrary, readLedger, readView } from './shared.js';
 import { hookSchema, viewSchema } from './schema.js';
@@ -14,7 +18,59 @@ import { startDashboard } from './dashboard.js';
 // 11: hook events may carry a handoff, and the export view exists.
 // 12: /import, and the shared and transcript views.
 // 13: the markdown view.
-export const CAPTURE_API = 14;
+// 15: /delete, /storage, /doctor and /repair.
+export const CAPTURE_API = 15;
+
+const cli = fileURLToPath(new URL('./cli.js', import.meta.url));
+
+/** `wisdom doctor --json`, run as its own process: asking each harness its version can take
+ * seconds, and the daemon must keep answering hooks meanwhile. One run at a time; its result is
+ * reused for 30 seconds unless `fresh` asks for a new one.
+ */
+function doctor(dataDir: string) {
+  let last: { at: number; result: Promise<unknown> } | undefined;
+  return (fresh = false): Promise<unknown> => {
+    if (last && !fresh && Date.now() - last.at < 30_000) return last.result;
+    const result = new Promise<unknown>(resolve => {
+      execFile(process.execPath, [cli, 'doctor', '--json'], { env: { ...process.env, WISDOM_DATA_DIR: dataDir }, timeout: 90_000, windowsHide: true },
+        // doctor exits 1 when it finds a problem; its report is still on stdout.
+        (error, stdout) => {
+          try { resolve({ ...JSON.parse(stdout), checkedAt: new Date().toISOString() }); }
+          catch { resolve({ error: `wisdom doctor could not run: ${error?.message ?? 'no report'}`, checkedAt: new Date().toISOString() }); }
+        });
+    });
+    last = { at: Date.now(), result };
+    return result;
+  };
+}
+
+/** `plan`: what repair would change, and the backups it can restore. `repair` and `restore` change the files. */
+const repairSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('plan') }).strict(),
+  z.object({ action: z.literal('repair') }).strict(),
+  z.object({ action: z.literal('restore'), backup: z.string().min(1) }).strict(),
+]);
+
+function repairs(dataDir: string, input: unknown) {
+  const request = repairSchema.parse(input);
+  if (request.action === 'repair') return repair(dataDir);
+  if (request.action === 'restore') return { restored: restore(dataDir, request.backup) };
+  return { targets: repairTargets(dataDir), backups: backups(dataDir) };
+}
+
+/** `harnessCopy`: also delete a connected session's files in the person's own harness home.
+ * `preview`: delete nothing; say what each deletion would do. */
+const deleteSchema = z.object({ sessions: z.array(z.string().min(1)).min(1).max(1000), harnessCopy: z.boolean().optional(),
+  preview: z.boolean().optional() }).strict();
+
+/** Each session is deleted on its own: one refused (still recording, unknown) never stops the rest. */
+function deleteSessions(captures: Captures, input: unknown) {
+  const { sessions, harnessCopy, preview } = deleteSchema.parse(input);
+  return { results: sessions.map(session => {
+    try { return preview ? captures.removal(session) : captures.remove(session, { harnessCopy }); }
+    catch (error) { return { session, error: error instanceof Error ? error.message : String(error) }; }
+  }) };
+}
 
 export interface Connection { url: string; token: string; pid: number }
 
@@ -47,6 +103,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   try { captures = new Captures(dataDir); }
   catch (error) { fs.unlinkSync(lock); throw error; }
   const library = new SharedLibrary(path.join(dataDir, 'shared'));
+  const checks = doctor(dataDir);
   const token = randomBytes(32).toString('hex');
   let dashboard: ReturnType<typeof startDashboard> | undefined;
   let closing = false;
@@ -81,6 +138,14 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
         // Resuming starts a harness, so it takes the exact session ID only: never a guess.
         const { captureId, harness, workspaceRoot, source } = captures.get(String((input as any)?.session ?? '')).manifest;
         send(200, { captureId, harness, workspaceRoot, source }); return;
+      }
+      if (url.pathname === '/delete') { send(200, deleteSessions(captures, input)); return; }
+      if (url.pathname === '/storage') { send(200, captures.storage()); return; }
+      if (url.pathname === '/doctor') { send(200, await checks((input as any)?.fresh === true)); return; }
+      if (url.pathname === '/repair') {
+        const result = repairs(dataDir, input);
+        if ((input as any)?.action !== 'plan') void checks(true);
+        send(200, result); return;
       }
       if (url.pathname === '/stop') { send(200, { status: 'stopping' }); setImmediate(() => void close()); return; }
       send(404, { error: 'Unknown route' });

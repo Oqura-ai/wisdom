@@ -34,6 +34,7 @@ export const pi: HarnessAdapter = {
     ? contentText(entry.message.content)?.trim() || undefined : undefined,
   // sessions/<folder>/<time>_<session>.jsonl
   sessionFiles: home => jsonlFiles(path.join(home, 'sessions'), 1),
+  sessionTraces: () => [],
   // Only the header names the session and its folder.
   cloneLine: (entry, { sessionId, move }) => entry?.type === 'session'
     ? { ...entry, id: sessionId, ...(typeof entry.cwd === 'string' ? { cwd: move(entry.cwd) } : {}) } : entry,

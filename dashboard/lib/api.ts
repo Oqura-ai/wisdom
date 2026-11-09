@@ -7,13 +7,55 @@ export async function view<T = any>(request: unknown): Promise<T> {
   return result;
 }
 
+/** What deleting one session would do. `harnessCopy`: a connected session's own files in the
+ * person's harness home, deleted only when asked. `outside`: files that stay whatever is chosen. */
+export interface RemovalPlan { session: string; harness: string; status: string; recording: boolean; files: string[]; harnessCopy: string[];
+  outside: string[]; bytes: number; harnessCopyBytes: number; linked: { session: string; harness: string; kind: SessionLink['kind'] }[] }
+/** One session's outcome: `error` when it was refused, otherwise what was removed and kept. */
+export interface DeleteResult { session: string; removed?: string[]; kept?: string[]; error?: string }
+
+async function change<T>(route: string, body: unknown): Promise<T> {
+  const response = await fetch(route, { method: 'POST', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+  return result;
+}
+
+/** What deleting these sessions would do; nothing is deleted. A session the daemon cannot find comes back with `error`. */
+export const previewDelete = (sessions: string[]) => change<{ results: (RemovalPlan | { session: string; error: string })[] }>('/api/delete', { sessions, preview: true });
+export const deleteSessions = (sessions: string[], harnessCopy: boolean) => change<{ results: DeleteResult[] }>('/api/delete', { sessions, harnessCopy });
+
+async function get<T>(route: string): Promise<T> {
+  const response = await fetch(route, { cache: 'no-store' });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+  return result;
+}
+
+/** Where this project's disk space goes. */
+export interface Storage { total: number; database: number; sessions: { session: string; harness: string; bytes: number }[]; homes: { harness: string; bytes: number }[]; other: number }
+export const storage = () => get<Storage>('/api/storage');
+
+/** One of `wisdom doctor`'s checks, with the command that fixes it. */
+export interface Check { level: 'ok' | 'note' | 'problem'; name: string; detail: string; fix?: string }
+export interface Health { version?: string; checks?: Check[]; error?: string; checkedAt: string }
+export const health = (fresh = false) => get<Health>(`/api/health${fresh ? '?fresh=1' : ''}`);
+
+/** A harness whose Wisdom setup repair would rewrite: `hooks` record nothing now; `skill` is missing or older. */
+export interface RepairTarget { harness: string; place: 'home' | 'project'; problem: 'hooks' | 'skill'; files: string[] }
+export interface Backup { id: string; createdAt: string; targets: RepairTarget[]; items: { original: string; saved: string | null }[] }
+export const repairPlan = () => change<{ targets: RepairTarget[]; backups: Backup[] }>('/api/repair', { action: 'plan' });
+export const runRepair = () => change<{ backup: Backup; codexReview: boolean }>('/api/repair', { action: 'repair' });
+export const restoreBackup = (backup: string) => change<{ restored: Backup }>('/api/repair', { action: 'restore', backup });
+
 export interface Project { workspaceRoot: string; captures: number; harnesses: string[]; lastStartedAt: string; recording: number }
 /** Additive token buckets: total = input + cacheRead + cacheWrite + output; reasoning is part of output. */
 export interface Tokens { calls: number; input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number; costUsd: number | null; costBehind?: boolean; costEstimated?: boolean }
 export interface HarnessTotals { harness: string; captures: number; recording: number; requests: number; replies: number; tools: number;
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens }
-/** A handoff between two sessions, seen from this one. */
-export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session: string; harness?: string; turns?: number }
+/** A handoff between two sessions, seen from this one. No `session` when a person deleted the other one. */
+export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session?: string; deleted?: boolean; harness?: string; turns?: number }
 /** Where a shared copy came from. A shared session is read-only, so it has no resume command. */
 export interface SharedInfo { shareId: string; project: string; sharedAt: string; importedAt: string; redactions: number; patchesEdited: string[] }
 export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string; resume?: { powershell: string; posix: string }; shared?: SharedInfo;

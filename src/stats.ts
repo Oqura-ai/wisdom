@@ -15,7 +15,8 @@ function addTokens(into: TokenTotals, from: TokenTotals): void {
   if (from.costEstimated) into.costEstimated = true;
 }
 
-export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session: string; harness?: string; turns?: number }
+/** `session` is missing, and `deleted` set, when a person deleted the session at the other end. */
+export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session?: string; deleted?: boolean; harness?: string; turns?: number }
 
 /** Handoffs and clones between this project's sessions, from both ends: a session lists the
  * one it continues or was cloned from, and that one lists it back (`continued-by`, `cloned-by`).
@@ -28,8 +29,8 @@ function sessionLinks(captures: SessionStore, key: string): Map<string, SessionL
   for (const row of rows) {
     const { link } = JSON.parse(String(row.body)) as LedgerRecord;
     if (!link) continue;
-    add(String(row.id), { kind: link.kind, session: link.from, harness: link.fromHarness, ...(link.turns === undefined ? {} : { turns: link.turns }) });
-    add(link.from, { kind: link.kind === 'cloned' ? 'cloned-by' : 'continued-by', session: String(row.id), harness: String(row.harness) });
+    add(String(row.id), { kind: link.kind, ...(link.from ? { session: link.from } : { deleted: true }), harness: link.fromHarness, ...(link.turns === undefined ? {} : { turns: link.turns }) });
+    if (link.from) add(link.from, { kind: link.kind === 'cloned' ? 'cloned-by' : 'continued-by', session: String(row.id), harness: String(row.harness) });
   }
   return links;
 }

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { contentText, count, jsonlFiles, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
+import { contentText, count, jsonlFiles, subfolders, type HarnessAdapter, type NeutralMessage, type NeutralUsage } from '../types.js';
 
 // Claude Code calls this format internal, so this reader is best-effort; hooks
 // remain the primary evidence. Verified against Claude Code 2.1.306.
@@ -74,6 +74,9 @@ export const claudeCode: HarnessAdapter = {
   },
   // projects/<folder>/<session>.jsonl; subagent files sit one folder deeper.
   sessionFiles: home => jsonlFiles(path.join(home, 'projects'), 1),
+  // Its subagents' folder beside the transcript, its edit checkpoints and its environment.
+  sessionTraces: (home, sessionId) => [...subfolders(path.join(home, 'projects')).map(folder => path.join(folder, sessionId)),
+    path.join(home, 'file-history', sessionId), path.join(home, 'session-env', sessionId)],
   nativeEntry: entry => ({ id: entry?.uuid, parentId: entry?.parentUuid, timestamp: entry?.timestamp,
     kind: String(entry?.type ?? 'unknown'), messages: messages(entry), usage: usage(entry) }),
 };

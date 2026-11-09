@@ -43,3 +43,25 @@ export function localOnly(request: Request): Response | undefined {
   if (origin && new URL(origin).host !== host) return Response.json({ error: 'Cross-origin request refused.' }, { status: 403 });
   return undefined;
 }
+
+/** For the routes that change something (delete, repair): besides the localhost check, only JSON
+ * from this page's own origin. A page on another site cannot send JSON here without a CORS
+ * preflight, which this server never answers, and a form post carries its own origin, which is refused.
+ */
+export function changeAllowed(request: Request): Response | undefined {
+  const refused = localOnly(request);
+  if (refused) return refused;
+  if (!request.headers.get('origin') || !request.headers.get('content-type')?.startsWith('application/json')) {
+    return Response.json({ error: 'Changes take a JSON request from this dashboard only.' }, { status: 403 });
+  }
+  return undefined;
+}
+
+/** Answer with what the daemon said, or why it could not. */
+export async function relay(route: string, input: unknown): Promise<Response> {
+  try {
+    return Response.json(await daemon(route, input));
+  } catch (error) {
+    return Response.json({ error: (error as Error).message }, { status: error instanceof DaemonUnavailable ? 503 : 400 });
+  }
+}

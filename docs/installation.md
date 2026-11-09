@@ -91,6 +91,6 @@ Stop the service, then copy the whole `.wisdom/` folder, including payloads and 
 
    You can also remove the `.wisdom/` line from the project's `.gitignore`.
 
-If you connected a project, run `wisdom disconnect` in it first, so its settings no longer name Wisdom. There is nothing else to undo. Wisdom never changes `~/.claude`, `~/.codex` or `~/.pi/agent`, so a plain `claude`, `codex` or `pi` is exactly as it was.
+If you connected a project, run `wisdom disconnect` in it first, so its settings no longer name Wisdom. There is nothing else to undo. Wisdom never changes `~/.claude`, `~/.codex` or `~/.pi/agent`, so a plain `claude`, `codex` or `pi` is exactly as it was. The one exception is yours to choose: deleting a connected session in the dashboard with **Also delete the harness's own copy** ticked removes that session's own files there.
 
 If you uninstalled before stopping a service, it keeps running until you end it. Its process ID is in `.wisdom/daemon.json`.

@@ -30,7 +30,8 @@ export const viewSchema = z.discriminatedUnion('view', [
 /** Written by `wisdom clone` before the copy's transcript exists, so the daemon knows which
  * of the new session's lines are copied the first time it sees the session.
  */
-export interface CloneNote { from: string; fromHarness: string; version: number; turns: number; bytes: number; createdAt: string }
+/** `from` is gone when a person deleted the session this clone was made from. */
+export interface CloneNote { from?: string; fromHarness: string; version: number; turns: number; bytes: number; createdAt: string }
 export type ViewRequest = z.infer<typeof viewSchema>;
 
 export const observationSchema = z.object({
@@ -126,7 +127,9 @@ export interface LedgerRecord {
   spooledAt?: string;
   /** session_link records: this session continues `from`, started (`continues`) or resumed
    * (`continued-after`) by one `wisdom handoff`, or began as a copy of it (`cloned`). */
-  link?: { kind: 'continues' | 'continued-after' | 'cloned'; from: string; fromHarness?: string; handoffId?: string;
+  link?: { kind: 'continues' | 'continued-after' | 'cloned'; from?: string; fromHarness?: string; handoffId?: string;
+    /** A person deleted the session this one continues: `from` no longer names it. */
+    fromDeleted?: boolean;
     /** For a clone: the source's version and how many of its turns were copied. */
     version?: number; turns?: number };
   sourceEntryId?: string;

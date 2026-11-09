@@ -466,3 +466,72 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 .select-wrap { position: relative; display: inline-flex; align-items: center; }
 .select-wrap::after { content: ''; position: absolute; right: 12px; pointer-events: none; transform: rotate(270deg); }
 .select-wrap select { appearance: none; -webkit-appearance: none; padding-right: 32px; }
+
+/* Deleting sessions: the one place the dashboard changes anything, so it reads exactly what goes first. */
+.ghost.delete { margin-left: auto; color: var(--bad); }
+.danger { border: 1px solid color-mix(in srgb, var(--bad) 60%, var(--line)); background: var(--bad); color: var(--paper); border-radius: 999px; padding: 5px 14px; font-size: 11.5px; }
+.danger:disabled, .ghost:disabled { opacity: .55; cursor: default; }
+.delete-dialog { width: min(560px, calc(100vw - 32px)); max-height: 85vh; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 14px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--surface-depth); padding: 18px 20px; }
+.delete-dialog::backdrop { background: color-mix(in srgb, var(--paper) 55%, transparent); backdrop-filter: blur(2px); }
+.delete-dialog h3 { margin: 0 0 12px; font: 19px var(--serif); }
+.delete-dialog p { margin: 8px 0; }
+.delete-list { list-style: none; margin: 0 0 10px; padding: 0; border: 1px solid var(--line); border-radius: 10px; max-height: 260px; overflow-y: auto; }
+.delete-list li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--line); }
+.delete-list li:first-child { border-top: 0; }
+.delete-list .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delete-warn { margin: 10px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); border-radius: 10px;
+  background: color-mix(in srgb, var(--tone-butter) 40%, var(--surface)); }
+.delete-warn ul { margin: 6px 0; padding-left: 0; list-style: none; }
+.delete-warn li { display: flex; align-items: center; gap: 6px; }
+.delete-copy { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.delete-copy input { margin-top: 3px; }
+.paths { margin: 6px 0 0; padding-left: 16px; }
+.paths code { word-break: break-all; color: var(--ink-soft); }
+.delete-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* Health: one quiet line at the top of every page, opened for checks, repair and backups. */
+.health { margin: 10px 22px 0; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+.health.h-bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.health.h-warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.health-line { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 12px; border: 0; background: transparent; text-align: left; }
+.health-line .chevron { width: 10px; height: 10px; }
+.health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--good); }
+.h-bad .health-dot { background: var(--bad); } .h-warn .health-dot { background: var(--warn); }
+.health-title { font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--faint); }
+.health-tag { font-size: 10.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink-soft); }
+.health-body { padding: 4px 14px 12px; border-top: 1px solid var(--line); }
+.checks { list-style: none; margin: 8px 0; padding: 0; }
+.check { display: grid; grid-template-columns: 64px 110px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); }
+.check:first-child { border-top: 0; }
+.check-level { font: 10px var(--mono); text-transform: uppercase; letter-spacing: .5px; color: var(--good); }
+.c-note .check-level { color: var(--warn); } .c-problem .check-level { color: var(--bad); }
+.check-name { font-weight: 600; }
+.check-fix { color: var(--ink-soft); }
+.check-fix .plain { padding: 0 6px; font-size: 11px; }
+.health-actions { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin-top: 8px; flex-wrap: wrap; }
+.repair-confirm { margin: 10px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); border-radius: 10px;
+  background: color-mix(in srgb, var(--tone-butter) 35%, var(--surface)); }
+.repair-confirm ul { margin: 6px 0; padding-left: 18px; }
+.repair-confirm .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.backups { margin: 8px 0; } .backups summary { cursor: pointer; color: var(--ink-soft); }
+.backups ul { list-style: none; padding: 0; margin: 6px 0; }
+.backups li { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
+@container app (max-width: 700px) { .check { grid-template-columns: 1fr; gap: 0; } .health { margin-inline: 16px; } }
+
+/* Storage, and the clean-up dialog it opens. */
+.storage-head { display: flex; align-items: baseline; gap: 12px; }
+.storage-head h2 { margin: 0; }
+.storage-total { font: 20px var(--serif); }
+.storage-bar { display: flex; height: 10px; margin: 12px 0 8px; border-radius: 999px; overflow: hidden; background: var(--well); }
+.seg, .swatch { background: var(--tone-blue); } .s1 { background: var(--tone-sage); } .s2 { background: var(--tone-peach); }
+.s3 { background: var(--tone-lilac); } .s4 { background: var(--tone-butter); }
+.seg + .seg { border-left: 2px solid var(--surface); }
+.storage-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; list-style: none; margin: 0 0 10px; padding: 0; color: var(--ink-soft); }
+.swatch { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
+.storage-sessions { list-style: none; margin: 0; padding: 0; }
+.storage-sessions li { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); }
+.storage-sessions .row-link { flex: 1; min-width: 0; }
+.days { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.days input { width: 72px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-2); }
+.pick-all { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
