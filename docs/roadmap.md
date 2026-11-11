@@ -12,7 +12,6 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 | Storage and delete | See how much space sessions use, and delete one or many old ones with a confirmation | M | Done |
 | Search across sessions | Find a prompt, reply, command or file name, then jump to it | L | Planned |
 | Mark failed subagents, link forks to parents | Fewer sessions that look complete when they aren't | M | Planned |
-| Clone under another login | `wisdom clone` of a teammate's session, confirmed to resume under your own login | S | Untested |
 
 ## Next: record without the extra setup
 
