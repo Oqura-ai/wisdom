@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { writeJson } from './ledger.js';
-import { harnessHome } from './paths.js';
+import { writeJson } from '../storage/ledger.js';
+import { harnessHome } from '../core/paths.js';
 import { trackedByGit } from './connect.js';
-import { hookState, installSkill, settingsFile, settingsFiles, skillState, type Place } from './harnesses/launch.js';
-import { connectClaudeCode, installClaudeCode } from './harnesses/claude-code/launch.js';
-import { connectCodex, installCodex } from './harnesses/codex/launch.js';
-import { connectPi, installPi } from './harnesses/pi/launch.js';
+import { hookState, installSkill, settingsFile, settingsFiles, skillState, type Place } from '../harnesses/launch.js';
+import { connectClaudeCode, installClaudeCode } from '../harnesses/claude-code/launch.js';
+import { connectCodex, installCodex } from '../harnesses/codex/launch.js';
+import { connectPi, installPi } from '../harnesses/pi/launch.js';
 
 type Harness = keyof typeof settingsFiles.home;
 const harnesses: Harness[] = ['claude-code', 'codex', 'pi'];

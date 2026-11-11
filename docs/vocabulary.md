@@ -1,8 +1,8 @@
 # Wisdom vocabulary
 
 The words an agent reads in ledger responses, and the record names behind them.
-The ledger is implemented in [src/discovery.ts](../src/discovery.ts); its request
-schema is `ledgerSchema` in [src/schema.ts](../src/schema.ts).
+The ledger is implemented in [src/read/discovery.ts](../src/read/discovery.ts); its request
+schema is `ledgerSchema` in [src/core/schema.ts](../src/core/schema.ts).
 
 ## Requests
 

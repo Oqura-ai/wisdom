@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Captures } from './captures.js';
-import { LedgerDatabase } from './database.js';
-import { ledger } from './discovery.js';
-import { Ledger, hash, writeJson } from './ledger.js';
-import type { ViewRequest } from './schema.js';
+import type { Captures } from '../record/captures.js';
+import { LedgerDatabase } from '../storage/database.js';
+import { ledger } from '../read/discovery.js';
+import { Ledger, hash, writeJson } from '../storage/ledger.js';
+import type { ViewRequest } from '../core/schema.js';
 import { readShare, type ShareFile } from './share.js';
-import { stats } from './stats.js';
-import type { SessionStore, SharedInfo, SharedSession } from './store.js';
-import { view } from './views.js';
+import { stats } from '../read/stats.js';
+import type { SessionStore, SharedInfo, SharedSession } from '../storage/store.js';
+import { view } from '../read/views.js';
 
 // A shared file names its own sessions and files. Anything outside these shapes could write
 // outside the store's folder, so it is refused.

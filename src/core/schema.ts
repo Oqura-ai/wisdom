@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { harnessNames } from './harnesses/index.js';
+import { harnessNames } from '../harnesses/index.js';
 
 /** The agent-facing ledger: two moves over one session (glance, open) and a way to
  * continue a limited response. Positions are the address: t3, t2/c4, a1, a1/c2, outside.

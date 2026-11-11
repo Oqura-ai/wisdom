@@ -5,11 +5,11 @@ import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { backups, repair, repairTargets, restore } from './repair.js';
-import { Captures } from './captures.js';
-import { SharedLibrary, readLedger, readView } from './shared.js';
-import { hookSchema, viewSchema } from './schema.js';
-import { writeJson } from './ledger.js';
+import { backups, repair, repairTargets, restore } from '../setup/repair.js';
+import { Captures } from '../record/captures.js';
+import { SharedLibrary, readLedger, readView } from '../share/shared.js';
+import { hookSchema, viewSchema } from '../core/schema.js';
+import { writeJson } from '../storage/ledger.js';
 import { startDashboard } from './dashboard.js';
 
 /** Bumped when the daemon's contract changes (capture opening or reading). A daemon
@@ -21,7 +21,7 @@ import { startDashboard } from './dashboard.js';
 // 15: /delete, /storage, /doctor and /repair.
 export const CAPTURE_API = 15;
 
-const cli = fileURLToPath(new URL('./cli.js', import.meta.url));
+const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 
 /** `wisdom doctor --json`, run as its own process: asking each harness its version can take
  * seconds, and the daemon must keep answering hooks meanwhile. One run at a time; its result is

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import type { LedgerRecord, Manifest } from './schema.js';
+import type { LedgerRecord, Manifest } from '../core/schema.js';
 
 /** SQLite owns metadata. Large evidence stays in content-addressed payload files.
  * There is one writer (the daemon), and every append is committed before ACK.

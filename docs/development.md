@@ -66,14 +66,14 @@ npm publish
 
 Read these in order:
 
-1. [schema.ts](../src/schema.ts): record vocabulary and the ledger, view and capture request schemas.
-2. [harnesses/](../src/harnesses/): one adapter per harness. [types.ts](../src/harnesses/types.ts) is the contract, and each harness's `launch.ts` writes its hooks into its home. [pi/extension.ts](../src/harnesses/pi/extension.ts), [claude-code/hook.ts](../src/harnesses/claude-code/hook.ts) and [codex/hook.ts](../src/harnesses/codex/hook.ts) send events through `deliver` in [client.ts](../src/client.ts).
-3. [captures.ts](../src/captures.ts): routing by session, the spool, the session-file scan, and operation/change coordination.
-4. [workspace.ts](../src/workspace.ts): scoped file observation and diff generation.
-5. [database.ts](../src/database.ts) and [ledger.ts](../src/ledger.ts): SQLite, payloads and native mirroring.
-6. [discovery.ts](../src/discovery.ts): the agent-facing ledger (glance, open, positions, the ceiling). [conversation.ts](../src/conversation.ts) assembles one turn in recorded order, [evidence.ts](../src/evidence.ts) reads exact bodies at a version, and [content.ts](../src/content.ts) extracts surface text. [stats.ts](../src/stats.ts) and [views.ts](../src/views.ts) serve the dashboard.
-7. [daemon.ts](../src/daemon.ts): the small HTTP boundary and daemon lifecycle.
-8. [cli.ts](../src/cli.ts), [client.ts](../src/client.ts), [mcp.ts](../src/mcp.ts), [doctor.ts](../src/doctor.ts): human and agent interfaces.
+1. [schema.ts](../src/core/schema.ts): record vocabulary and the ledger, view and capture request schemas.
+2. [harnesses/](../src/harnesses/): one adapter per harness. [types.ts](../src/harnesses/types.ts) is the contract, and each harness's `launch.ts` writes its hooks into its home. [pi/extension.ts](../src/harnesses/pi/extension.ts), [claude-code/hook.ts](../src/harnesses/claude-code/hook.ts) and [codex/hook.ts](../src/harnesses/codex/hook.ts) send events through `deliver` in [client.ts](../src/service/client.ts).
+3. [captures.ts](../src/record/captures.ts): routing by session, the spool, the session-file scan, and operation/change coordination.
+4. [workspace.ts](../src/record/workspace.ts): scoped file observation and diff generation.
+5. [database.ts](../src/storage/database.ts) and [ledger.ts](../src/storage/ledger.ts): SQLite, payloads and native mirroring.
+6. [discovery.ts](../src/read/discovery.ts): the agent-facing ledger (glance, open, positions, the ceiling). [conversation.ts](../src/read/conversation.ts) assembles one turn in recorded order, [evidence.ts](../src/storage/evidence.ts) reads exact bodies at a version, and [content.ts](../src/core/content.ts) extracts surface text. [stats.ts](../src/read/stats.ts) and [views.ts](../src/read/views.ts) serve the dashboard.
+7. [daemon.ts](../src/service/daemon.ts): the small HTTP boundary and daemon lifecycle.
+8. [cli.ts](../src/cli.ts), [client.ts](../src/service/client.ts), [mcp.ts](../src/service/mcp.ts), [doctor.ts](../src/setup/doctor.ts): human and agent interfaces.
 
 [Architecture](architecture.md) has the storage details and a file-by-file map.
 

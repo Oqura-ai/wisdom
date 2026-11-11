@@ -1,10 +1,10 @@
 import path from 'node:path';
 import { conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
 import { resolveCapture } from './discovery.js';
-import { EvidenceReader } from './evidence.js';
-import { adapter } from './harnesses/index.js';
-import type { LedgerRecord, Manifest } from './schema.js';
-import type { SessionStore } from './store.js';
+import { EvidenceReader } from '../storage/evidence.js';
+import { adapter } from '../harnesses/index.js';
+import type { LedgerRecord, Manifest } from '../core/schema.js';
+import type { SessionStore } from '../storage/store.js';
 
 /** One session as a Markdown document anyone can read: every prompt and reply in full, each
  * tool call folded with its whole input and output, every patch raw. Nothing is summarized or

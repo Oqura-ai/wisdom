@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createTwoFilesPatch } from 'diff';
-import { Ledger, hash, writeJson } from './ledger.js';
-import { LedgerDatabase } from './database.js';
+import { Ledger, hash, writeJson } from '../storage/ledger.js';
+import { LedgerDatabase } from '../storage/database.js';
 import { SessionFiles, scope } from './workspace.js';
-import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from './schema.js';
-import { adapter, harnessNames } from './harnesses/index.js';
-import type { NativeEntry } from './harnesses/types.js';
-import { surfaceText } from './content.js';
-import { cloneNote, harnessHome, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch, type Connected } from './paths.js';
+import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
+import { adapter, harnessNames } from '../harnesses/index.js';
+import type { NativeEntry } from '../harnesses/types.js';
+import { surfaceText } from '../core/content.js';
+import { cloneNote, harnessHome, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch, type Connected } from '../core/paths.js';
 
 interface RunningCapture {
   ledger: Ledger;

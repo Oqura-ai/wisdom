@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { writeJson } from './ledger.js';
-import { connectedFile, readConnected, type Connected } from './paths.js';
-import { userHome } from './harnesses/index.js';
-import { hookState, installSkill, removeSkill, settingsFile, settingsFiles } from './harnesses/launch.js';
-import { connectClaudeCode, disconnectClaudeCode } from './harnesses/claude-code/launch.js';
-import { connectCodex, disconnectCodex } from './harnesses/codex/launch.js';
-import { connectPi, disconnectPi } from './harnesses/pi/launch.js';
+import { writeJson } from '../storage/ledger.js';
+import { connectedFile, readConnected, type Connected } from '../core/paths.js';
+import { userHome } from '../harnesses/index.js';
+import { hookState, installSkill, removeSkill, settingsFile, settingsFiles } from '../harnesses/launch.js';
+import { connectClaudeCode, disconnectClaudeCode } from '../harnesses/claude-code/launch.js';
+import { connectCodex, disconnectCodex } from '../harnesses/codex/launch.js';
+import { connectPi, disconnectPi } from '../harnesses/pi/launch.js';
 
 export type Connectable = keyof typeof settingsFiles.home;
 const connectors: Record<Connectable, { connect: (dataDir: string) => string; disconnect: (dataDir: string) => void }> = {

@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { startDaemon } from '../src/daemon.js';
-import { call, connectionAt } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call, connectionAt } from '../src/service/client.js';
 import { observation } from '../src/harnesses/claude-code/hook.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 

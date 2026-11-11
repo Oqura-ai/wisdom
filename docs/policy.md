@@ -33,7 +33,7 @@ These hold for every change. A change that breaks one is wrong, however useful.
 
 ## 2. Reading rules (the ledger)
 
-The ledger ([src/discovery.ts](../src/discovery.ts)) is how agents read. It follows how a
+The ledger ([src/read/discovery.ts](../src/read/discovery.ts)) is how agents read. It follows how a
 person explores a session: look at the shape, skim the headlines, open the odd one, read
 the smallest proof, check the claim, stop.
 

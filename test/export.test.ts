@@ -6,11 +6,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { call } from '../src/client.js';
-import { startDaemon, type Connection } from '../src/daemon.js';
+import { call } from '../src/service/client.js';
+import { startDaemon, type Connection } from '../src/service/daemon.js';
 import { adapter } from '../src/harnesses/index.js';
-import { draftShare, writeShare } from '../src/share.js';
-import { harnessHome, marker } from '../src/paths.js';
+import { draftShare, writeShare } from '../src/share/share.js';
+import { harnessHome, marker } from '../src/core/paths.js';
 
 const bin = fileURLToPath(new URL('../src/bin.js', import.meta.url));
 const secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz123456';

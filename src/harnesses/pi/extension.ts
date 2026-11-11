@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { deliver, handoffFromEnv } from '../../client.js';
-import { findDataDir, harnessHome } from '../../paths.js';
+import { deliver, handoffFromEnv } from '../../service/client.js';
+import { findDataDir, harnessHome } from '../../core/paths.js';
 
 // A tiny structural interface keeps this extension independent of a second Pi
 // installation. The installed Pi supplies its real API at runtime (verified on 1.2.0).

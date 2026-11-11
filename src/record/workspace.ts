@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createTwoFilesPatch } from 'diff';
-import { hash, Ledger } from './ledger.js';
-import { linkedWorktree, worktreeAt, worktreeBranch, type Worktree } from './paths.js';
-import type { Manifest } from './schema.js';
+import { hash, Ledger } from '../storage/ledger.js';
+import { linkedWorktree, worktreeAt, worktreeBranch, type Worktree } from '../core/paths.js';
+import type { Manifest } from '../core/schema.js';
 
 export const scope: Manifest['scope'] = {
   excludedDirectories: ['.git', '.wisdom', '.npm-cache', 'node_modules', 'dist', 'build', '.next', '.venv', '__pycache__'],

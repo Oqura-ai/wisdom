@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { call } from './client.js';
-import type { Connection } from './daemon.js';
-import { wisdomVersion } from './doctor.js';
-import { hash } from './ledger.js';
-import type { LedgerRecord, Manifest } from './schema.js';
+import { call } from '../service/client.js';
+import type { Connection } from '../service/daemon.js';
+import { wisdomVersion } from '../setup/doctor.js';
+import { hash } from '../storage/ledger.js';
+import type { LedgerRecord, Manifest } from '../core/schema.js';
 import { maskSecret, redactSecrets, scanSecrets } from './secrets.js';
 
 /** A share file is gzipped JSON lines: a header, each session's manifest and records, its

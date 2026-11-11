@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { call } from './client.js';
-import type { Connection } from './daemon.js';
-import { adapter } from './harnesses/index.js';
+import { call } from '../service/client.js';
+import type { Connection } from '../service/daemon.js';
+import { adapter } from '../harnesses/index.js';
 
 /** `wisdom track` names harnesses by their command; the ledger by their adapter. */
 export const harnessByCommand: Record<string, string> = { claude: 'claude-code', codex: 'codex', pi: 'pi' };

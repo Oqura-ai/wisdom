@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { deliver, handoffFromEnv } from '../../client.js';
-import { hookDataDir, wisdomHomeData } from '../../paths.js';
+import { deliver, handoffFromEnv } from '../../service/client.js';
+import { hookDataDir, wisdomHomeData } from '../../core/paths.js';
 
 /** Map one Claude Code hook payload to a neutral observation. Verified against
  * Claude Code 2.1.306 payloads; unknown events are ignored, not guessed.

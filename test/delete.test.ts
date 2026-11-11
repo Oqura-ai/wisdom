@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { call } from '../src/client.js';
-import { startDaemon, type Connection } from '../src/daemon.js';
-import { Captures } from '../src/captures.js';
-import { hookSchema } from '../src/schema.js';
-import { harnessHome, marker } from '../src/paths.js';
+import { call } from '../src/service/client.js';
+import { startDaemon, type Connection } from '../src/service/daemon.js';
+import { Captures } from '../src/record/captures.js';
+import { hookSchema } from '../src/core/schema.js';
+import { harnessHome, marker } from '../src/core/paths.js';
 
 function project() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-delete-')));

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
-import type { SessionStore } from './store.js';
-import { workspaceKey } from './database.js';
-import { resumeCommands } from './harnesses/index.js';
-import type { LedgerRecord } from './schema.js';
+import type { SessionStore } from '../storage/store.js';
+import { workspaceKey } from '../storage/database.js';
+import { resumeCommands } from '../harnesses/index.js';
+import type { LedgerRecord } from '../core/schema.js';
 import { estimateCost } from './prices.js';
 
 /** `costEstimated`: some of `costUsd` was estimated from tokens (prices.ts), because the

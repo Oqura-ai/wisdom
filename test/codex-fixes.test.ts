@@ -6,8 +6,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from '../src/daemon.js';
-import { call } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call } from '../src/service/client.js';
 import { observation } from '../src/harnesses/codex/hook.js';
 import { hookEvents, nodeReplEnabled, requireTrustedHooks } from '../src/harnesses/codex/launch.js';
 

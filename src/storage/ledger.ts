@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import type { LedgerRecord, Manifest } from './schema.js';
-import { preview } from './schema.js';
+import type { LedgerRecord, Manifest } from '../core/schema.js';
+import { preview } from '../core/schema.js';
 import { LedgerDatabase } from './database.js';
-import { adapter } from './harnesses/index.js';
-import type { NativeEntry } from './harnesses/types.js';
+import { adapter } from '../harnesses/index.js';
+import type { NativeEntry } from '../harnesses/types.js';
 
 export const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 

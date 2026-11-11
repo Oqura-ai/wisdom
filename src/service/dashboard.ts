@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 export type DashboardState = { url: string; status: 'starting' | 'running' | 'exited'; log: string } | { status: 'unavailable'; reason: string };
 
-const bundled = fileURLToPath(new URL('../../dist-dashboard/', import.meta.url));
+const bundled = fileURLToPath(new URL('../../../dist-dashboard/', import.meta.url));
 
 /** The viewer, built ahead of time into dist-dashboard/. The daemon starts it, and it never
  * affects recording: if it is missing or cannot start, capture continues.

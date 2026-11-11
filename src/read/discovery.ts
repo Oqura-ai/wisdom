@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SessionStore, SharedInfo, SharedSession } from './store.js';
-import { ledgerSchema, type LedgerRecord, type LedgerRequest, type Manifest } from './schema.js';
-import { EvidenceReader, evidenceVersion } from './evidence.js';
+import type { SessionStore, SharedInfo, SharedSession } from '../storage/store.js';
+import { ledgerSchema, type LedgerRecord, type LedgerRequest, type Manifest } from '../core/schema.js';
+import { EvidenceReader, evidenceVersion } from '../storage/evidence.js';
 import { betterResult, conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
-import { adapter } from './harnesses/index.js';
+import { adapter } from '../harnesses/index.js';
 
 /** The agent-facing ledger. Two moves over one session: glance (its shape and one entry
  * per turn) and open (one position, whole). Responses are plain text in recorded order.

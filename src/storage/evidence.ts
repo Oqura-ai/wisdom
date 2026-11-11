@@ -1,7 +1,7 @@
 import type { SessionStore } from './store.js';
-import type { LedgerRecord } from './schema.js';
-import { isSurfaceRecord, surfaceText } from './content.js';
-import { nativeMessage } from './harnesses/index.js';
+import type { LedgerRecord } from '../core/schema.js';
+import { isSurfaceRecord, surfaceText } from '../core/content.js';
+import { nativeMessage } from '../harnesses/index.js';
 
 /** Cache source bytes only for the lifetime of one read. Several references can
  * point to the same native message without causing repeated file reads.

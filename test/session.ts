@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { call } from '../src/client.js';
-import type { Connection } from '../src/daemon.js';
+import { call } from '../src/service/client.js';
+import type { Connection } from '../src/service/daemon.js';
 
 /** Tests speak the hooks' protocol: every event names its session. A session opens with
  * its first event and ends with session_ended, as it does under a real harness.

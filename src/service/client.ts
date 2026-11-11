@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { CAPTURE_API, type Connection } from './daemon.js';
-import { spoolDir } from './paths.js';
-import { handoffSchema, type Handoff, type HookEvent } from './schema.js';
+import { spoolDir } from '../core/paths.js';
+import { handoffSchema, type Handoff, type HookEvent } from '../core/schema.js';
 
 export function connectionAt(dataDir: string): Connection {
   const file = path.join(dataDir, 'daemon.json');
@@ -93,12 +93,12 @@ export async function ensureDaemon(dataDir: string, port?: number, dashboard = t
     // `wisdom` command (a global install) next to a daemon started from a newer build.
     if (running < CAPTURE_API) throw new Error(`The running Wisdom daemon (PID ${existing.connection.pid}) is from an older build. `
       + 'Stop it with `wisdom daemon stop` (any active recording becomes interrupted), then retry.');
-    if (running !== CAPTURE_API) throw new Error(`This wisdom command (${fileURLToPath(new URL('./cli.js', import.meta.url))}) is older than the running daemon `
+    if (running !== CAPTURE_API) throw new Error(`This wisdom command (${fileURLToPath(new URL('../cli.js', import.meta.url))}) is older than the running daemon `
       + `(PID ${existing.connection.pid}). Use the copy that started the daemon, or update this one: npm install -g @oqura/wisdom@latest`);
     return existing.connection;
   }
   fs.mkdirSync(dataDir, { recursive: true });
-  startDetached([fileURLToPath(new URL('./cli.js', import.meta.url)), 'daemon', 'run', '--data', dataDir,
+  startDetached([fileURLToPath(new URL('../cli.js', import.meta.url)), 'daemon', 'run', '--data', dataDir,
     ...(port === undefined ? [] : ['--port', String(port)]), ...(dashboard ? [] : ['--no-dashboard'])], path.join(dataDir, 'daemon.log'));
   for (let attempt = 0; attempt < 100; attempt++) {
     const started = await connect();

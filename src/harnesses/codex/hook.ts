@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { deliver, handoffFromEnv } from '../../client.js';
-import { hookDataDir, wisdomHomeData } from '../../paths.js';
+import { deliver, handoffFromEnv } from '../../service/client.js';
+import { hookDataDir, wisdomHomeData } from '../../core/paths.js';
 import { exitEnvelope } from './adapter.js';
 
 /** Unknown tool outcomes stay unknown. A PostToolUse is not proof of success. */

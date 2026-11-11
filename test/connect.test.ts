@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { call } from '../src/client.js';
-import { startDaemon } from '../src/daemon.js';
-import { connect, disconnect, ignoreDataFolder } from '../src/connect.js';
+import { call } from '../src/service/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { connect, disconnect, ignoreDataFolder } from '../src/setup/connect.js';
 import { adapter, resumeCommands, sessionPlace, userHome } from '../src/harnesses/index.js';
 import { hookState } from '../src/harnesses/launch.js';
-import { connectedFile, harnessHome, marker, readConnected } from '../src/paths.js';
+import { connectedFile, harnessHome, marker, readConnected } from '../src/core/paths.js';
 
 const hasGit = spawnSync('git', ['--version'], { windowsHide: true }).status === 0;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });

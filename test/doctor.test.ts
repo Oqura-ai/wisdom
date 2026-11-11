@@ -5,13 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from '../src/daemon.js';
-import { startDashboard } from '../src/dashboard.js';
-import { diagnose, formatChecks } from '../src/doctor.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { startDashboard } from '../src/service/dashboard.js';
+import { diagnose, formatChecks } from '../src/setup/doctor.js';
 import { hookState } from '../src/harnesses/launch.js';
 import { installClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installPi } from '../src/harnesses/pi/launch.js';
-import { marker, spoolDir } from '../src/paths.js';
+import { marker, spoolDir } from '../src/core/paths.js';
 
 const bin = fileURLToPath(new URL('../src/bin.js', import.meta.url));
 const absent = { claude: 'wisdom-test-no-such-harness', codex: 'wisdom-test-no-such-harness', pi: () => undefined };

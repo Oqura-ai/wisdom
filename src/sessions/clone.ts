@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { call } from './client.js';
-import type { Connection } from './daemon.js';
-import { adapter, userHome } from './harnesses/index.js';
-import { hookState, settingsFiles, type Place } from './harnesses/launch.js';
-import { moveFolder } from './harnesses/types.js';
-import { hash } from './ledger.js';
-import { cloneNote, harnessHome } from './paths.js';
-import type { CloneNote, Manifest } from './schema.js';
+import { call } from '../service/client.js';
+import type { Connection } from '../service/daemon.js';
+import { adapter, userHome } from '../harnesses/index.js';
+import { hookState, settingsFiles, type Place } from '../harnesses/launch.js';
+import { moveFolder } from '../harnesses/types.js';
+import { hash } from '../storage/ledger.js';
+import { cloneNote, harnessHome } from '../core/paths.js';
+import type { CloneNote, Manifest } from '../core/schema.js';
 
 interface Source { readVersion: number; manifest: Manifest; file?: string; bytes: number; turns: number;
   changes: { path: string; afterHash: string | null }[]; sharedFrom?: string }

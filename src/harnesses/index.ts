@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { harnessHome, wisdomHomeData } from '../paths.js';
+import { harnessHome, wisdomHomeData } from '../core/paths.js';
 import type { HarnessAdapter, NeutralMessage } from './types.js';
 import type { Place } from './launch.js';
 import { pi } from './pi/adapter.js';

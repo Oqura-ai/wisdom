@@ -7,12 +7,12 @@ import zlib from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { call } from '../src/client.js';
-import { startDaemon, type Connection } from '../src/daemon.js';
-import { chooseSource, type HandoffSession } from '../src/handoff.js';
-import { draftShare, writeShare } from '../src/share.js';
-import { SharedLibrary } from '../src/shared.js';
-import { marker } from '../src/paths.js';
+import { call } from '../src/service/client.js';
+import { startDaemon, type Connection } from '../src/service/daemon.js';
+import { chooseSource, type HandoffSession } from '../src/sessions/handoff.js';
+import { draftShare, writeShare } from '../src/share/share.js';
+import { SharedLibrary } from '../src/share/shared.js';
+import { marker } from '../src/core/paths.js';
 
 const bin = fileURLToPath(new URL('../src/bin.js', import.meta.url));
 const secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz123456';

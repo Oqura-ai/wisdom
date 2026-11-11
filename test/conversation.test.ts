@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { startDaemon } from '../src/daemon.js';
-import { call } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call } from '../src/service/client.js';
 import { closeSession, observeSession, openSession } from './session.js';
-import { cleanOutput, conversation } from '../src/conversation.js';
+import { cleanOutput, conversation } from '../src/read/conversation.js';
 
 const line = (entry: unknown) => JSON.stringify(entry) + '\n';
 // Transcript lines are stamped when written, before the next hook event, as harnesses do.

@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { startDaemon } from '../src/daemon.js';
-import { call } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call } from '../src/service/client.js';
 import { closeSession, observeSession, openSession } from './session.js';
 import { pi } from '../src/harnesses/pi/adapter.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 import { codex } from '../src/harnesses/codex/adapter.js';
-import { estimateCost } from '../src/prices.js';
+import { estimateCost } from '../src/read/prices.js';
 
 const lines = (...entries: unknown[]) => entries.map(e => JSON.stringify(e)).join('\n') + '\n';
 

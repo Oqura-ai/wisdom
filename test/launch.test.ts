@@ -11,9 +11,9 @@ import { installPi, launchPi } from '../src/harnesses/pi/launch.js';
 import { resolveCommand, staleHooks } from '../src/harnesses/launch.js';
 import { installClaudeCode, launchClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installCodex } from '../src/harnesses/codex/launch.js';
-import { startDaemon } from '../src/daemon.js';
-import { call, connectionAt, spool } from '../src/client.js';
-import { findDataDir, hookDataDir, marker } from '../src/paths.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call, connectionAt, spool } from '../src/service/client.js';
+import { findDataDir, hookDataDir, marker } from '../src/core/paths.js';
 
 const temp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `wisdom-${name}-`));
 

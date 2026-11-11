@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { ledgerSchema } from './schema.js';
+import { ledgerSchema } from '../core/schema.js';
 import { call } from './client.js';
 import type { Connection } from './daemon.js';
 

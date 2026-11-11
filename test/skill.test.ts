@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { diagnose } from '../src/doctor.js';
+import { diagnose } from '../src/setup/doctor.js';
 import { skillState } from '../src/harnesses/launch.js';
 import { installClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installCodex } from '../src/harnesses/codex/launch.js';

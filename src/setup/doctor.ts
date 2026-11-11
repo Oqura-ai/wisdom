@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { call } from './client.js';
-import { CAPTURE_API, type Connection } from './daemon.js';
-import { harnessHome, movedFrom, spoolDir } from './paths.js';
-import { hookCommand, hookState, resolveCommand, skillState, type Command, type Place } from './harnesses/launch.js';
-import { hookEvents, inspectHooks, requireTrustedHooks } from './harnesses/codex/launch.js';
-import { piCommand } from './harnesses/pi/launch.js';
+import { call } from '../service/client.js';
+import { CAPTURE_API, type Connection } from '../service/daemon.js';
+import { harnessHome, movedFrom, spoolDir } from '../core/paths.js';
+import { hookCommand, hookState, resolveCommand, skillState, type Command, type Place } from '../harnesses/launch.js';
+import { hookEvents, inspectHooks, requireTrustedHooks } from '../harnesses/codex/launch.js';
+import { piCommand } from '../harnesses/pi/launch.js';
 
 export type Level = 'ok' | 'note' | 'problem';
 export interface Check { level: Level; name: string; detail: string; fix?: string }
@@ -17,7 +17,7 @@ export interface Check { level: Level; name: string; detail: string; fix?: strin
 const testedWith = { 'claude-code': '2.1.317', codex: '0.164.0', pi: '1.2.0' };
 
 export function wisdomVersion(): string {
-  return JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+  return JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
 }
 
 /** The version a harness reports, or undefined when it cannot be found or run. */

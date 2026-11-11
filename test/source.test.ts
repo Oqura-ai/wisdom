@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startDaemon } from '../src/daemon.js';
-import { call } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call } from '../src/service/client.js';
 import { closeSession, observeSession, openSession } from './session.js';
 
 const line = (entry: unknown) => JSON.stringify(entry) + '\n';

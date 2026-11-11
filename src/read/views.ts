@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SessionStore } from './store.js';
+import type { SessionStore } from '../storage/store.js';
 import { resolveCapture } from './discovery.js';
 import { sessionMarkdown } from './markdown.js';
-import type { LedgerRecord, ViewRequest } from './schema.js';
-import { EvidenceReader, evidenceVersion } from './evidence.js';
+import type { LedgerRecord, ViewRequest } from '../core/schema.js';
+import { EvidenceReader, evidenceVersion } from '../storage/evidence.js';
 import { conversation } from './conversation.js';
 import { stats } from './stats.js';
 import { estimateCost } from './prices.js';

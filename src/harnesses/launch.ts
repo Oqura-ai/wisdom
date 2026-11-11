@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { harnessHome } from '../paths.js';
-import { writeJson } from '../ledger.js';
+import { harnessHome } from '../core/paths.js';
+import { writeJson } from '../storage/ledger.js';
 
 /** What `wisdom track <harness>` runs: the harness with its home set to Wisdom's folder.
  * Recording does not depend on it; the hooks live in that home.
