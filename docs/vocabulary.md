@@ -6,13 +6,14 @@ schema is `ledgerSchema` in [src/core/schema.ts](../src/core/schema.ts).
 
 ## Requests
 
-One tool (`ledger` over MCP, `POST /ledger` over HTTP, `glance`/`open` in the CLI), five parameters:
+One tool (`ledger` over MCP, `POST /ledger` over HTTP, `glance`/`open` in the CLI), six parameters:
 
 | Parameter | Meaning |
 | --- | --- |
 | `glance: true` | Without `capture`: recorded sessions, newest first. With `capture`: the session's shape and one entry per turn. |
 | `open` | A position, returned whole (see below). |
 | `capture` | A session ID, a unique prefix of 8 or more characters, or `latest` (the most recently started session with a turn; if none has one, the most recently started). Required with `open`. |
+| `commit` | With `glance` and no `capture` (`wisdom glance --commit <commit>`): a git commit in this project (a hash, branch or `HEAD`). Each changed piece of it, with the recorded steps that made it. See [Commits](#commits). |
 | `from` | Line to continue from, as a limited response's last line states. |
 | `at` | Read version to pin. Every response states its version. |
 
@@ -78,6 +79,42 @@ tool is shown in full. Unknown tools are always shown in full.
 | `no result recorded` | No result, and the session is no longer recording. |
 | `result from transcript` | No result hook arrived; the result was taken from the harness's own transcript. |
 | `seen only in transcript` | The call appears in the transcript with no hook for it. |
+
+## Commits
+
+`glance` with `commit` reads a git commit through the recordings. Nothing is stored; the
+same commit at the same version gives the same text. It is implemented in
+[src/team/commits.ts](../src/team/commits.ts).
+
+| Text | Meaning |
+| --- | --- |
+| `commit 1a2b3c4d5e6f · <subject> · committed <time> · version N` | The commit, and the version every position below is read at. |
+| `parent … · 4 files · 5 pieces: 4 from recorded steps, 1 not recorded` | A piece is one hunk of the commit's diff against its first parent (no context lines). A merge is read against its first parent. |
+| `the commit's own diff: git show <hash>` | The diff itself is not repeated; each piece's `@@` header matches git's. |
+| `@@ -2,1 +2,1 @@  t1/c1 in session 7e1f2a3b` | The recorded step that wrote these lines or removed them. Several steps and sessions are listed together, separated by `;` between sessions. |
+| `t4 (changed outside any recorded step)` | The step is a change a session saw while no tool call ran (`external-or-unknown`): a person, a formatter, a pull. `outside` when it fell between turns. |
+| `not recorded` | No recorded change explains it: made before recording, while nothing was recording, or in a session whose data is gone. `2 lines not recorded` beside steps: part of the piece. |
+| `whole file from …` | Lines could not be matched (binary, a missing patch), so the steps that produced the committed file are listed. `earlier changes not recorded`: the steps reach the committed file, but not back to the parent's. |
+| `outside this project, not recorded here` | The file is in the repository but not in the folder Wisdom records. |
+| `not recorded: excluded from recording` | The path is excluded (`node_modules`, `.wisdomignore`, …). |
+| `lined up by file, not by line` | The steps explain the file, but git's diff lines this hunk up differently (repeated lines), so all of the file's steps are listed. |
+| `sessions` | Each session with a step in the commit, and its positions. Open them with `capture` and `open`. |
+| `record kept when the commit was made, <time>` | Read from the record Wisdom kept in `refs/wisdom/records/<commit>`. `worked out now from the recordings`: no record was kept, so it was worked out on request. |
+| `(changed since the commit)` | A kept step whose session no longer has that exact change (its hashes differ). |
+| `(session not available)` | A kept step whose session is not here: deleted, or a teammate's not fetched (`wisdom team fetch`). |
+| `guide · written by claude-haiku-5-5 via Claude Code, <time> · derived, not evidence · …` | A model's account of the commit for reviewers, written after it (team mode). The line ends with what Wisdom's check found: that it covers every piece and its citations exist (not that it is right), or what did not pass. |
+| `guide · none: <reason>` | A commit with agent work and no guide, and why: turned off by the person who committed, no writer installed, the writer failed. |
+| `its message carries N recorded commits through their Wisdom-Record lines` | A commit made from others (a squash merge, a cherry-pick): their records follow, each under `── carried: <commit>`. |
+| `read Wisdom · N calls · C characters returned, about T tokens` | In a session's glance: how much this session read from Wisdom. Tokens are estimated at four characters each. |
+
+How a piece is matched: each recorded change stores a hash of the whole file before and
+after it. Starting from the committed file, Wisdom follows the recorded changes back, each
+one whose result is the file the next one started from, until it reaches the parent's
+file. The lines are then traced through those changes' patches. A session is linked only
+because it produced these exact bytes, never because it touched the same file name.
+Changes recorded after the commit's time are not used. Where two sessions saw the same
+edit, the one that saw it during a tool call is used. The committed file is compared both
+as git checks it out and as stored, so line-ending conversion does not break a match.
 
 ## Records behind the text
 

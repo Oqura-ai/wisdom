@@ -138,6 +138,15 @@ export class SharedLibrary {
     }
   }
 
+  /** Take one imported copy out (a newer version replaced it, or the team deleted it). */
+  remove(shareId: string): void {
+    const store = this.stores.get(shareId);
+    if (!store) return;
+    store.database.close();
+    this.stores.delete(shareId);
+    fs.rmSync(store.dataDir, { recursive: true, force: true });
+  }
+
   close(): void { for (const store of this.all) store.database.close(); }
 }
 
@@ -152,7 +161,10 @@ function holds(store: SessionStore, ref: string): boolean {
 export function readLedger(captures: Captures, library: SharedLibrary, input: unknown): string {
   const ref = (input as { capture?: unknown })?.capture;
   const store = typeof ref === 'string' && ref !== 'latest' && !holds(captures, ref) ? library.owner(ref) : undefined;
-  return store ? ledger(store, input) : ledger(captures, input, library.sessions());
+  // A commit's steps can be in this project's sessions or in teammates' fetched copies.
+  const stores = (id: string) => captures.database.manifests().some(m => m.captureId === id) ? captures
+    : library.all.find(shared => shared.ids.includes(id));
+  return store ? ledger(store, input) : ledger(captures, input, library.sessions(), stores);
 }
 
 /** A dashboard read, routed the same way. Exports stay with this project's own sessions. */

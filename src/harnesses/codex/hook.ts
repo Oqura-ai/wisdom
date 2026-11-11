@@ -65,7 +65,8 @@ export async function main(named = process.argv[2], place = process.argv[3]): Pr
     event = JSON.parse(input);
     const mapped = observation(event);
     // The project's copy of the hook stands aside in a tracked session: its home's copy records it.
-    if (mapped && !(place === 'project' && wisdomHomeData('codex', process.env.CODEX_HOME))) {
+    // Wisdom's own guide writer may run Codex; its session is not the person's work.
+    if (mapped && !process.env.WISDOM_GUIDE_WRITER && !(place === 'project' && wisdomHomeData('codex', process.env.CODEX_HOME))) {
       const dataDir = hookDataDir('codex', process.env.CODEX_HOME, named);
       // A subagent's events name its own rollout file; that is not the session transcript
       // switching. Its transcript is copied separately at SubagentStop.

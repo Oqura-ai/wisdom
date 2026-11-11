@@ -16,6 +16,8 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | Connected recording has limits | With `wisdom connect`, Claude Code and Pi record only when started in the project's top folder; Codex needs the project trusted and Wisdom's hooks reviewed once, and ignores them in a git worktree. `wisdom track` records these, with one login per project. | M |
 | Failed subagents go unmarked | A subagent cut off before it stops loses its report, transcript and tokens, with no gap to say so. | M |
 | Sessions aren't linked | Forks and `/clear` are a flat list, and `/rewind` isn't marked. | M |
+| Commit records cover your own new commits | Wisdom keeps a record for commits it sees you make while it runs. Others are worked out when asked; a deleted session then turns its pieces into `not recorded`. Merges get no record, and a rename shows as a delete and a create. | M |
+| Team mode is new | Tested against a remote on disk, not yet GitHub or GitLab. The default guide writer needs Claude Code installed. Fork contributors can't push hidden refs. See [Team mode](team.md#limits). | M |
 | Long replies through a shell | A harness can cut long shell output. Claude Code saves it to a file and Codex removes the middle, both with a notice, and the skill teaches agents to read the rest. It relies on the agent following that. | S |
 | The secret check finds known shapes only | `wisdom share` catches common keys, tokens and `PASSWORD=` style values, and misses others. Look through what you send. | Ongoing |
 | A warning on the first event | When the daemon isn't running, the first hook shows a warning such as `SessionStart:startup hook error`. Nothing is lost, but it looks broken. | S |

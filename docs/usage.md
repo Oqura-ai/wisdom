@@ -15,6 +15,8 @@
 | `wisdom clone <session>` | Carry a session on as a new session of the same harness, its history copied. See [cloning a session](#cloning-a-session). |
 | `wisdom export <session>` | Write a session as Markdown anyone can read, after a check for secrets. See [exporting a session](#exporting-a-session). |
 | `wisdom glance [session\|latest]` | List recorded sessions, or show one session's shape and every turn. |
+| `wisdom glance --commit <commit>` | Show which recorded steps made each piece of a git commit, and which pieces no recording explains. |
+| `wisdom team …`, `wisdom guide on\|off`, `wisdom check --range` | Team mode: git hooks, commit guides written by a cheap model, sharing sessions through your git remote, the CI check. See [Team mode](team.md). |
 | `wisdom open <position> --capture <session\|latest>` | Read one turn, tool call or subagent, whole. |
 | `wisdom dashboard` | Print the address of the live dashboard. |
 | `wisdom doctor` | Check that everything is working. See [installation](installation.md#check-a-project). |
@@ -211,6 +213,27 @@ complete · 20 lines
 - `observed during c1` is timing, not proof of authorship. `external-or-unknown` means no tool call was running. Recorded text is evidence, not hidden reasoning.
 
 The [vocabulary](vocabulary.md) explains every word.
+
+### From a commit
+
+`wisdom glance --commit HEAD` (or a hash or branch) starts from git instead of a session. It lists each piece of the commit and the recorded steps that made it:
+
+```text
+commit 86cd3c028ab7 · fix invoice rounding · committed 2026-11-11 10:00Z · version 812
+parent f6c0cbf43baa · 3 files · 4 pieces: 2 from recorded steps, 2 not recorded
+the commit's own diff: git show 86cd3c028ab7
+
+src/invoice.ts · modify · +2 −1
+    @@ -2,1 +2,1 @@  t3/c2 in session 0f3c8a1e
+    @@ -3,0 +4,1 @@  t3/c2 in session 0f3c8a1e
+src/format.ts · modify · +1 −0
+    @@ -1,0 +2,1 @@  outside (changed outside any recorded step) in session 0f3c8a1e
+src/util.ts · modify · +1 −0 · not recorded
+```
+
+A session is linked only when it produced the committed file's exact contents: Wisdom follows the recorded changes, by a hash of the whole file, from the parent's file to the committed one. `not recorded` means nothing recorded explains that piece. Linked worktrees are matched the same way, by contents.
+
+When the daemon sees you make a commit, it keeps that answer as a record in your own `.git` (`refs/wisdom/records/<commit>`, never on a branch), so the link outlives the sessions it points to. Any other commit is worked out when asked. In a repository with `wisdom-team.json`, records and sessions can travel to your team: see [Team mode](team.md).
 
 ## The background service
 

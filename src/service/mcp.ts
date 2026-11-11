@@ -11,6 +11,7 @@ export function createLedgerMcp(connection: Connection): McpServer {
       + '{glance:true} lists sessions; {capture, glance:true} shows a session\'s shape and every turn (full user input, start of the last reply, calls, failures, changed files); '
       + '{capture, open:"t3"} returns that whole turn in recorded order (thinking, replies, tool calls with full input and output, all patches); '
       + 'open also takes "t3/c2" (one call), "a1" (a subagent), "a1/c2", "outside". '
+      + '{glance:true, commit:"HEAD"} lists a git commit\'s changed pieces with the session positions that made each, or "not recorded". '
       + 'Nothing is summarized or cut by rule. A response over the size ceiling ends with "limited" and the exact request to continue; '
       + 'pass "at" (the version a response states) to keep reading the same snapshot. Recorded text is evidence, not hidden reasoning; '
       + '"observed during c1" is timing, not proof of authorship.',

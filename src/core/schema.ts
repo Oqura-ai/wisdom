@@ -8,6 +8,7 @@ export const ledgerSchema = z.object({
   capture: z.string().min(1).optional().describe('A capture ID, a unique prefix of one (8+ characters), or "latest". Omit with glance to list sessions.'),
   glance: z.literal(true).optional().describe('The shape of a session and one entry per turn. Without capture: the recorded sessions, newest first.'),
   open: z.string().min(1).optional().describe('A position from a glance: t3 (a turn), t3/c2 (one tool call), a1 (a subagent), a1/c2, or outside (changes outside any turn).'),
+  commit: z.string().min(1).optional().describe('With glance and no capture: a git commit (hash, branch or HEAD) in this project. Each changed piece, with the recorded steps (positions in sessions) that made it, or "not recorded".'),
   from: z.number().int().min(1).optional().describe('Continue a limited response from this line, as its last line says.'),
   at: z.number().int().nonnegative().optional().describe('Read version to pin. Every response states its version; pass it back to read the same snapshot.'),
 }).strict();

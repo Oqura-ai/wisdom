@@ -15,7 +15,7 @@ import { maskSecret, redactSecrets, scanSecrets } from './secrets.js';
  */
 export const SHARE_FORMAT = 1;
 
-interface Exported { readVersion: number; manifest: Manifest; records: LedgerRecord[]; dir: string; files: string[]; nativeBytes: number }
+export interface Exported { readVersion: number; manifest: Manifest; records: LedgerRecord[]; dir: string; files: string[]; nativeBytes: number }
 
 /** One piece of text bound for the file, and how to name a place inside it. */
 interface Piece { captureId: string; record?: LedgerRecord; path?: string; encoding: 'utf8' | 'base64'; text: string; place: (index: number) => string }
@@ -92,7 +92,11 @@ function pieces(session: Exported): { pieces: Piece[]; unscanned: number } {
  * Nothing is written.
  */
 export async function draftShare(connection: Connection, refs: string[]): Promise<ShareDraft> {
-  const exported: Exported[] = await Promise.all(refs.map(capture => call(connection, '/view', { view: 'export', capture })));
+  return draftFrom(await Promise.all(refs.map(capture => call(connection, '/view', { view: 'export', capture }))));
+}
+
+/** The same, from sessions already exported (inside the daemon). */
+export function draftFrom(exported: Exported[]): ShareDraft {
   const sessions = exported.filter((session, index) => exported.findIndex(other => other.manifest.captureId === session.manifest.captureId) === index);
   const built = sessions.map(pieces);
   const all = built.flatMap(b => b.pieces);

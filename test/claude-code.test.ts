@@ -134,6 +134,7 @@ test('with its daemon down, a Claude Code hook keeps the event, starts the daemo
   } finally {
     await call(connection, '/stop', {});
     for (let i = 0; i < 100 && fs.existsSync(path.join(data, 'daemon.json')); i++) await new Promise(resolve => setTimeout(resolve, 100));
-    fs.rmSync(root, { recursive: true, force: true });
+    // The stopped daemon's process can hold its files a moment longer on Windows.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 });

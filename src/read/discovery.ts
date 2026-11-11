@@ -5,6 +5,9 @@ import { ledgerSchema, type LedgerRecord, type LedgerRequest, type Manifest } fr
 import { EvidenceReader, evidenceVersion } from '../storage/evidence.js';
 import { betterResult, conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
 import { adapter } from '../harnesses/index.js';
+import { projectOf, readCommit, toRecord, workFor, type CommitInfo, type CommitRecord, type RecordStep, type Target } from '../team/commits.js';
+import { readFile, recordIds, recordRef, recordsWithIds } from '../team/gitrefs.js';
+import { wisdomVersion } from '../setup/doctor.js';
 
 /** The agent-facing ledger. Two moves over one session: glance (its shape and one entry
  * per turn) and open (one position, whole). Responses are plain text in recorded order.
@@ -20,13 +23,18 @@ type Tool = Extract<TurnItem, { kind: 'tool' }>;
 type Context = { captures: SessionStore; version: number; manifest: Manifest; reader: EvidenceReader };
 
 /** `shared` lists sessions imported from share files, for the plain session list only. */
-export function ledger(captures: SessionStore, input: unknown, shared: SharedSession[] = []): string {
+export function ledger(captures: SessionStore, input: unknown, shared: SharedSession[] = [],
+  stores: (id: string) => SessionStore | undefined = id => captures.database.manifests().some(m => m.captureId === id) ? captures : undefined): string {
   const parsed = ledgerSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid ledger request. ${parsed.error.issues.map(i => `${i.path.join('.') || 'request'}: ${i.message}`).join('; ')}. `
     + 'Use { glance: true } to list sessions, { capture, glance: true } for one session, or { capture, open: "t1" }.');
   const request = parsed.data;
   if (!!request.glance === !!request.open) throw new Error('Send exactly one of glance or open.');
   const version = evidenceVersion(captures, request.at);
+  if (request.commit !== undefined) {
+    if (!request.glance || request.capture) throw new Error('commit goes with glance and no capture: { glance: true, commit: "HEAD" }.');
+    return commitGlance(captures, version, request.commit, request.from, stores);
+  }
   if (request.glance && !request.capture) return sessions(captures, version, shared, request.from);
   if (!request.capture) throw new Error('open needs capture: an ID from glance, or "latest".');
   const manifest = resolveCapture(captures, request.capture, version);
@@ -205,6 +213,33 @@ function lastReply(context: Context, records: LedgerRecord[]): string | undefine
   return (flat.length > 240 ? flat.slice(0, 240) + '…' : flat) + ' (from hook)';
 }
 
+/** What reading Wisdom cost this session: its calls to the ledger (the MCP tool, or a shell
+ * running `wisdom glance`/`open`/`guide`/`check`) and how much text they returned. Tokens are
+ * estimated at four characters each; the harness's own counts include them, unseparated. */
+const shellTools = /^(bash|shell|shell_command|exec_command|powershell|local_shell)$/i;
+const wisdomCommand = /(?:\bwisdom(?:\.cmd)?|cli\.js["']?)\s+(?:[^|;&\n]*\s)?(?:glance|open|guide|check)\b/;
+function wisdomReads(context: Context, records: LedgerRecord[]): { calls: number; chars: number } {
+  let calls = 0, chars = 0;
+  const finishes = new Map<string, LedgerRecord>();
+  for (const r of records) if (r.type === 'tool_finished' && r.toolCallId && betterResult(finishes.get(r.toolCallId), r)) finishes.set(r.toolCallId, r);
+  for (const r of records) {
+    if (r.type !== 'tool_started' || !r.toolName || !r.toolCallId) continue;
+    let reads = /(^|__)ledger$/.test(r.toolName);
+    if (!reads && shellTools.test(r.toolName)) {
+      const input = json(context, r)?.input;
+      const command = input?.command ?? input?.cmd;
+      reads = wisdomCommand.test(Array.isArray(command) ? command.join(' ') : String(command ?? ''));
+    }
+    if (!reads) continue;
+    calls++;
+    const finish = finishes.get(r.toolCallId);
+    if (finish && !finish.resultBasis) {
+      try { chars += context.reader.read(finish, 'data')?.length ?? 0; } catch { /* unreadable: counted as a call only */ }
+    }
+  }
+  return { calls, chars };
+}
+
 // ---------- glance ----------
 
 function sessions(captures: SessionStore, version: number, shared: SharedSession[], from?: number): string {
@@ -257,6 +292,8 @@ function glance(context: Context, from?: number): string {
     [plural(turns.length, 'turn'), callFacts(records, recording), plural(records.filter(r => r.type === 'file_change').length, 'change'),
       plural(agents.length, 'subagent'), `${number(t.total)} tokens`, t.cost === undefined ? '' : `$${t.cost.toFixed(4)} reported${t.callsAfterCost ? ` before the last ${plural(t.callsAfterCost, 'model call')}` : ''}`].filter(Boolean).join(' · '),
   ];
+  const reads = wisdomReads(context, records);
+  if (reads.calls) lines.push(`read Wisdom · ${plural(reads.calls, 'call')} · ${plural(reads.chars, 'character')} returned, about ${number(Math.ceil(reads.chars / 4))} tokens`);
   if (!fs.existsSync(ledger.dir)) lines.push('evidence folder missing: inputs, outputs and patches cannot be read');
   // A kind that repeats three or more times is one line with its count, first and last.
   // Every gap stays a record; only the glance line is shared.
@@ -302,6 +339,165 @@ function glance(context: Context, from?: number): string {
   }
   if (!turns.length && !outsideWork && !unplaced.length) lines.push('', 'No turns recorded yet.');
   return respond(lines, from, { capture: manifest.captureId, glance: true, at: version });
+}
+
+// ---------- commits ----------
+
+/** Where a recorded change sits in its session, as a position that can be opened:
+ * the call it was observed during, or its turn or subagent when no call was running. */
+function positioner(captures: SessionStore, version: number): (record: LedgerRecord) => string {
+  const sessions = new Map<string, { s: Shape; items: Map<string, TurnItem[]> }>();
+  return record => {
+    let session = sessions.get(record.captureId);
+    if (!session) {
+      const context: Context = { captures, version, manifest: captures.get(record.captureId).manifest, reader: new EvidenceReader(captures) };
+      session = { s: shape(context), items: new Map() };
+      sessions.set(record.captureId, session);
+    }
+    const { s, items: cache } = session;
+    const turnItems = (turnId: string) => cache.get(turnId)
+      ?? cache.set(turnId, conversation(captures, { captureId: record.captureId, requestId: turnId, readVersion: version }).items).get(turnId)!;
+    // A change carries its call, not its agent: a subagent's call says which subagent it was.
+    const start = record.toolCallId ? s.records.find(r => r.type === 'tool_started' && r.toolCallId === record.toolCallId) : undefined;
+    const agent = record.agentId ?? start?.agentId;
+    let scope: string, items: TurnItem[] | undefined;
+    if (agent && s.agents.includes(agent)) {
+      scope = `a${s.agents.indexOf(agent) + 1}`;
+      const turnId = s.agentTurn.get(agent);
+      items = turnId ? findSubagent(turnItems(turnId), agent)?.items : undefined;
+    } else {
+      const turn = s.turns.findIndex(t => t.id === record.requestId);
+      if (turn < 0) return 'outside';
+      scope = `t${turn + 1}`;
+      items = turnItems(record.requestId!);
+    }
+    const tools = (items ?? []).filter((item): item is Tool => item.kind === 'tool');
+    const call = tools.findIndex(tool => tool.changes.some(change => change.id === record.id));
+    return call < 0 ? scope : `${scope}/c${call + 1}`;
+  };
+}
+
+/** A commit's record, worked out from this store's recordings. `target` defaults to the
+ * commit against its first parent; `made` says whether it is kept at commit time or only shown. */
+export function buildRecord(captures: SessionStore, version: number, project: string, commit: CommitInfo,
+  extra: { made: 'commit' | 'now'; recorder?: string; target?: Target }): CommitRecord {
+  const target = extra.target ?? { parent: commit.parent, rev: commit.sha, until: Date.parse(commit.committedAt) };
+  const files = workFor(captures, version, project, target);
+  return toRecord(files, positioner(captures, version), id => captures.get(id).manifest.harness,
+    { commit, made: extra.made, madeAt: new Date().toISOString(), wisdomVersion: wisdomVersion(), recorder: extra.recorder });
+}
+
+/** Has the session a step cites still got that exact change? Each step is checked on its own. */
+type StepState = 'ok' | 'changed' | 'missing';
+function checkStep(stores: (id: string) => SessionStore | undefined, step: RecordStep): StepState {
+  const store = stores(step.session);
+  if (!store) return 'missing';
+  const found = store.database.sql.prepare(`SELECT 1 FROM records WHERE capture_id=? AND type='file_change'
+    AND json_extract(body,'$.afterHash') IS ? AND json_extract(body,'$.beforeHash') IS ? AND json_extract(body,'$.patchRef') IS ? LIMIT 1`)
+    .get(step.session, step.after, step.before, step.patch ?? null);
+  return found ? 'ok' : 'changed';
+}
+
+/** A commit, piece by piece, with the recorded steps that made each one: from the record kept
+ * when the commit was made, or worked out now when there is none. */
+function commitGlance(captures: SessionStore, version: number, ref: string, from: number | undefined,
+  stores: (id: string) => SessionStore | undefined): string {
+  const project = projectOf(captures);
+  const commit = readCommit(project, ref);
+  const harnessOf = (id: string) => stores(id)?.get(id).manifest.harness;
+  const next = { glance: true as const, commit: commit.sha, at: version };
+  const keptText = readFile(project, recordRef(commit.sha), 'record.json')?.toString('utf8');
+  const kept: CommitRecord | undefined = keptText ? JSON.parse(keptText) : undefined;
+  // Work brought in from other commits (a squash merge, a cherry-pick): the records its message
+  // names through their Wisdom-Record lines, besides its own.
+  const carried = recordsWithIds(project, recordIds(project, commit.sha).filter(id => id !== kept?.recordId))
+    .filter(found => found.commit !== commit.sha);
+  const lines = kept ? renderRecord(kept, version, stores, harnessOf)
+    : carried.length ? [`commit ${commit.sha.slice(0, 12)} · ${commit.subject} · version ${version}`, 'no record of its own', `the commit's own diff: git show ${commit.sha.slice(0, 12)}`]
+    : renderRecord(buildRecord(captures, version, project, commit, { made: 'now' }), version, undefined, harnessOf);
+  if (carried.length) {
+    lines.push('', `its message carries ${plural(carried.length, 'recorded commit')} through their Wisdom-Record lines (a squash merge, say); their records follow`);
+    for (const found of carried) lines.push('', `── carried: ${found.commit.slice(0, 12)}`, ...renderRecord(JSON.parse(found.text), undefined, stores, harnessOf));
+  }
+  return respond(lines, from, next);
+}
+
+/** The text of a commit record. With `stores`, every step is checked against the session it cites. */
+export function renderRecord(record: CommitRecord, version: number | undefined, stores?: (id: string) => SessionStore | undefined,
+  harnessOf: (id: string) => string | undefined = () => undefined): string[] {
+  const { commit } = record;
+  const states = record.steps.map(step => stores ? checkStep(stores, step) : 'ok' as StepState);
+  const used = new Map<string, string[]>();
+  const describe = (indexes: number[]): string => {
+    const bySession = new Map<string, string[]>();
+    for (const k of indexes) {
+      const step = record.steps[k];
+      const seen = used.get(step.session) ?? used.set(step.session, []).get(step.session)!;
+      if (!seen.includes(step.position)) seen.push(step.position);
+      const notes = [step.attribution === 'observed-during-tool' ? '' : step.attribution === 'reported-by-harness' ? 'reported by the harness' : 'changed outside any recorded step',
+        states[k] === 'changed' ? 'changed since the commit' : states[k] === 'missing' ? 'session not available' : ''].filter(Boolean);
+      const label = notes.length ? `${step.position} (${notes.join(', ')})` : step.position;
+      const list = bySession.get(step.session) ?? bySession.set(step.session, []).get(step.session)!;
+      if (!list.includes(label)) list.push(label);
+    }
+    return [...bySession].map(([id, labels]) => `${labels.join(', ')} in session ${short(id)}`).join('; ');
+  };
+  let full = 0, partly = 0, none = 0, byFile = 0;
+  const body: string[] = [];
+  for (const file of record.files) {
+    const head = `${file.path} · ${file.operation}`;
+    const counts = file.note === 'binary' ? 'binary' : `+${number(file.added)} −${number(file.removed)}`;
+    const earlier = file.complete ? '' : ' · earlier changes not recorded';
+    if (file.note === 'outside-project') { body.push(`${head} · outside this project, not recorded here`); continue; }
+    if (file.note === 'not-watched') { body.push(`${head} · ${counts} · not recorded: excluded from recording`); continue; }
+    if (!file.chain.length) { none++; body.push(`${head} · ${counts} · not recorded`); continue; }
+    if (!file.pieces) {
+      byFile++;
+      body.push(`${head} · ${counts} · whole file from ${describe(file.chain)}${earlier}${file.lineGap ? ` · ${file.lineGap}` : ''}`);
+      continue;
+    }
+    body.push(`${head} · ${counts}`);
+    for (const piece of file.pieces) {
+      const made = piece.steps.length ? describe(piece.steps) : '';
+      if (!made) none++; else if (piece.unexplained) partly++; else full++;
+      body.push(`${INDENT}${piece.header}  ${[made || 'not recorded', made && piece.unexplained ? `${plural(piece.unexplained, 'line')} not recorded` : '',
+        piece.byFile ? 'lined up by file, not by line' : ''].filter(Boolean).join(' · ')}`);
+    }
+  }
+  const pieces = full + partly + none;
+  const changed = states.filter(s => s === 'changed').length, missing = states.filter(s => s === 'missing').length;
+  const lines = [
+    `commit ${commit.sha.slice(0, 12)} · ${commit.subject} · committed ${minute(new Date(commit.committedAt).toISOString())}${version === undefined ? '' : ` · version ${version}`}`,
+    `${commit.parent ? `parent ${commit.parent.slice(0, 12)}` : 'first commit'} · ${plural(record.files.length, 'file')} · ${[
+      pieces ? `${plural(pieces, 'piece')}: ${number(full)} from recorded steps${partly ? `, ${number(partly)} partly recorded` : ''}${none ? `, ${number(none)} not recorded` : ''}` : '',
+      byFile ? `${plural(byFile, 'file')} matched as a whole` : ''].filter(Boolean).join(' · ') || 'nothing matched'}`,
+    record.made === 'commit' ? `record kept when the commit was made, ${minute(record.madeAt)}${changed ? ` · ${plural(changed, 'step')} changed since` : ''}${missing ? ` · ${plural(missing, 'step')} in sessions not available here` : ''}`
+      : 'worked out now from the recordings; no record was kept when the commit was made',
+    `the commit's own diff: git show ${commit.sha.slice(0, 12)}`,
+    '', ...body,
+  ];
+  if (used.size) {
+    lines.push('', 'sessions');
+    // In session order: turns, then subagents, then outside; calls by number.
+    const rank = (at: string) => {
+      const match = /^(t|a)(\d+)(?:\/c(\d+))?$/.exec(at);
+      return match ? [match[1] === 't' ? 0 : 1, Number(match[2]), Number(match[3] ?? 0)] : [2, 0, 0];
+    };
+    const order = (a: string, b: string) => { const [x, y] = [rank(a), rank(b)]; return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+    for (const [id, positions] of used) {
+      const known = record.sessions.find(s => s.id === id);
+      lines.push(`${INDENT}${id}  ${harnessOf(id) ?? known?.harness ?? '?'}  ${[...positions].sort(order).join(', ')}`);
+    }
+    const [id, [at]] = [...used][0];
+    lines.push('', `To read a step, open its position in its session, such as ${JSON.stringify({ capture: short(id), open: at })}.`);
+  }
+  if (record.guide) {
+    const { guide } = record;
+    lines.push('', `guide · written by ${guide.writer}, ${minute(guide.writtenAt)} · derived, not evidence · ${guide.problems.length
+      ? `did not pass Wisdom's check: ${guide.problems.join('; ')}` : 'Wisdom checked that it covers every item and that its citations exist, not that it is right'}`);
+    for (const line of guide.text.replace(/\s+$/, '').split(/\r?\n/)) lines.push(INDENT + line);
+  } else if (record.guideMissing) lines.push('', `guide · none: ${record.guideMissing}`);
+  return lines;
 }
 
 // ---------- open ----------

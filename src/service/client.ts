@@ -14,17 +14,23 @@ export function connectionAt(dataDir: string): Connection {
 }
 
 export async function call(connection: Connection, route: string, input?: unknown, timeoutMs = 30000): Promise<any> {
-  let response: Response;
-  try {
-    response = await fetch(connection.url + route, {
-      method: input === undefined ? 'GET' : 'POST',
-      headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
-      body: input === undefined ? undefined : JSON.stringify(input),
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-  } catch (error: any) {
-    if (error?.name === 'TimeoutError') throw error;
-    throw new Error(`Wisdom daemon is not answering at ${connection.url}. Run: wisdom daemon start`);
+  let response: Response | undefined;
+  for (let attempt = 0; !response; attempt++) {
+    try {
+      response = await fetch(connection.url + route, {
+        method: input === undefined ? 'GET' : 'POST',
+        headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
+        body: input === undefined ? undefined : JSON.stringify(input),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (error: any) {
+      if (error?.name === 'TimeoutError') throw error;
+      // A kept-alive connection the daemon closed while it was busy fails before any answer;
+      // the request never reached it, so sending it again on a new connection is safe.
+      const code = error?.cause?.code;
+      if (attempt === 0 && (code === 'UND_ERR_SOCKET' || code === 'ECONNRESET')) continue;
+      throw new Error(`Wisdom daemon is not answering at ${connection.url}. Run: wisdom daemon start`);
+    }
   }
   const result = await response.json() as any;
   if (!response.ok) throw new Error(result.error ?? `Daemon returned HTTP ${response.status}`);
@@ -67,13 +73,13 @@ export function spool(dataDir: string, event: HookEvent): void {
  * until its hook timeout, and kills the child. Measured with real Codex hooks on 0.164:
  * `spawn` and `cmd /c start` hang and die; `Start-Process` returns at once and survives.
  */
-function startDetached(args: string[], logFile: string): void {
+export function startDetached(args: string[], logFile: string): void {
   if (process.platform === 'win32') {
     const line = [process.execPath, ...args].map(arg => `"${arg}"`).join(' ') + ` >> "${logFile}" 2>&1`;
     const script = `Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList '/d /s /c "${line.replaceAll("'", "''")}"'`;
     const started = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
-    if (started.status !== 0) throw new Error(`Could not start Wisdom's daemon (${started.stderr || started.error}). A sandboxed agent may not be allowed to; run wisdom daemon start outside the sandbox.`);
+    if (started.status !== 0) throw new Error(`Could not start a Wisdom background process (${started.stderr || started.error}). A sandboxed agent may not be allowed to; run wisdom daemon start outside the sandbox.`);
     return;
   }
   const log = fs.openSync(logFile, 'a');

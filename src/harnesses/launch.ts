@@ -38,7 +38,7 @@ export function resolveCommand(name: string): Command {
 }
 
 /** The first match on PATH, trying PATHEXT's runnable extensions in order, as cmd.exe does. */
-function onPath(name: string): string | undefined {
+export function onPath(name: string): string | undefined {
   const runnable = ['.com', '.exe', '.bat', '.cmd'];
   const extensions = path.extname(name) ? [''] : (process.env.PATHEXT ?? runnable.join(';')).toLowerCase().split(';').filter(ext => runnable.includes(ext));
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {

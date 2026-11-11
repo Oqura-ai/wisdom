@@ -11,6 +11,8 @@ import { SharedLibrary, readLedger, readView } from '../share/shared.js';
 import { hookSchema, viewSchema } from '../core/schema.js';
 import { writeJson } from '../storage/ledger.js';
 import { startDashboard } from './dashboard.js';
+import { CommitWatcher } from '../team/watch.js';
+import { deleteTeamSession, fetchTeam, prune, push } from '../team/team.js';
 
 /** Bumped when the daemon's contract changes (capture opening or reading). A daemon
  * started from an older build keeps running old code in memory, so clients check this.
@@ -19,7 +21,10 @@ import { startDashboard } from './dashboard.js';
 // 12: /import, and the shared and transcript views.
 // 13: the markdown view.
 // 15: /delete, /storage, /doctor and /repair.
-export const CAPTURE_API = 15;
+// 16: glance with commit.
+// 17: /team; commit records.
+// 18: /guide removed: guides are written by the git hooks.
+export const CAPTURE_API = 18;
 
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 
@@ -103,6 +108,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   try { captures = new Captures(dataDir); }
   catch (error) { fs.unlinkSync(lock); throw error; }
   const library = new SharedLibrary(path.join(dataDir, 'shared'));
+  const watcher = new CommitWatcher(captures, dataDir);
   const checks = doctor(dataDir);
   const token = randomBytes(32).toString('hex');
   let dashboard: ReturnType<typeof startDashboard> | undefined;
@@ -139,6 +145,15 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
         const { captureId, harness, workspaceRoot, source } = captures.get(String((input as any)?.session ?? '')).manifest;
         send(200, { captureId, harness, workspaceRoot, source }); return;
       }
+      if (url.pathname === '/team') {
+        const { action, remote, session } = (input ?? {}) as { action?: string; remote?: string; session?: string };
+        watcher.poll(true);
+        if (action === 'push') { send(200, push(captures, dataDir, remote)); return; }
+        if (action === 'fetch') { send(200, fetchTeam(captures, library, dataDir, remote)); return; }
+        if (action === 'delete' && session) { send(200, { key: deleteTeamSession(captures, dataDir, session, remote) }); return; }
+        if (action === 'prune') { send(200, { removed: prune(captures, remote) }); return; }
+        throw new Error('Use action push, fetch, delete (with session) or prune.');
+      }
       if (url.pathname === '/delete') { send(200, deleteSessions(captures, input)); return; }
       if (url.pathname === '/storage') { send(200, captures.storage()); return; }
       if (url.pathname === '/doctor') { send(200, await checks((input as any)?.fresh === true)); return; }
@@ -164,7 +179,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   // waits for that file, so the file baseline of a kept tool start is taken before the tool runs.
   captures.drainSpool();
   writeJson(path.join(dataDir, 'daemon.json'), connection);
-  timer = setInterval(() => { captures.poll(); library.poll(); }, 500);
+  timer = setInterval(() => { captures.poll(); library.poll(); watcher.poll(); }, 500);
   // Optional viewer. Started after daemon.json exists, since it reads it to connect.
   if (options.dashboardPort) dashboard = startDashboard(dataDir, options.dashboardPort);
 
@@ -181,7 +196,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
     fs.rmSync(lock, { force: true });
     finish();
   }
-  return { connection, captures, close, closed };
+  return { connection, captures, watcher, close, closed };
 }
 
 /** Import a share file named by an absolute path. Sessions also recorded here are named,
