@@ -18,6 +18,8 @@ const connectors: Record<Connectable, { connect: (dataDir: string) => string; di
 
 const BEGIN = '# wisdom connect: local settings naming this machine (wisdom disconnect removes this block)';
 const END = '# end wisdom connect';
+const DATA_BEGIN = '# wisdom: this project\'s recordings and logins, never committed';
+const DATA_END = '# end wisdom data folder';
 
 /** Record these harnesses with the person's own login: Wisdom's hook or extension in the
  * project's own settings, and the reading skill beside them. Nothing reaches git: the files
@@ -67,18 +69,31 @@ export function trackedByGit(project: string, file: string): boolean {
 /** Replace Wisdom's block in the repository's own `info/exclude` (git's per-clone ignore file,
  * never committed) with these patterns, or remove it. Without a repository there is nothing to do.
  */
-function setExcluded(project: string, patterns: string[]): boolean {
+function setExcluded(project: string, patterns: string[], begin = BEGIN, end = END): boolean {
   let file: string;
   try {
     file = path.resolve(project, execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: project, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
   } catch { return false; }
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  const kept = text.replace(new RegExp(`${escape(BEGIN)}[\\s\\S]*?${escape(END)}\\r?\\n?`), '');
-  const block = patterns.length ? `${kept && !kept.endsWith('\n') ? '\n' : ''}${BEGIN}\n${patterns.join('\n')}\n${END}\n` : '';
+  const kept = text.replace(new RegExp(`${escape(begin)}[\\s\\S]*?${escape(end)}\\r?\\n?`), '');
+  const block = patterns.length ? `${kept && !kept.endsWith('\n') ? '\n' : ''}${begin}\n${patterns.join('\n')}\n${end}\n` : '';
   if (kept + block === text) return true;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, kept + block);
   return true;
+}
+
+/** Keep `.wisdom/` out of git without changing a file the project shares: in a repository it goes
+ * in `info/exclude`, in its own block, because `wisdom disconnect` must not expose it. The
+ * pattern has no leading slash, so it covers every Wisdom project in the repository, subfolders
+ * included. Outside a repository it goes in `.gitignore`, where a later `git init` will honour it.
+ */
+export function ignoreDataFolder(project: string): void {
+  if (setExcluded(project, ['.wisdom/'], DATA_BEGIN, DATA_END)) return;
+  const ignore = path.join(project, '.gitignore');
+  const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
+  const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
+  if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

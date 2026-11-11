@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { call } from '../src/client.js';
 import { startDaemon } from '../src/daemon.js';
-import { connect, disconnect } from '../src/connect.js';
+import { connect, disconnect, ignoreDataFolder } from '../src/connect.js';
 import { adapter, resumeCommands, sessionPlace, userHome } from '../src/harnesses/index.js';
 import { hookState } from '../src/harnesses/launch.js';
 import { connectedFile, harnessHome, marker, readConnected } from '../src/paths.js';
@@ -22,6 +22,36 @@ function project(name: string) {
   fs.writeFileSync(path.join(data, marker), JSON.stringify({ project: root }));
   return { root, data };
 }
+
+test('.wisdom stays out of git without changing a file the project shares, also from a subfolder and after disconnect', { skip: !hasGit }, () => {
+  const { root, data } = project('ignore');
+  try {
+    git(root, 'init', '-q');
+    fs.writeFileSync(path.join(root, '.gitignore'), 'build/\n');
+    const sub = path.join(root, 'packages', 'app');
+    fs.mkdirSync(path.join(sub, '.wisdom'), { recursive: true });
+    fs.writeFileSync(path.join(data, 'secret'), 'x');
+    fs.writeFileSync(path.join(sub, '.wisdom', 'secret'), 'x');
+    ignoreDataFolder(root);
+    ignoreDataFolder(root);
+    ignoreDataFolder(sub);
+    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), 'build/\n');
+    assert.equal(fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8').split('.wisdom/').length, 2, 'one block, however often it runs');
+    assert.equal(git(root, 'status', '--porcelain', '--untracked-files=all').includes('.wisdom/secret'), false);
+    connect(data, []);
+    disconnect(data);
+    assert.equal(git(root, 'status', '--porcelain', '--untracked-files=all').includes('.wisdom/secret'), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('outside a repository .wisdom goes in .gitignore, so a later git init cannot commit it', () => {
+  const { root } = project('no-git');
+  try {
+    ignoreDataFolder(root);
+    ignoreDataFolder(root);
+    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), '.wisdom/\n');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('connect puts Wisdom in the project\'s own settings, kept out of git; disconnect takes out exactly that', { skip: !hasGit }, () => {
   const { root, data } = project('files');

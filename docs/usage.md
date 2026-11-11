@@ -248,4 +248,4 @@ To exclude files from observation, add `.wisdomignore` to the project: relative 
 
 All generated data stays local. Native transcripts and hook payloads are preserved without redaction and may contain sensitive content. `.wisdom/` also holds each harness's login (such as `.wisdom/harnesses/claude-code/home/.credentials.json`).
 
-`wisdom init` adds `.wisdom/` to `.gitignore`, but that only keeps it out of git. Leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.
+`wisdom init` and `wisdom connect` list `.wisdom/` in `.git/info/exclude`, your clone's own ignore file, so no file the project shares changes (outside a git repository, in `.gitignore`). That only keeps it out of git. Leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.

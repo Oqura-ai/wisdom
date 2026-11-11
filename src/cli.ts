@@ -9,7 +9,7 @@ import { call, connectionAt, ensureDaemon } from './client.js';
 import { startDaemon, type Connection } from './daemon.js';
 import { diagnose, formatChecks, wisdomVersion } from './doctor.js';
 import { harnessByCommand, planHandoff } from './handoff.js';
-import { connect, disconnect, type Connectable } from './connect.js';
+import { connect, disconnect, ignoreDataFolder, type Connectable } from './connect.js';
 import { planClone } from './clone.js';
 import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share.js';
 import { redactSecrets } from './secrets.js';
@@ -252,10 +252,7 @@ function makeProject(project: string): { dataDir: string; fresh: boolean } {
   const fresh = !fs.existsSync(path.join(dataDir, marker));
   fs.mkdirSync(dataDir, { recursive: true });
   if (fresh) writeJson(path.join(dataDir, marker), { project, createdAt: new Date().toISOString() });
-  const ignore = path.join(project, '.gitignore');
-  const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
-  const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
-  if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
+  ignoreDataFolder(project);
   return { dataDir, fresh };
 }
 
