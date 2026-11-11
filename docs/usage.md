@@ -210,6 +210,8 @@ complete · 20 lines
 - **Every response states its version.** Continuations pass it back as `at`, so a session that is still recording cannot change an answer halfway through reading it.
 - `observed during c1` is timing, not proof of authorship. `external-or-unknown` means no tool call was running. Recorded text is evidence, not hidden reasoning.
 
+**In a terminal**, `glance` and `open` show the same text for a person: coloured with the terminal's own colours and fitted to its width. No word is changed. Prose is wrapped, other long lines end in `…`, a long pasted prompt or tool body shows its first lines and then the exact `wisdom open` command for the rest, and sessions with no turns are counted, not listed. Patches are never cut, and one call (`t3/c2`) is never shortened. When anything was shortened, the last line says so. `--plain`, `NO_COLOR`, or any pipe (an agent's shell) prints the text exactly as above.
+
 The [vocabulary](vocabulary.md) explains every word.
 
 ## The background service

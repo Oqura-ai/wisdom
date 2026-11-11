@@ -14,6 +14,7 @@ import { planClone } from './clone.js';
 import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share.js';
 import { redactSecrets } from './secrets.js';
 import { serveMcp } from './mcp.js';
+import { paint } from './terminal.js';
 import { findDataDir, marker, movedFrom } from './paths.js';
 import { writeJson } from './ledger.js';
 import { installPi, launchPi, piCommand } from './harnesses/pi/launch.js';
@@ -64,6 +65,7 @@ Other
 Options
   --cwd DIR, --data DIR           Use the project at DIR, or the data folder DIR
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
+  --plain                         glance, open: in a terminal, the whole text as agents read it
   --from <session-id>             handoff: the session to read (default: the newest other one)
   --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
@@ -84,7 +86,7 @@ async function main(): Promise<void> {
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
-      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
+      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, plain: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
@@ -96,7 +98,7 @@ async function main(): Promise<void> {
     handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
     clone: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
-    glance: ['cwd', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
+    glance: ['cwd', 'from', 'at', 'plain'], open: ['cwd', 'capture', 'from', 'at', 'plain'],
   };
   const allowed = options[command];
   if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
@@ -176,7 +178,11 @@ async function main(): Promise<void> {
   const reading = { from: number('--from', values.from), at: number('--at', values.at) };
   if (command === 'open' && !first) throw new Error('Use: wisdom open POSITION --capture CAPTURE|latest');
   const input = command === 'glance' ? { capture: first, glance: true, ...reading } : { capture: values.capture, open: first, ...reading };
-  console.log((await call(await ensureDaemon(dataDir), '/ledger', input)).text);
+  const { text } = await call(await ensureDaemon(dataDir), '/ledger', input);
+  // A pipe (an agent's shell) gets the text as it is. A person at a terminal gets it coloured and fitted
+  // to the width; one call, opened to read its bodies, is never shortened.
+  if (!process.stdout.isTTY || process.env.NO_COLOR || values.plain) console.log(text);
+  else console.log(paint(text, first?.includes('/c') ? undefined : Math.min(process.stdout.columns || 100, 120)));
 }
 
 /** What the running service is, in the same words whichever command asked. */
