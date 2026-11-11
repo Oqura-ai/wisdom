@@ -490,17 +490,24 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 .paths code { word-break: break-all; color: var(--ink-soft); }
 .delete-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-/* Health: one quiet line at the top of every page, opened for checks, repair and backups. */
-.health { margin: 10px 22px 0; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
-.health.h-bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
-.health.h-warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
-.health-line { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 12px; border: 0; background: transparent; text-align: left; }
-.health-line .chevron { width: 10px; height: 10px; }
-.health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--good); }
+/* Health: a small button in the top bar, opening a popup for checks, repair and backups. */
+.health-button { white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-soft); }
+.health-button:hover { color: var(--ink); background: var(--surface-2); }
+.health-button.h-bad { border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
+.health-button.h-warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.health-count { min-width: 15px; padding: 0 4px; border-radius: 999px; text-align: center; color: var(--paper); background: var(--warn); }
+.h-bad .health-count { background: var(--bad); }
+.health-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--good); }
 .h-bad .health-dot { background: var(--bad); } .h-warn .health-dot { background: var(--warn); }
-.health-title { font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--faint); }
+.health-dialog { width: min(680px, calc(100vw - 32px)); max-height: 85vh; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 14px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--surface-depth); padding: 0; }
+.health-dialog::backdrop { background: color-mix(in srgb, var(--paper) 55%, transparent); backdrop-filter: blur(2px); }
+.health-head { position: sticky; top: 0; display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 18px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.health-head h3 { margin: 0; font: 17px var(--serif); }
+.health-close { font-size: 18px; line-height: 1; padding: 2px 8px; }
 .health-tag { font-size: 10.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink-soft); }
-.health-body { padding: 4px 14px 12px; border-top: 1px solid var(--line); }
+.health-body { padding: 4px 18px 16px; }
 .checks { list-style: none; margin: 8px 0; padding: 0; }
 .check { display: grid; grid-template-columns: 64px 110px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); }
 .check:first-child { border-top: 0; }
@@ -517,7 +524,7 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 .backups { margin: 8px 0; } .backups summary { cursor: pointer; color: var(--ink-soft); }
 .backups ul { list-style: none; padding: 0; margin: 6px 0; }
 .backups li { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
-@container app (max-width: 700px) { .check { grid-template-columns: 1fr; gap: 0; } .health { margin-inline: 16px; } }
+@container app (max-width: 700px) { .check { grid-template-columns: 1fr; gap: 0; } }
 
 /* Storage, and the clean-up dialog it opens. */
 .storage-head { display: flex; align-items: baseline; gap: 12px; }

@@ -129,11 +129,11 @@ export function Dashboard() {
             </select></span>
           : workspace && <button className="plain project-name" title={workspace} onClick={() => setView({ capture: undefined })}>{projectName(workspace)}</button>}
         <div className="spacer" />
+        {live.status === 'live' && <HealthStrip recording={stats?.sessions.filter(s => s.status === 'recording').length ?? 0} />}
         <LiveBadge status={live.status} readVersion={live.readVersion} />
         <DisplayMenu />
       </header>
 
-      {live.status === 'live' && <HealthStrip recording={stats?.sessions.filter(s => s.status === 'recording').length ?? 0} />}
       {live.status === 'offline' && <div className="banner">Daemon offline: {live.error}. Start it with <code>wisdom daemon start</code>; this page reconnects by itself.</div>}
       {error && live.status === 'live' && <div className="banner">{error}</div>}
 

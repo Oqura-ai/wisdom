@@ -1,14 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { health as readHealth, repairPlan, restoreBackup, runRepair, type Backup, type Check, type Health, type RepairTarget } from '@/lib/api';
 import { harnessLabel, plural, since } from './bits';
 
 const placeWords = { home: 'its home in .wisdom (wisdom track)', project: 'this project’s own settings (wisdom connect)' } as const;
 const problemWords = { hooks: 'its hooks point to a copy of Wisdom that moved or is another one, so nothing is recorded', skill: 'its reading skill is missing or older' } as const;
 
-/** `wisdom doctor`, at the top of every page: one quiet line when all is well, the problems and
- * how to fix them when not. Repair rewrites only Wisdom's own hooks and skill, after backing up
+/** `wisdom doctor`, as a small button in the top bar whose dot shows the state; clicking it opens
+ * a popup with the checks and how to fix them. Repair rewrites only Wisdom's own hooks and skill, after backing up
  * every file it changes; each backup can be restored. Starting and stopping the daemon stay in
  * the terminal: this page is served by the daemon, so it cannot start it, and stopping it would close the page.
  */
@@ -63,18 +63,23 @@ export function HealthStrip({ recording }: { recording: number }) {
   };
 
   return (
-    <div className={`health h-${tone}`}>
-      <button className="health-line" aria-expanded={open} onClick={() => setOpen(!open)}>
+    <>
+      <button className={`health-button h-${tone}`} title={headline} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
         <span className="health-dot" aria-hidden />
-        <span className="health-title">Health</span>
-        <span>{headline}</span>
-        {repairable.length > 0 && <span className="health-tag">repair available</span>}
-        <span className="spacer" />
-        {report?.checkedAt && <span className="muted small">checked {since(report.checkedAt)}</span>}
-        <i className={`chevron ${open ? 'open' : ''}`} aria-hidden />
+        Health
+        {tone !== 'good' && <span className="health-count">{problems.length || notes.length || repairable.length}</span>}
       </button>
 
       {open && (
+        <HealthDialog onClose={() => { if (!working) { setOpen(false); setConfirming(undefined); } }}>
+          <div className={`health-head h-${tone}`}>
+            <span className="health-dot" aria-hidden />
+            <h3>{headline}</h3>
+            {repairable.length > 0 && <span className="health-tag">repair available</span>}
+            <span className="spacer" />
+            {report?.checkedAt && <span className="muted small">checked {since(report.checkedAt)}</span>}
+            <button className="plain health-close" aria-label="Close" onClick={() => { if (!working) { setOpen(false); setConfirming(undefined); } }}>×</button>
+          </div>
         <div className="health-body">
           {report?.error && <p className="bad">{report.error}</p>}
           <ul className="checks">{checks.map(check => <CheckRow key={check.name} check={check} />)}</ul>
@@ -126,8 +131,21 @@ export function HealthStrip({ recording }: { recording: number }) {
             <button className="ghost" onClick={() => void refresh(true)} disabled={checking}>{checking ? 'Checking…' : 'Check again'}</button>
           </div>
         </div>
+        </HealthDialog>
       )}
-    </div>
+    </>
+  );
+}
+
+/** A modal over the page: closes on Escape and on a click outside its box. */
+function HealthDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { dialog.current?.showModal(); }, []);
+  return (
+    <dialog ref={dialog} className="health-dialog" onCancel={e => { e.preventDefault(); onClose(); }}
+      onClick={e => { if (e.target === dialog.current) onClose(); }}>
+      {children}
+    </dialog>
   );
 }
 
