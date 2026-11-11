@@ -15,7 +15,6 @@ dashboard/next-env.d.ts
 .wisdom/
 
 # Experiment runs: recorded sessions and every review
-experiment/runs/
 
 # Personal harness settings (shared project settings stay tracked)
 .claude/settings.local.json
