@@ -30,6 +30,8 @@ Run one file after building with `node --test dist/test/ledger.test.js`, and fil
 - The Pi integration test starts the installed Pi with its agent folder set up as `wisdom init` does, in an isolated temporary workspace. A local scripted provider drives real file tools and nested calls with no network requests or model spend. It checks that Pi loads the skill from its home, reads while Pi is running, the opened turn, and the mirrored transcript byte for byte. It starts Pi the way `wisdom track pi` does; set `WISDOM_PI_ENTRY` to use another installation.
 - `WISDOM_CODEX_BIN` overrides the Codex executable for its test.
 
+Real agents, model guides, a git host, two people at once and Windows file handling need a live run. [Live testing](live-testing.md) says which changes need which checks.
+
 ## Dashboard
 
 ```sh
@@ -81,6 +83,6 @@ Read these in order:
 
 - Changes to how evidence is recorded, stored or read follow the [data policy](policy.md), including its checklist.
 - Use `node:test` and `node:assert/strict`. Name tests `test/*.test.ts` and describe observable behaviour in their titles. Isolate filesystem and database tests in temporary directories, and close daemons during cleanup.
-- Add regression coverage for changed behaviour, and run `npm run check` and `npm test` before submitting.
+- Add regression coverage for changed behaviour, and run `npm run check` and `npm test` before submitting. If the change touches an area in [live testing](live-testing.md#what-needs-a-live-run-and-why), run those checks too and list them in the PR.
 - Never commit `.wisdom/`. It holds unredacted transcripts and harness logins.
 - Docs live in `docs/`, with lowercase, hyphenated filenames.

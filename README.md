@@ -152,7 +152,7 @@ git clone https://github.com/Oqura-ai/wisdom.git && cd wisdom
 npm ci && npm test
 ```
 
-See [development](docs/development.md) and the [data policy](docs/policy.md). Coding agents working on this repository should start with [AGENTS.md](AGENTS.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first: it says which automated and live checks your change needs. See also [development](docs/development.md) and the [data policy](docs/policy.md). Coding agents working on this repository should start with [AGENTS.md](AGENTS.md).
 
 ## License
 

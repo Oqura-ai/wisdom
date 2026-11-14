@@ -16,6 +16,8 @@
 ## Working on Wisdom
 
 - [Development](development.md): building, testing, packaging, and where to start reading.
+- [Live testing](live-testing.md): what the tests can't cover, the checks to run by hand before a PR, and the last run's status.
+- [Live test plan](live-test-plan.md): every live check step by step, with the proof to read and what you should see.
 - [Architecture](architecture.md): how the parts connect, storage and the code map.
 - [Data policy](policy.md): the rules every change to recording and reading follows.
 
