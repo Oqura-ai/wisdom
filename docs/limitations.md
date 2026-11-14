@@ -12,21 +12,25 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | The daemon starts and stops in the terminal | The dashboard deletes sessions and repairs hooks, but it is served by the daemon, so it can't start it and stopping it would close the page. | By design |
 | At most about 20 projects running at once | Each running project takes a pair of ports, and each daemon and dashboard stay in memory. | L |
 | No search | You read one session at a time. | L |
-| No delete command | Removing one recording means editing `.wisdom/` by hand. | M |
+| Delete only in the dashboard | Sessions are deleted from the dashboard; there is no command for it in the terminal. | S |
 | Connected recording has limits | With `wisdom connect`, Claude Code and Pi record only when started in the project's top folder; Codex needs the project trusted and Wisdom's hooks reviewed once, and ignores them in a git worktree. `wisdom track` records these, with one login per project. | M |
 | Failed subagents go unmarked | A subagent cut off before it stops loses its report, transcript and tokens, with no gap to say so. | M |
 | Sessions aren't linked | Forks and `/clear` are a flat list, and `/rewind` isn't marked. | M |
 | Commit records cover your own new commits | Wisdom keeps a record for commits it sees you make while it runs. Others are worked out when asked; a deleted session then turns its pieces into `not recorded`. Merges get no record, and a rename shows as a delete and a create. | M |
-| Team mode is new | Tested against a remote on disk, not yet GitHub or GitLab. The default guide writer needs Claude Code installed. Fork contributors can't push hidden refs. See [Team mode](team.md#limits). | M |
+| Team mode is new | Tested on GitHub, not yet GitLab. The default guide writer needs Claude Code installed. Fork contributors can't push hidden refs. See [Team mode](team.md#limits). | M |
+| Huge commits | A commit of thousands of files takes minutes to record, its model guide can run out of time, and the dashboard slows on a turn that changed that many files. | M |
+| Deleting from a remote | A deleted session stays fetchable by hash until the host cleans up, and there is no command to delete a commit record. | M |
+| Model guides need their sessions | `wisdom guide <commit>` reads the sessions a commit's record names, so it cannot write a guide once one was deleted; it says so. The plain guide in `glance --commit` needs only the record, but loses the quoted request of a deleted session's turn. | S |
+| `git push --mirror` sends records | A normal push never sends `refs/wisdom/*`. A mirror push sends every ref, so commit records and model guides go too, in local mode as well. | Ongoing |
 | Long replies through a shell | A harness can cut long shell output. Claude Code saves it to a file and Codex removes the middle, both with a notice, and the skill teaches agents to read the rest. It relies on the agent following that. | S |
 | The secret check finds known shapes only | `wisdom share` catches common keys, tokens and `PASSWORD=` style values, and misses others. Look through what you send. | Ongoing |
 | A warning on the first event | When the daemon isn't running, the first hook shows a warning such as `SessionStart:startup hook error`. Nothing is lost, but it looks broken. | S |
 | Codex cost is an estimate | Codex reports tokens, not cost. The dashboard prices them at OpenAI's standard API rates for short prompts, read on a set date. Long prompts cost more, prices change, a model not in the table shows no cost, and on a ChatGPT plan you aren't billed per token. | S to keep current |
 | Large projects | Past 10,000 files or 64 MiB of retained contents, changes become gaps instead of diffs. | M |
-| Sessions sharing a folder | Two sessions in one folder see each other's changes. These are labelled honestly but can't be separated. | L |
+| Sessions sharing a folder | Two sessions in one folder see each other's changes, labelled honestly. A commit gives each piece to the session whose own call named the file or held its text; when none did, it lists every session that saw it. | L |
 | Native formats can change | A new harness version can change what Wisdom reads. `wisdom doctor` shows when you're past the last tested version. | Ongoing |
 | Database upgrades | There is no upgrade step yet. One will come with the first change to the database layout. | M |
-| Nothing is redacted | Recordings keep secrets exactly as they appeared. They stay on your machine, and no sharing feature exists. | L |
+| Recordings aren't redacted | Recordings keep secrets exactly as they appeared, on your machine. Only what leaves it is redacted: share files, exports, and in team mode the pushed sessions and records. | L |
 
 ## What can't be recorded
 

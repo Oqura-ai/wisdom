@@ -96,6 +96,20 @@ test('connect puts Wisdom in the project\'s own settings, kept out of git; disco
     assert.equal(fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8').split('# wisdom connect').length, 2);
     assert.equal(readConnected(data)['claude-code']?.since, '2026-11-07T10:00:00.000Z');
 
+    // Connecting where Claude Code is not found (off PATH) leaves its connection as it was, and
+    // the block still covers its files: they stay on disk, so git must keep ignoring them.
+    const claudeBefore = fs.readFileSync(path.join(root, '.claude', 'settings.local.json'), 'utf8');
+    const missing = connect(data, ['codex'], new Date('2026-11-09T10:00:00.000Z'));
+    assert.deepEqual(missing.connected, ['codex']);
+    assert.deepEqual(missing.kept, ['claude-code']);
+    assert.equal(fs.readFileSync(path.join(root, '.claude', 'settings.local.json'), 'utf8'), claudeBefore);
+    const stillExcluded = fs.readFileSync(excludeFile, 'utf8').split('\n');
+    for (const pattern of ['/.claude/settings.local.json', '/.claude/skills/wisdom-ledger/', '/.codex/hooks.json', '/.agents/skills/wisdom-ledger/']) {
+      assert(stillExcluded.includes(pattern), pattern);
+    }
+    assert.doesNotMatch(git(root, 'status', '--porcelain', '--untracked-files=all'), /\.claude|\.codex|\.agents/);
+    assert.equal(readConnected(data)['claude-code']?.since, '2026-11-07T10:00:00.000Z');
+
     assert.deepEqual(disconnect(data), ['claude-code', 'codex']);
     assert.deepEqual(json(path.join(root, '.claude', 'settings.local.json')), local);
     assert(!fs.existsSync(path.join(root, '.codex')), 'a folder only Wisdom used is removed');

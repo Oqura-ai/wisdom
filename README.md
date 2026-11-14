@@ -85,6 +85,8 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom handoff codex` | Start another agent that reads the last session first |
 | `wisdom share <id>` / `wisdom import <file>` | Send a session to a teammate, read one you received |
 | `wisdom export <id> --out session.md` | A session as Markdown, for a PR or an issue |
+| `wisdom glance --commit HEAD` | Which recorded steps made each piece of a commit, with its guide |
+| `wisdom guide on` / `off` | A model writes each commit's guide, or Wisdom's plain one does |
 | `wisdom doctor` | Check the setup and print the fix for each problem |
 | `wisdom disconnect` | Stop recording a connected project; recordings are kept |
 
@@ -109,6 +111,14 @@ p1  src/optim_jev/tools/jev_router/tool.py · modify · +2 −1 · observed duri
 
 The request and the reply both say docstring; the diff shows the line below changed too. The agent sees the change, the request behind it, and where they differ. More in [agents](docs/agents.md).
 
+## From a commit back to its sessions
+
+`wisdom glance --commit HEAD` lists each piece of a commit with the recorded step that made it, and says `not recorded` for anything no session explains. Wisdom keeps that answer for each commit you make, in your own `.git`, never on a branch.
+
+Each commit with agent work can also get a short **guide**: what changed and why, citing the steps. By default Wisdom builds a plain one from the record; `wisdom guide on` has a cheap model (Claude Haiku through your own Claude Code) read the sessions since your last commit and write it.
+
+**Team mode** is opt-in: commit a `wisdom-team.json`. Then each `git push` also sends the commits' records and their sessions, secrets redacted, to hidden refs in your own git remote. Teammates read them with `wisdom team fetch`, and CI checks every PR with `wisdom check`. Details in [team mode](docs/team.md).
+
 ## Dashboard
 
 `wisdom dashboard` opens a local viewer for every session in the project, live while the agent runs.
@@ -125,7 +135,7 @@ More in [dashboard](docs/dashboard.md).
 
 ## Privacy
 
-Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything.
+Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything. In team mode, sessions and commit records are redacted the same way before a push, and go only to your own git remote; your recorded sessions are never changed. The check finds known shapes only, and a team can add its own scanner.
 
 ## Status
 

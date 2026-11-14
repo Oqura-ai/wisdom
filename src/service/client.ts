@@ -72,16 +72,24 @@ export function spool(dataDir: string, event: HookEvent): void {
  * every inheritable handle, including a hook's output pipe: Codex then waits for that pipe
  * until its hook timeout, and kills the child. Measured with real Codex hooks on 0.164:
  * `spawn` and `cmd /c start` hang and die; `Start-Process` returns at once and survives.
+ *
+ * `logFile` collects the process's output through cmd's `>>`, which holds the file open for
+ * the process's whole life, and a second cmd cannot open it meanwhile: that cmd fails silently
+ * and never starts its process. So only a process that runs alone (the daemon) gets one; commit
+ * jobs, which can overlap, pass none and write their own log (githooks.ts).
  */
-export function startDetached(args: string[], logFile: string): void {
+export function startDetached(args: string[], logFile?: string): void {
   if (process.platform === 'win32') {
-    const line = [process.execPath, ...args].map(arg => `"${arg}"`).join(' ') + ` >> "${logFile}" 2>&1`;
-    const script = `Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList '/d /s /c "${line.replaceAll("'", "''")}"'`;
+    const quoted = args.map(arg => `"${arg}"`).join(' ');
+    const script = logFile === undefined
+      ? `Start-Process -WindowStyle Hidden -FilePath '${process.execPath.replaceAll("'", "''")}' -ArgumentList '${quoted.replaceAll("'", "''")}'`
+      : `Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList '/d /s /c "${(`"${process.execPath}" ${quoted} >> "${logFile}" 2>&1`).replaceAll("'", "''")}"'`;
     const started = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
     if (started.status !== 0) throw new Error(`Could not start a Wisdom background process (${started.stderr || started.error}). A sandboxed agent may not be allowed to; run wisdom daemon start outside the sandbox.`);
     return;
   }
+  if (logFile === undefined) { spawn(process.execPath, args, { detached: true, stdio: 'ignore' }).unref(); return; }
   const log = fs.openSync(logFile, 'a');
   spawn(process.execPath, args, { detached: true, stdio: ['ignore', log, log] }).unref();
   fs.closeSync(log);

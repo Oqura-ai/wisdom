@@ -191,6 +191,13 @@ export function recordsWithIds(cwd: string, ids: string[]): { commit: string; te
 
 export const POLICY_FILE = 'wisdom-team.json';
 
+/** Whether a commit was made in team mode: its tree holds the policy file. Work committed
+ * before team mode was turned on (local mode) stays private: its records are never pushed and
+ * no guide is written for them at push time. The same answer on every clone. */
+export function teamCommit(cwd: string, sha: string): boolean {
+  try { git(cwd, ['cat-file', '-e', `${sha}:${POLICY_FILE}`]); return true; } catch { return false; }
+}
+
 export function readPolicy(cwd: string): Policy | undefined {
   let top: string;
   try { top = topLevel(cwd); } catch { return undefined; }

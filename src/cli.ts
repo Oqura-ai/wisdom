@@ -15,8 +15,8 @@ import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFind
 import { redactSecrets } from './share/secrets.js';
 import { prCheck } from './team/team.js';
 import { POLICY_FILE, readPolicy, writePolicy } from './team/gitrefs.js';
-import { installHooks, removeHooks, runGitHook } from './team/githooks.js';
-import { setGuides } from './team/guides.js';
+import { guideCommit, installHooks, LOCAL_HOOKS, removeHooks, runGitHook } from './team/githooks.js';
+import { guidesOn, setGuides } from './team/guides.js';
 import { serveMcp } from './service/mcp.js';
 import { findDataDir, marker, movedFrom } from './core/paths.js';
 import { writeJson } from './storage/ledger.js';
@@ -54,7 +54,14 @@ Team mode (a repository with wisdom-team.json)
   wisdom team hooks on|off        Wisdom's git hooks: a link line on each commit, its record and
                                   guide written after it, and both sent with your push (init and
                                   connect turn them on in a team-mode repository)
-  wisdom guide on|off             Have commit guides written for your commits (on by default)
+  wisdom guide on|off             Whether a model (Haiku 5.5) writes a guide after each commit,
+                                  reading its sessions since your last commit. Team mode: on by
+                                  default; off, Wisdom writes a plain guide from the record.
+                                  Local mode: off by default; on installs one post-commit hook,
+                                  changes no commit message and pushes nothing
+  wisdom guide <commit>           Have a model write that commit's guide now, any mode, from its
+                                  record's window. Without one, glance --commit shows a plain
+                                  guide built from the record in local mode
   wisdom check --range A..B       In CI: each agent commit has a guide, its sessions are pushed
   wisdom team push|fetch          Send your sessions and commit records now, or read teammates'
   wisdom team delete <session>    Remove a pushed session for everyone
@@ -288,13 +295,19 @@ function makeProject(project: string): { dataDir: string; fresh: boolean } {
   return { dataDir, fresh };
 }
 
-/** In a team-mode repository, Wisdom's git hooks; in any other, none. */
+/** In a team-mode repository, Wisdom's git hooks; in a local one, only the post-commit hook,
+ * and only when the person turned guides on (wisdom guide on). Run again, it repairs them. */
 function teamHooks(project: string, dataDir: string): void {
   try {
-    if (!readPolicy(project)) return;
+    if (!readPolicy(project)) {
+      if (!guidesOn(dataDir, false)) return;
+      const { dir } = installHooks(project, dataDir, LOCAL_HOOKS);
+      console.log(`Guides after each commit are on (wisdom guide on): Wisdom's post-commit hook is in ${dir}. Turn it off with: wisdom guide off`);
+      return;
+    }
     const { dir, chained } = installHooks(project, dataDir);
-    console.log(`Team mode: Wisdom's git hooks are in ${dir}${chained.length ? ` (your own ${chained.join(', ')} still run first)` : ''}. Turn them off with: wisdom team hooks off`);
-  } catch (error) { console.log(`Team mode: Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
+    console.log(`Team mode: Wisdom's git hooks are in ${dir}${chained.length ? ` (your own ${chained.join(', ')} still ${chained.length === 1 ? 'runs' : 'run'} first)` : ''}. Turn them off with: wisdom team hooks off`);
+  } catch (error) { console.log(`Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
 }
 
 /** The harnesses that run here: each is asked for its version. */
@@ -324,6 +337,7 @@ async function connectProject(project: string, values: any, port?: number): Prom
   };
   for (const harness of Object.keys(names) as Connectable[]) {
     const line = result.connected.includes(harness) ? next[harness]
+      : result.kept.includes(harness) ? `not found now, so its earlier connection was left as it was (git still ignores its files). Run wisdom connect again where ${harness === 'claude-code' ? 'claude' : harness} is on PATH to refresh it.`
       : !found.includes(harness) ? 'not installed. Run wisdom connect again after installing it.'
       : `not connected: git tracks ${path.relative(project, settingsFile(dataDir, harness, 'project'))}, and Wisdom will not put this machine's paths in it. Use wisdom track ${harness === 'claude-code' ? 'claude' : harness}.`;
     console.log(`  ${names[harness].padEnd(12)} ${line}`);
@@ -514,10 +528,36 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
   const project = path.dirname(dataDir);
   const [action, session] = args;
   if (command === 'guide') {
-    if (action !== 'on' && action !== 'off') throw new Error('Use: wisdom guide on|off. A commit\'s guide is shown by wisdom glance --commit <commit>.');
-    setGuides(dataDir, action === 'on');
-    console.log(action === 'on' ? 'Commit guides are written for your commits with agent work.'
-      : 'Commit guides are off for your commits. Their records say so, and your team\'s CI check decides what that means.');
+    if (!action) throw new Error('Use: wisdom guide on|off, or wisdom guide <commit> to have a model write one commit\'s guide now. A commit\'s guide is shown by wisdom glance --commit <commit>.');
+    const team = !!readPolicy(project);
+    if (action === 'on' || action === 'off') {
+      setGuides(dataDir, action === 'on');
+      if (team) {
+        console.log(action === 'on' ? 'A model writes the guides of your commits with agent work, reading their sessions since your previous commit (Claude Haiku 5.5 through your Claude Code, unless wisdom-team.json names another writer).'
+          : 'No model writes your commit guides: Wisdom writes a plain one from each commit\'s record, citing the steps that made it and quoting what was asked in their turns. It costs nothing and does not explain why beyond those requests.');
+        return 0;
+      }
+      if (action === 'off') {
+        const removed = removeHooks(project, LOCAL_HOOKS);
+        console.log(`No model writes guides after your commits${removed.length ? '; Wisdom\'s post-commit hook is removed' : ''}. `
+          + 'wisdom glance --commit still shows a plain guide built from the record, and wisdom guide <commit> writes a model guide on request.');
+        return 0;
+      }
+      try {
+        const { dir, chained } = installHooks(project, dataDir, LOCAL_HOOKS);
+        console.log(`After each commit with agent work, a model now writes its guide (Claude Haiku 5.5 through your Claude Code), reading its sessions since your previous commit. `
+          + `Wisdom's post-commit hook is in ${dir}${chained.length ? ' (your own post-commit still runs first)' : ''}. `
+          + 'Your commit messages are not changed, and nothing is pushed: guides stay in this clone\'s refs/wisdom. Turn it off with: wisdom guide off');
+        return 0;
+      } catch (error) {
+        console.log(`Guides after each commit are on, but the hook that starts them is not installed. ${error instanceof Error ? error.message : error}`);
+        return 1;
+      }
+    }
+    const record = guideCommit(dataDir, action);
+    const sha = record.commit.sha.slice(0, 12);
+    console.log(`Guide written by ${record.guide!.writer} for ${sha} · ${record.guide!.problems.length ? `did not pass Wisdom's check: ${record.guide!.problems.join('; ')}` : 'it passed Wisdom\'s check'}.`);
+    console.log(`Kept in refs/wisdom/records/${record.commit.sha}${team ? ', and sent with your next push' : ', on this machine only'}. Read it: wisdom glance --commit ${sha}`);
     return 0;
   }
   if (command === 'check') throw new Error('Use: wisdom check --range <base>..<head>, in CI. A commit\'s guide is written and checked by itself after the commit.');
@@ -532,8 +572,8 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
   const connection = await ensureDaemon(dataDir);
   if (action === 'push') {
     const result = await call(connection, '/team', { action: 'push', remote: values.remote });
-    for (const s of result.sessions) console.log(`session ${s.id}: ${s.state}`);
-    console.log(`${result.records} commit record${result.records === 1 ? '' : 's'} pushed to ${result.remote}.`);
+    for (const s of result.sessions) console.log(`session ${s.id}: ${s.state}${s.heldBack ? ' (tried again at each push)' : ''}`);
+    console.log(`${result.records} commit record${result.records === 1 ? '' : 's'} pushed to ${result.remote}.${result.recordRedactions ? ` ${result.recordRedactions} possible secret${result.recordRedactions === 1 ? '' : 's'} redacted in them first.` : ''}`);
     if (result.missing.length) { console.log(`Not on ${result.remote} yet, so reviewers cannot open them: ${result.missing.join(', ')}`); return 1; }
     console.log('Ready: every session these records name is on the remote.');
     return 0;
@@ -541,6 +581,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
   if (action === 'fetch') {
     const result = await call(connection, '/team', { action: 'fetch', remote: values.remote });
     console.log(`${result.imported.length} teammate session${result.imported.length === 1 ? '' : 's'} updated, ${result.removed.length} removed by the team's deletion list, ${result.records} commit records here.`);
+    if (result.notRemoved) console.log(`${result.notRemoved} removed teammate cop${result.notRemoved === 1 ? 'y is' : 'ies are'} still on disk (a file was in use). Wisdom deletes ${result.notRemoved === 1 ? 'it' : 'them'} at the next team fetch or when it starts.`);
     return 0;
   }
   if (action === 'delete') {

@@ -112,9 +112,14 @@ export function stats(captures: SessionStore, request: { workspaceRoot?: string 
     addTokens(model, tokens); modelRows.set(modelKey, model);
   }
   // Model responses after the harness's last total: that total is older than they are.
-  const costBehind = new Set(captures.database.sql.prepare(`SELECT DISTINCT r.capture_id AS id FROM records r JOIN captures c ON c.id=r.capture_id
-    WHERE c.workspace_root=? AND r.type='usage' AND json_extract(r.body,'$.usageScope')='call' AND json_extract(r.body,'$.beforeCapture') IS NULL AND ${agent} IS NULL
-      AND r.revision > (SELECT max(t.revision) FROM records t WHERE t.capture_id=r.capture_id AND t.type='usage' AND json_extract(t.body,'$.usageScope')='session-total')`)
+  // Each session's last total is found once; a per-row subquery took seconds on long
+  // sessions and held the daemon, so hooks (a SessionEnd above all) timed out.
+  const costBehind = new Set(captures.database.sql.prepare(`WITH latest AS (SELECT r.capture_id AS id, max(r.revision) AS revision
+      FROM records r JOIN captures c ON c.id=r.capture_id
+      WHERE c.workspace_root=? AND r.type='usage' AND json_extract(r.body,'$.usageScope')='session-total' GROUP BY r.capture_id)
+    SELECT DISTINCT r.capture_id AS id FROM latest JOIN records r ON r.capture_id=latest.id
+    WHERE r.type='usage' AND r.revision > latest.revision AND json_extract(r.body,'$.usageScope')='call'
+      AND json_extract(r.body,'$.beforeCapture') IS NULL AND ${agent} IS NULL`)
     .all(key).map(row => String(row.id)));
   for (const [id, cost] of sessionCost) {
     // The harness's own session total replaces summed per-call costs for that capture.

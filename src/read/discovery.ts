@@ -5,8 +5,9 @@ import { ledgerSchema, type LedgerRecord, type LedgerRequest, type Manifest } fr
 import { EvidenceReader, evidenceVersion } from '../storage/evidence.js';
 import { betterResult, conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
 import { adapter } from '../harnesses/index.js';
-import { projectOf, readCommit, toRecord, workFor, type CommitInfo, type CommitRecord, type RecordStep, type Target } from '../team/commits.js';
-import { readFile, recordIds, recordRef, recordsWithIds } from '../team/gitrefs.js';
+import { agentWork, projectOf, readCommit, toRecord, windowStart, windowTurns, workFor, type CommitInfo, type CommitRecord, type RecordStep, type Target } from '../team/commits.js';
+import { gitText, readFile, readPolicy, recordIds, recordRef, recordsWithIds } from '../team/gitrefs.js';
+import { plainGuide } from '../team/plain.js';
 import { wisdomVersion } from '../setup/doctor.js';
 
 /** The agent-facing ledger. Two moves over one session: glance (its shape and one entry
@@ -380,11 +381,22 @@ function positioner(captures: SessionStore, version: number): (record: LedgerRec
 /** A commit's record, worked out from this store's recordings. `target` defaults to the
  * commit against its first parent; `made` says whether it is kept at commit time or only shown. */
 export function buildRecord(captures: SessionStore, version: number, project: string, commit: CommitInfo,
-  extra: { made: 'commit' | 'now'; recorder?: string; target?: Target }): CommitRecord {
+  extra: { made: 'commit' | 'later' | 'now'; recorder?: string; target?: Target }): CommitRecord {
   const target = extra.target ?? { parent: commit.parent, rev: commit.sha, until: Date.parse(commit.committedAt) };
   const files = workFor(captures, version, project, target);
-  return toRecord(files, positioner(captures, version), id => captures.get(id).manifest.harness,
+  const record = toRecord(files, positioner(captures, version), id => captures.get(id).manifest.harness,
     { commit, made: extra.made, madeAt: new Date().toISOString(), wisdomVersion: wisdomVersion(), recorder: extra.recorder });
+  // A record kept at commit time names the window its guide covers: since this person's
+  // previous commit on the branch, and each session's turns inside it.
+  if (extra.made !== 'now' && extra.recorder && record.sessions.length) {
+    const since = windowStart(project, extra.recorder, commit.parent);
+    record.window = { ...(since ? { since } : {}), until: commit.committedAt };
+    for (const session of record.sessions) {
+      const turns = windowTurns(captures, session.id, since ? Date.parse(since.at) : undefined, target.until, session.positions);
+      if (turns) session.turns = turns;
+    }
+  }
+  return record;
 }
 
 /** Has the session a step cites still got that exact change? Each step is checked on its own. */
@@ -396,6 +408,16 @@ function checkStep(stores: (id: string) => SessionStore | undefined, step: Recor
     AND json_extract(body,'$.afterHash') IS ? AND json_extract(body,'$.beforeHash') IS ? AND json_extract(body,'$.patchRef') IS ? LIMIT 1`)
     .get(step.session, step.after, step.before, step.patch ?? null);
   return found ? 'ok' : 'changed';
+}
+
+/** Was this commit made with this clone's git identity? Without one set, it counts as made here. */
+function committedHere(project: string, sha: string): boolean {
+  try {
+    const committer = gitText(project, ['log', '-1', '--format=%ce', sha]);
+    let me = '';
+    try { me = gitText(project, ['config', 'user.email']); } catch { /* no identity set */ }
+    return !me || committer === me;
+  } catch { return true; }
 }
 
 /** A commit, piece by piece, with the recorded steps that made each one: from the record kept
@@ -412,19 +434,27 @@ function commitGlance(captures: SessionStore, version: number, ref: string, from
   // names through their Wisdom-Record lines, besides its own.
   const carried = recordsWithIds(project, recordIds(project, commit.sha).filter(id => id !== kept?.recordId))
     .filter(found => found.commit !== commit.sha);
-  const lines = kept ? renderRecord(kept, version, stores, harnessOf)
+  let recorder: string | undefined;
+  try { recorder = JSON.parse(fs.readFileSync(path.join(captures.dataDir, 'recorder.json'), 'utf8')).id; } catch { recorder = undefined; }
+  const reader = { recorder, madeHere: committedHere(project, commit.sha) };
+  const lines = kept ? renderRecord(kept, version, stores, harnessOf, !readPolicy(project), reader)
     : carried.length ? [`commit ${commit.sha.slice(0, 12)} · ${commit.subject} · version ${version}`, 'no record of its own', `the commit's own diff: git show ${commit.sha.slice(0, 12)}`]
-    : renderRecord(buildRecord(captures, version, project, commit, { made: 'now' }), version, undefined, harnessOf);
+    : renderRecord(buildRecord(captures, version, project, commit, { made: 'now' }), version, undefined, harnessOf, false, reader);
   if (carried.length) {
     lines.push('', `its message carries ${plural(carried.length, 'recorded commit')} through their Wisdom-Record lines (a squash merge, say); their records follow`);
-    for (const found of carried) lines.push('', `── carried: ${found.commit.slice(0, 12)}`, ...renderRecord(JSON.parse(found.text), undefined, stores, harnessOf));
+    for (const found of carried) lines.push('', `── carried: ${found.commit.slice(0, 12)}`, ...renderRecord(JSON.parse(found.text), undefined, stores, harnessOf, false, reader));
   }
   return respond(lines, from, next);
 }
 
-/** The text of a commit record. With `stores`, every step is checked against the session it cites. */
+/** The text of a commit record. With `stores`, every step is checked against the session it cites.
+ * `local`: in local mode a kept record with agent work and no stored guide shows the plain guide,
+ * built now from the record and the requests it cites, never stored. */
 export function renderRecord(record: CommitRecord, version: number | undefined, stores?: (id: string) => SessionStore | undefined,
-  harnessOf: (id: string) => string | undefined = () => undefined): string[] {
+  harnessOf: (id: string) => string | undefined = () => undefined, local = false,
+  reader: { recorder?: string; madeHere?: boolean } = {}): string[] {
+  // A teammate reading someone else's record: "your previous commit" would be wrong (live test 5.11).
+  const yours = !reader.recorder || !record.recorder || reader.recorder === record.recorder;
   const { commit } = record;
   const states = record.steps.map(step => stores ? checkStep(stores, step) : 'ok' as StepState);
   const used = new Map<string, string[]>();
@@ -471,8 +501,10 @@ export function renderRecord(record: CommitRecord, version: number | undefined, 
     `${commit.parent ? `parent ${commit.parent.slice(0, 12)}` : 'first commit'} · ${plural(record.files.length, 'file')} · ${[
       pieces ? `${plural(pieces, 'piece')}: ${number(full)} from recorded steps${partly ? `, ${number(partly)} partly recorded` : ''}${none ? `, ${number(none)} not recorded` : ''}` : '',
       byFile ? `${plural(byFile, 'file')} matched as a whole` : ''].filter(Boolean).join(' · ') || 'nothing matched'}`,
-    record.made === 'commit' ? `record kept when the commit was made, ${minute(record.madeAt)}${changed ? ` · ${plural(changed, 'step')} changed since` : ''}${missing ? ` · ${plural(missing, 'step')} in sessions not available here` : ''}`
-      : 'worked out now from the recordings; no record was kept when the commit was made',
+    record.made === 'now' ? (reader.madeHere === false ? 'worked out now from the recordings here; no record of this commit is here'
+      : 'worked out now from the recordings; no record was kept when the commit was made')
+      : `${record.made === 'later' ? `record kept later, ${minute(record.madeAt)}, because the job after the commit did not finish; it reads the recordings up to the commit's time`
+        : `record kept when the commit was made, ${minute(record.madeAt)}`}${changed ? ` · ${plural(changed, 'step')} changed since` : ''}${missing ? ` · ${plural(missing, 'step')} in sessions not available here` : ''}`,
     `the commit's own diff: git show ${commit.sha.slice(0, 12)}`,
     '', ...body,
   ];
@@ -486,8 +518,12 @@ export function renderRecord(record: CommitRecord, version: number | undefined, 
     const order = (a: string, b: string) => { const [x, y] = [rank(a), rank(b)]; return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
     for (const [id, positions] of used) {
       const known = record.sessions.find(s => s.id === id);
-      lines.push(`${INDENT}${id}  ${harnessOf(id) ?? known?.harness ?? '?'}  ${[...positions].sort(order).join(', ')}`);
+      const window = known?.turns ? ` · window ${known.turns[0] === known.turns[1] ? `t${known.turns[0]}` : `t${known.turns[0]}–t${known.turns[1]}`}` : '';
+      lines.push(`${INDENT}${id}  ${harnessOf(id) ?? known?.harness ?? '?'}  ${[...positions].sort(order).join(', ')}${window}`);
     }
+    if (record.window) lines.push(`${INDENT}window: ${record.window.since
+      ? `since ${yours ? 'your' : 'the recorder\'s'} previous commit on this branch, ${record.window.since.commit.slice(0, 12)} (${minute(new Date(record.window.since.at).toISOString())})`
+      : `from the start of these sessions (no earlier commit of ${yours ? 'yours' : 'the recorder\'s'} on this branch)`}, up to this commit`);
     const [id, [at]] = [...used][0];
     lines.push('', `To read a step, open its position in its session, such as ${JSON.stringify({ capture: short(id), open: at })}.`);
   }
@@ -495,8 +531,12 @@ export function renderRecord(record: CommitRecord, version: number | undefined, 
     const { guide } = record;
     lines.push('', `guide · written by ${guide.writer}, ${minute(guide.writtenAt)} · derived, not evidence · ${guide.problems.length
       ? `did not pass Wisdom's check: ${guide.problems.join('; ')}` : 'Wisdom checked that it covers every item and that its citations exist, not that it is right'}`);
-    for (const line of guide.text.replace(/\s+$/, '').split(/\r?\n/)) lines.push(INDENT + line);
+    for (const line of guide.text.replace(/\s+$/, '').split(/\r?\n/)) lines.push(line ? INDENT + line : '');
   } else if (record.guideMissing) lines.push('', `guide · none: ${record.guideMissing}`);
+  else if (local && stores && agentWork(record)) {
+    lines.push('', `guide · plain, built from the record now, no model · derived, not evidence · not stored; a model guide on request: wisdom guide ${commit.sha.slice(0, 12)}`);
+    for (const line of plainGuide(record, stores).replace(/\s+$/, '').split(/\r?\n/)) lines.push(line ? INDENT + line : '');
+  }
   return lines;
 }
 

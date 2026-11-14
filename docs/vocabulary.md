@@ -103,7 +103,13 @@ same commit at the same version gives the same text. It is implemented in
 | `(changed since the commit)` | A kept step whose session no longer has that exact change (its hashes differ). |
 | `(session not available)` | A kept step whose session is not here: deleted, or a teammate's not fetched (`wisdom team fetch`). |
 | `guide · written by claude-haiku-5-5 via Claude Code, <time> · derived, not evidence · …` | A model's account of the commit for reviewers, written after it (team mode). The line ends with what Wisdom's check found: that it covers every piece and its citations exist (not that it is right), or what did not pass. |
-| `guide · none: <reason>` | A commit with agent work and no guide, and why: turned off by the person who committed, no writer installed, the writer failed. |
+| `guide · written by Wisdom, no model (wisdom guide off)` | The person who committed turned the model off: Wisdom wrote the guide from the record, citing each piece's step and quoting that turn's request. It says nothing about why beyond those requests. |
+| `record kept later, <time>, because the job after the commit did not finish; …` | A commit's record kept by recovery (the next push, `wisdom guide <commit>`, or the daemon starting the job again) more than two minutes after the commit. It reads the recordings up to the commit's time, like one kept at commit time. |
+| `guide · plain, built from the record now, no model · derived, not evidence · not stored; …` | Local mode, a kept record with agent work and no stored guide: the same plain guide, built from the record each time it is read and never stored. The line ends with `wisdom guide <commit>`, which has a model write one. |
+| `Asked in t2: "<request>" [… N more characters: open t2 to read it all]` | In a plain guide: a request longer than 300 characters, cut, with how to read the rest. |
+| `guide · none: <reason>` | A commit with agent work and no guide, and why: no writer installed, the writer failed. |
+| `<session>  <harness>  t1/c2 · window t1–t4` | Under `sessions` in a commit's record: the turns of that session its guide covers, from the person's previous commit on the branch up to this one. |
+| `window: since your previous commit on this branch, <commit> (<time>)` | Where the guide's window starts. Without an earlier commit of theirs on the branch: `from the start of these sessions`. |
 | `its message carries N recorded commits through their Wisdom-Record lines` | A commit made from others (a squash merge, a cherry-pick): their records follow, each under `── carried: <commit>`. |
 | `read Wisdom · N calls · C characters returned, about T tokens` | In a session's glance: how much this session read from Wisdom. Tokens are estimated at four characters each. |
 
@@ -112,8 +118,12 @@ after it. Starting from the committed file, Wisdom follows the recorded changes 
 one whose result is the file the next one started from, until it reaches the parent's
 file. The lines are then traced through those changes' patches. A session is linked only
 because it produced these exact bytes, never because it touched the same file name.
-Changes recorded after the commit's time are not used. Where two sessions saw the same
-edit, the one that saw it during a tool call is used. The committed file is compared both
+Changes recorded after the commit's time are not used. Every session open in a project
+sees each edit, so one edit can be seen several times. A sighting during a tool call beats
+one outside any; among those, the call whose own input names the file or holds the added
+text, then the earliest. When that still leaves more than one session (a session waiting on
+a long command also sees the edit when its command ends), the piece lists every one of them
+rather than guessing. The committed file is compared both
 as git checks it out and as stored, so line-ending conversion does not break a match.
 
 ## Records behind the text

@@ -25,7 +25,7 @@ const DATA_END = '# end wisdom data folder';
  * project's own settings, and the reading skill beside them. Nothing reaches git: the files
  * go in `.git/info/exclude`, and a settings file git already tracks is left alone.
  */
-export function connect(dataDir: string, harnesses: Connectable[], now = new Date()): { connected: Connectable[]; tracked: string[]; files: string[]; excluded: boolean } {
+export function connect(dataDir: string, harnesses: Connectable[], now = new Date()): { connected: Connectable[]; kept: Connectable[]; tracked: string[]; files: string[]; excluded: boolean } {
   const project = path.dirname(path.resolve(dataDir));
   const tracked = harnesses.map(harness => settingsFile(dataDir, harness, 'project')).filter(file => trackedByGit(project, file));
   const connected = harnesses.filter(harness => !tracked.includes(settingsFile(dataDir, harness, 'project')));
@@ -35,11 +35,19 @@ export function connect(dataDir: string, harnesses: Connectable[], now = new Dat
     files.push(path.join(project, folder, 'skills', 'wisdom-ledger'));
   }
   const before = readConnected(dataDir);
+  // A harness not found this time (off PATH, say) that an earlier connect set up keeps its files,
+  // untouched, and they stay excluded: the block must cover everything Wisdom put here.
+  const kept = (Object.keys(connectors) as Connectable[]).filter(harness => !harnesses.includes(harness)
+    && (before[harness] || hookState(dataDir, harness, 'project') !== 'none')
+    && !trackedByGit(project, settingsFile(dataDir, harness, 'project')));
+  const keptFiles = kept.flatMap(harness => [settingsFile(dataDir, harness, 'project'), path.join(project, settingsFiles.project[harness].skills, 'skills', 'wisdom-ledger')])
+    .filter(file => fs.existsSync(file) && !files.includes(file));
   const after: Connected = { ...before };
   for (const harness of connected) after[harness] = { since: before[harness]?.since ?? now.toISOString(), home: userHome(harness) };
   writeJson(connectedFile(dataDir), after);
-  const excluded = setExcluded(project, files.map(file => '/' + path.relative(project, file).replaceAll('\\', '/') + (fs.statSync(file).isDirectory() ? '/' : '')));
-  return { connected, tracked, files, excluded };
+  const patterns = [...new Set([...files, ...keptFiles].map(file => '/' + path.relative(project, file).replaceAll('\\', '/') + (fs.statSync(file).isDirectory() ? '/' : '')))];
+  const excluded = setExcluded(project, patterns);
+  return { connected, kept, tracked, files, excluded };
 }
 
 /** Take Wisdom out of the project's settings and skill folders, exactly what connect added.

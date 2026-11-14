@@ -77,12 +77,31 @@ test('a commit lists each piece with the recorded step that made it, or says it 
       'd.ts · modify · +1 −0 · not recorded',
       '',
       'sessions',
-      '    commit-session  pi  t1/c1, t1/c2, outside',
+      '    commit-session  pi  t1/c1, t1/c2, outside · window t1',
+      '    window: from the start of these sessions (no earlier commit of yours on this branch), up to this commit',
       '',
       'To read a step, open its position in its session, such as {"capture":"commit-s","open":"t1/c1"}.',
       '',
-      'complete · 18 lines',
+      // Local mode: the plain guide, built from the record when read, never stored.
+      `guide · plain, built from the record now, no model · derived, not evidence · not stored; a model guide on request: wisdom guide ${sha.slice(0, 12)}`,
+      '    ## Summary',
+      '    fix a, add c. Written by Wisdom from the commit\'s record, without a model: which recorded step made each piece and what was asked in that turn. It does not say why beyond those requests.',
+      '',
+      '    ## Items',
+      '    - a.ts @@ -2,1 +2,1 @@ · t1/c1 in session commit-s',
+      '      Made by [t1/c1 commit-s] (pi). Asked in t1: "Fix a and add c.".',
+      '    - a.ts @@ -3,0 +4,1 @@ · t1/c1 in session commit-s',
+      '      Made by [t1/c1 commit-s] (pi). Asked in t1: "Fix a and add c.".',
+      '    - b.ts @@ -1,0 +2,1 @@ · outside (changed outside any recorded step) in session commit-s',
+      '      Changed outside any recorded step, seen at [outside commit-s].',
+      '    - c.ts @@ -0,0 +1,1 @@ · t1/c2 in session commit-s',
+      '      Made by [t1/c2 commit-s] (pi). Asked in t1: "Fix a and add c.".',
+      '    - d.ts (modify) · not recorded',
+      '      No recording explains this change.',
+      '',
+      'complete · 35 lines',
     ].join('\n'));
+    assert.equal(kept.guide, undefined, 'the plain guide is never stored');
     // Pinned to the version, the same request gives the same text, by hash as by HEAD.
     assert.equal((await call(daemon.connection, '/ledger', { glance: true, commit: sha, at: version })).text, text);
   } finally { await daemon.close(); fs.rmSync(project, { recursive: true, force: true }); }
@@ -165,4 +184,47 @@ test('the chain follows contents back to the parent, keeps the copy seen during 
   const revert = [change(1, 'p', 'x', 'observed-during-tool'), change(2, 'x', 'p', 'observed-during-tool'), change(3, 'p', 'c', 'observed-during-tool')];
   assert.deepEqual(chainOf(revert, ['p'], 'c').chain.map(r => r.id), ['r3']);
   assert.deepEqual(chainOf([], [null], 'c'), { chain: [], complete: false });
+});
+
+test('one edit seen by two sessions goes to the call that names it, else to the earliest and lists both (live test 2.9)', () => {
+  const seen = (n: number, session: string, second: number): LedgerRecord => ({ ...change(n, 'p', 'c', 'observed-during-tool', second), captureId: session });
+  // The author's edit at 10 s; a session waiting on a 45 s command sees it when the command ends.
+  const sightings = [seen(1, 'author', 10), seen(2, 'waiter', 55)];
+  const byName = chainOf(sightings, ['p'], 'c', r => r.captureId === 'author');
+  assert.deepEqual([byName.chain.map(r => r.captureId), byName.also], [['author'], undefined]);
+  // Nothing names it: the earliest sighting first, and the other session listed beside it.
+  const unnamed = chainOf(sightings, ['p'], 'c', () => false);
+  assert.deepEqual([unnamed.chain.map(r => r.captureId), unnamed.also?.map(list => list.map(r => r.captureId))], [['author'], [['waiter']]]);
+  // Both name it: still both.
+  assert.deepEqual(chainOf(sightings, ['p'], 'c', () => true).also?.[0].map(r => r.captureId), ['waiter']);
+  // A sighting outside any call never outranks one during a call.
+  const outside = [{ ...change(1, 'p', 'c', 'external-or-unknown', 5), captureId: 'idle' }, seen(2, 'waiter', 55)];
+  assert.deepEqual(chainOf(outside, ['p'], 'c', () => false), { chain: [outside[1]], complete: true });
+});
+
+test('a commit credits the session whose own call made the edit, not one whose long command was running', { skip: !hasGit }, async () => {
+  const { project, data, git, write } = repo();
+  write('x.ts', 'one\n');
+  git('add', '-A'); git('commit', '-q', '-m', 'start');
+  const daemon = await startDaemon(data, 0);
+  try {
+    const { captureId: waiter } = await openSession(daemon.connection, { harness: 'claude-code', sessionId: 'waiter-session', workspaceRoot: project, source: null });
+    const { captureId: author } = await openSession(daemon.connection, { harness: 'codex', sessionId: 'author-session', workspaceRoot: project, source: null });
+    await observeSession(daemon.connection, waiter, obs('input', { data: { text: 'Wait a while.' } }));
+    await observeSession(daemon.connection, waiter, obs('tool_started', { toolCallId: 'wait', toolName: 'Bash', data: { input: { command: 'sleep 45' } } }));
+    await observeSession(daemon.connection, author, obs('input', { data: { text: 'Add a line to x.ts.' } }));
+    await observeSession(daemon.connection, author, obs('tool_started', { toolCallId: 'edit', toolName: 'edit', data: { input: { path: 'x.ts', newText: 'codex was here' } } }));
+    write('x.ts', 'one\ncodex was here\n');
+    await observeSession(daemon.connection, author, obs('tool_finished', { toolCallId: 'edit', toolName: 'edit', isError: false, data: { content: 'ok' } }));
+    // Longer than the 2 s within which sightings used to be merged: the old code credited the waiter.
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    await observeSession(daemon.connection, waiter, obs('tool_finished', { toolCallId: 'wait', toolName: 'Bash', isError: false, data: { response: { stdout: '' } } }));
+    const sightings = () => new Set(daemon.captures.database.records("type='file_change' AND path=?", ['x.ts']).map(r => r.captureId));
+    for (let waited = 0; waited < 10_000 && sightings().size < 2; waited += 100) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual([...sightings()].sort(), ['author-session', 'waiter-session'], 'both sessions saw the edit');
+    git('add', '-A'); git('commit', '-q', '-m', 'codex edit');
+    const text = (await call(daemon.connection, '/ledger', { glance: true, commit: 'HEAD' })).text;
+    assert.match(text, /^ {4}@@ -1,0 \+2,1 @@ {2}t1\/c1 in session author-s$/m);
+    assert.doesNotMatch(text, /waiter-s/);
+  } finally { await daemon.close(); fs.rmSync(project, { recursive: true, force: true }); }
 });

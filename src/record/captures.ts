@@ -8,6 +8,7 @@ import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type
 import { adapter, harnessNames } from '../harnesses/index.js';
 import type { NativeEntry } from '../harnesses/types.js';
 import { surfaceText } from '../core/content.js';
+import { GUIDE_OPENING } from '../team/plain.js';
 import { cloneNote, harnessHome, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch, type Connected } from '../core/paths.js';
 
 interface RunningCapture {
@@ -124,9 +125,26 @@ export class Captures {
     const record = this.observe(id, observation, event);
     if (observation.type === 'session_ended' && this.running.has(id)) {
       const reason = (observation.data as any)?.reason;
-      this.close(id, typeof reason === 'string' && reason ? `session-ended: ${reason}` : 'session-ended');
+      const why = typeof reason === 'string' && reason ? `session-ended: ${reason}` : 'session-ended';
+      // Closing reads the transcript and rescans the workspace: over a second in a large project,
+      // longer than Claude Code gives its exit hook ("Hook cancelled"). The daemon answers the
+      // hook first and closes right after; any later request finishes it before it is served.
+      if (this.deferCloses) { this.closing.set(id, why); setImmediate(() => this.finishCloses()); }
+      else this.close(id, why);
     }
     return record;
+  }
+
+  /** Set by the daemon: a session's end is answered before its capture is closed. */
+  deferCloses = false;
+  private closing = new Map<string, string>();
+
+  /** Close the captures whose end was answered but not yet closed. */
+  finishCloses(): void {
+    for (const [id, reason] of [...this.closing]) {
+      this.closing.delete(id);
+      try { this.close(id, reason); } catch (error) { this.degrade(id, error); }
+    }
   }
 
   /** The session a `wisdom handoff` started or resumed says which session it continues.
@@ -554,7 +572,7 @@ export class Captures {
             continue;
           }
           const { sessionId, cwd } = header(harness, file);
-          if (!sessionId || this.isDeleted(sessionId)) { this.notSessions.add(file); continue; }
+          if (!sessionId || this.isDeleted(sessionId) || guideWriterRun(file)) { this.notSessions.add(file); continue; }
           if (since !== undefined) {
             // Another project's session in the person's own home: never read again.
             if (!this.inProject(cwd)) { this.notSessions.add(file); continue; }
@@ -739,6 +757,7 @@ export class Captures {
   }
 
   shutdown(): void {
+    this.finishCloses();
     for (const id of [...this.running.keys()]) {
       try { this.close(id, 'daemon-stopped', true); } catch (error) { this.degrade(id, error); }
     }
@@ -874,14 +893,29 @@ function listDirs(dir: string): string[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch { return []; }
 }
 
-/** The session and folder a native file names in its first lines. */
-function header(harness: string, file: string): { sessionId?: string; cwd?: string } {
+function head(file: string): string {
   const fd = fs.openSync(file, 'r');
-  let text: string;
   try {
     const bytes = Buffer.alloc(Math.min(fs.fstatSync(fd).size, 256 * 1024));
-    text = bytes.subarray(0, fs.readSync(fd, bytes, 0, bytes.length, 0)).toString('utf8');
+    return bytes.subarray(0, fs.readSync(fd, bytes, 0, bytes.length, 0)).toString('utf8');
   } finally { fs.closeSync(fd); }
+}
+
+const writerOpening = new RegExp(`"(?:content|text|prompt|message)":\\s*"${GUIDE_OPENING.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+
+/** A run of Wisdom's own guide writer, kept by a harness that persisted it anyway (the writer
+ * asks Claude Code not to): its first request starts with the writer's opening sentence. It is
+ * no one's session, so it is never recorded. */
+export function guideWriterRun(file: string): boolean {
+  for (const line of head(file).split('\n').slice(0, 50)) {
+    if (/"role":\s*"user"|"type":\s*"(?:user|user_message)"/.test(line)) return writerOpening.test(line);
+  }
+  return false;
+}
+
+/** The session and folder a native file names in its first lines. */
+function header(harness: string, file: string): { sessionId?: string; cwd?: string } {
+  const text = head(file);
   const reader = adapter(harness);
   let sessionId: string | undefined, cwd: string | undefined;
   for (const line of text.split('\n').slice(0, 50)) {

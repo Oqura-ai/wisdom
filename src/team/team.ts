@@ -5,9 +5,10 @@ import { execSync } from 'node:child_process';
 import { draftFrom, writeShare, type Exported } from '../share/share.js';
 import { view } from '../read/views.js';
 import { agentWork, projectOf, type CommitRecord } from './commits.js';
-import { commitFiles, deleteRef, git, gitError, gitIdentity, gitText, listRefs, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds,
+import { commitFiles, deleteRef, git, gitError, gitIdentity, gitText, listRefs, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, teamCommit,
   refSafe, remoteRef, resolve, sessionRef, setRef, type Policy } from './gitrefs.js';
 import { writeJson } from '../storage/ledger.js';
+import { redactSecrets, scanSecrets } from '../share/secrets.js';
 import type { SessionStore } from '../storage/store.js';
 import type { SharedLibrary } from '../share/shared.js';
 
@@ -53,14 +54,35 @@ function fetchRefs(project: string, remote: string, policy: Policy, refs = remot
 
 const sessionKey = (recorder: string, id: string) => `${recorder}/${refSafe(id)}`;
 
-/** Recorded records reachable from HEAD that the remote does not have yet. */
+/** Records reachable from HEAD that the remote does not have yet, of commits made in team mode
+ * (teamCommit): work recorded before the policy file was committed is not sent. */
 function unpushedRecords(project: string, policy: Policy, refs: Map<string, string>): { ref: string; sha: string; record: CommitRecord }[] {
   const history = new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
   return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref, sha]) => {
     const commit = ref.slice('refs/wisdom/records/'.length);
-    if (!history.has(commit) || refs.get(remoteRef(policy.repoId, ref)) === sha) return [];
+    if (!history.has(commit) || refs.get(remoteRef(policy.repoId, ref)) === sha || !teamCommit(project, commit)) return [];
     const bytes = readFile(project, ref, 'record.json');
     return bytes ? [{ ref, sha, record: JSON.parse(bytes.toString('utf8')) as CommitRecord }] : [];
+  });
+}
+
+/** Why the project's check stopped a session, in a few fixed words: its own output can quote
+ * the very thing it refused, so it is never shown. */
+function checkFailure(error: unknown): string {
+  const e = error as { status?: number | null; signal?: string | null; code?: string; stderr?: Buffer | string };
+  if (e.code === 'ETIMEDOUT' || e.signal) return 'the project\'s check timed out';
+  const said = String(e.stderr ?? '');
+  if (e.status === 127 || e.code === 'ENOENT' || /is not recognized|command not found|not found|No such file/i.test(said)) return 'the project\'s check could not run here';
+  return 'refused by the project\'s check';
+}
+
+/** Records reachable from HEAD that are on the remote already, as this clone has them. */
+function pushedRecords(project: string, policy: Policy, refs: Map<string, string>): CommitRecord[] {
+  const history = new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
+  return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref]) => {
+    if (!history.has(ref.slice('refs/wisdom/records/'.length)) || !refs.has(remoteRef(policy.repoId, ref))) return [];
+    const bytes = readFile(project, ref, 'record.json');
+    try { return bytes ? [JSON.parse(bytes.toString('utf8')) as CommitRecord] : []; } catch { return []; }
   });
 }
 
@@ -81,7 +103,7 @@ function sessionVersion(captures: SessionStore, project: string, dataDir: string
     writeShare(draft, draft.findings, file);
     if (policy.check) {
       try { execSync(`${policy.check} "${file}"`, { cwd: project, stdio: 'pipe', windowsHide: true, timeout: 120_000 }); }
-      catch (error) { return { ref, sha: parent ?? '', changed: false, note: `the project's check refused it: ${gitError(error)}` }; }
+      catch (error) { return { ref, sha: parent ?? '', changed: false, note: checkFailure(error) }; }
     }
     const manifest = exported.manifest;
     const meta = { sessionId: id, harness: manifest.harness, recorder: me, startedAt: manifest.startedAt, lastSeq,
@@ -94,7 +116,44 @@ function sessionVersion(captures: SessionStore, project: string, dataDir: string
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 }
 
-export interface PushResult { remote: string; sessions: { id: string; state: string }[]; records: number; missing: string[] }
+/** Every string in a value with what the secret scan finds redacted, as in a share file. */
+function redactStrings(value: unknown, found: Map<string, string>): unknown {
+  if (typeof value === 'string') {
+    const matches = scanSecrets(value);
+    if (!matches.length) return value;
+    for (const match of matches) found.set(match.value, match.kind);
+    return redactSecrets(value, new Map(matches.map(match => [match.value, match.kind])));
+  }
+  if (Array.isArray(value)) return value.map(item => redactStrings(item, found));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactStrings(item, found)]));
+  return value;
+}
+
+/** A record is pushed as its ref, every version in it. Its guide is text, and may quote a request
+ * (the plain guide does, verbatim) or anything the model read, so before a push every version
+ * not on the remote yet is scanned with the share file's patterns. When one holds something,
+ * the versions not yet pushed are replaced by one redacted version on top of the remote's (or
+ * alone), so no unredacted version leaves. The record is derived, not evidence: the sessions it
+ * cites keep their originals. Returns how many values were redacted. */
+function redactRecord(project: string, ref: string, remoteSha: string | undefined): number {
+  const onRemote = remoteSha && (() => { try { git(project, ['cat-file', '-e', `${remoteSha}^{commit}`]); return true; } catch { return false; } })();
+  let versions: string[];
+  try { versions = gitText(project, ['rev-list', ref, ...(onRemote ? [`^${remoteSha}`] : [])]).split('\n').filter(Boolean); }
+  catch { return 0; }
+  if (!versions.some(version => scanSecrets(readFile(project, version, 'record.json')?.toString('utf8') ?? '').length)) return 0;
+  const found = new Map<string, string>();
+  const latest = JSON.parse(readFile(project, ref, 'record.json')!.toString('utf8'));
+  const clean = redactStrings(latest, found);
+  setRef(project, ref, commitFiles(project, { 'record.json': JSON.stringify(clean, null, 2) + '\n' },
+    `wisdom record, ${found.size} possible secret(s) redacted before push`, onRemote ? remoteSha : undefined));
+  return found.size;
+}
+
+export interface PushResult { remote: string;
+  /** `heldBack`: the short cause, when the session was not pushed and Wisdom retries it at the next push. */
+  sessions: { id: string; state: string; heldBack?: string }[]; records: number; missing: string[];
+  /** Values the secret scan redacted in the commit records pushed. */
+  recordRedactions: number }
 
 /** `wisdom team push`: sessions first, then the records that name them, then a check that the
  * remote holds every session those records name. */
@@ -107,13 +166,19 @@ export function push(captures: SessionStore, dataDir: string, remoteName?: strin
   const deleted = new Set(readDeleted(project).map(d => d.key));
   const records = unpushedRecords(project, policy, refs);
   const own = new Set(captures.database.manifests().map(m => m.captureId));
-  const wanted = [...new Set(records.flatMap(({ record }) => record.sessions.filter(s => (s.recorder ?? me) === me && own.has(s.id)).map(s => s.id)))];
+  const mine = (record: CommitRecord) => record.sessions.filter(s => (s.recorder ?? me) === me && own.has(s.id)).map(s => s.id);
+  // A session held back at an earlier push (the project's check refused it, or could not run)
+  // while its record went: a record on the remote names it, the remote lacks it. Each push
+  // tries it again, until it goes or the team deletes it.
+  const onRemote = (id: string) => refs.has(remoteRef(policy.repoId, sessionRef(sessionKey(me, id))));
+  const heldBack = new Set(pushedRecords(project, policy, refs).flatMap(mine).filter(id => !onRemote(id) && !deleted.has(sessionKey(me, id))));
+  const wanted = [...new Set([...records.flatMap(({ record }) => mine(record)), ...heldBack])];
   const sessions: PushResult['sessions'] = [];
   const specs: string[] = [];
   for (const id of wanted) {
     if (deleted.has(sessionKey(me, id))) { sessions.push({ id, state: 'deleted by the team, not pushed' }); continue; }
     const version = sessionVersion(captures, project, dataDir, policy, id);
-    if (!version.sha) { sessions.push({ id, state: `not pushed: ${version.note}` }); continue; }
+    if (!version.sha) { sessions.push({ id, state: `not pushed: ${version.note}`, heldBack: version.note }); continue; }
     const target = remoteRef(policy.repoId, version.ref);
     if (refs.get(target) !== version.sha) specs.push(`${version.ref}:${target}`);
     sessions.push({ id, state: [version.changed ? 'new version' : 'unchanged', version.note].filter(Boolean).join(', ') });
@@ -122,6 +187,8 @@ export function push(captures: SessionStore, dataDir: string, remoteName?: strin
     try { git(project, ['push', '--quiet', '--no-verify', remote, ...specs]); }
     catch (error) { throw new Error(`Sessions could not be pushed to ${remote}, so no records were pushed: ${gitError(error)}`); }
   }
+  let recordRedactions = 0;
+  for (const { ref } of records) recordRedactions += redactRecord(project, ref, refs.get(remoteRef(policy.repoId, ref)));
   const recordSpecs = records.map(({ ref }) => `${ref}:${remoteRef(policy.repoId, ref)}`);
   if (recordSpecs.length) {
     try { git(project, ['push', '--quiet', '--no-verify', remote, ...recordSpecs]); }
@@ -131,7 +198,7 @@ export function push(captures: SessionStore, dataDir: string, remoteName?: strin
   const after = remoteRefs(project, remote, policy);
   const missing = [...new Set(records.flatMap(({ record }) => record.sessions.map(s => sessionKey(s.recorder ?? me, s.id))))]
     .filter(key => !after.has(remoteRef(policy.repoId, sessionRef(key))));
-  return { remote, sessions, records: records.length, missing };
+  return { remote, sessions, records: records.length, missing, recordRedactions };
 }
 
 interface Imports { [key: string]: { commit: string; shareId: string } }
@@ -139,11 +206,12 @@ const importsFile = (dataDir: string) => path.join(dataDir, 'team-imports.json')
 
 /** `wisdom team fetch`: teammates' sessions become read-only copies here (a newer version
  * replaces the older one), their records become readable, and the deletion list is applied. */
-export function fetchTeam(captures: SessionStore, library: SharedLibrary, dataDir: string, remoteName?: string): { imported: string[]; removed: string[]; records: number } {
+export function fetchTeam(captures: SessionStore, library: SharedLibrary, dataDir: string, remoteName?: string): { imported: string[]; removed: string[]; notRemoved: number; records: number } {
   const project = projectOf(captures);
   const policy = policyOrThrow(project);
   const remote = remoteName ?? policy.remote ?? 'origin';
   const me = recorderId(dataDir);
+  library.finishRemovals();
   fetchRefs(project, remote, policy);
   const imports: Imports = fs.existsSync(importsFile(dataDir)) ? JSON.parse(fs.readFileSync(importsFile(dataDir), 'utf8')) : {};
   const deleted = new Set(readDeleted(project).map(d => d.key));
@@ -164,12 +232,14 @@ export function fetchTeam(captures: SessionStore, library: SharedLibrary, dataDi
     } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   }
   for (const key of deleted) {
-    if (imports[key]) { library.remove(imports[key].shareId); delete imports[key]; removed.push(key); }
+    // A copy whose folder could not be deleted yet stays on the library's pending list, which
+    // finishes it at the next fetch or daemon start; it is not counted as removed until then.
+    if (imports[key]) { if (library.remove(imports[key].shareId)) removed.push(key); delete imports[key]; }
     deleteRef(project, `${FETCHED}${key}`);
     if (key.startsWith(`${me}/`)) deleteRef(project, sessionRef(key));
   }
   writeJson(importsFile(dataDir), imports);
-  return { imported, removed, records: listRefs(project, 'refs/wisdom/records/').size };
+  return { imported, removed, notRemoved: library.pending.length, records: listRefs(project, 'refs/wisdom/records/').size };
 }
 
 /** Add keys to the team's deletion list and remove their refs from the remote. The list is
@@ -264,7 +334,7 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
       const found = [
         ...(agent && !record.guide && policy.requireGuides !== false ? [`agent work without a guide${record.guideMissing ? ` (${record.guideMissing})` : ''}`] : []),
         ...(agent && record.guide?.problems.length ? [`the guide did not pass its check: ${record.guide.problems.join('; ')}`] : []),
-        ...missing.map(id => `session ${id.slice(0, 8)} is not on ${remote} (wisdom team push)`),
+        ...missing.map(id => `session ${id.slice(0, 8)} is not on ${remote}`),
       ];
       problems += found.length;
       lines.push(`    ${found.length ? found.join(' · ') : [agent ? 'agent work' : 'no agent work recorded', record.guide ? `guide by ${record.guide.writer}` : '', `${record.sessions.length} sessions`].filter(Boolean).join(' · ')}`);

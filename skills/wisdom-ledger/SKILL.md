@@ -39,11 +39,14 @@ with `wisdom open t1/c1 --capture 7e1f2a3b`. `not recorded` means no recording e
 piece; `changed outside any recorded step` means a session saw it change while no tool ran.
 Both deserve a look in a review.
 
-In a team-mode repository a commit can also have a **guide**, shown under the pieces: a short
-account written by a model after the commit, citing steps as `[t3/c2 7e1f2a3b]`. It is
-derived, not evidence. Wisdom checked that its citations exist, not that it is right, so open
-the steps it cites before you rely on it. Committing needs nothing from you: the guide is
-written by itself.
+A commit with agent work can also have a **guide**, shown under the pieces, citing steps as
+`[t3/c2 7e1f2a3b]` or turns as `[t2 7e1f2a3b]`. It is derived, not evidence. A model's guide
+(`guide · written by claude-haiku-5-5 …`) explains what and why; Wisdom checked that its
+citations exist and sit in the commit's window, not that it is right, so open the steps it
+cites before you rely on it. A plain guide (`guide · plain, built from the record now, no
+model` in local mode) only names each piece's step and quotes that turn's request. Committing
+needs nothing from you: guides are written or built by themselves. Don't run
+`wisdom guide <commit>` unless the person asks: it calls a model on their account.
 
 A good review: glance, open the turns whose facts look odd (a failure followed by a
 change to tests only, files changed outside any tool call, pending calls), read the

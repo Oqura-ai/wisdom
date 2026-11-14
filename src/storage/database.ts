@@ -37,8 +37,11 @@ export class LedgerDatabase {
       CREATE INDEX IF NOT EXISTS records_parent ON records(capture_id, parent_id, seq);
       CREATE INDEX IF NOT EXISTS records_source ON records(capture_id, source_entry_id, seq);
       CREATE INDEX IF NOT EXISTS records_path ON records(path, capture_id, seq);
-      PRAGMA user_version=1;
     `);
+    // Only a new file gets its version. Setting it again on every open is a write, and closing
+    // then rewrites the file: on Windows a scanner opening that fresh file kept a removal of a
+    // teammate's copy from deleting it (live test 7.2). Opening an existing store writes nothing.
+    if (version < 1) this.sql.exec('PRAGMA user_version=1');
   }
 
   manifests(): Manifest[] {

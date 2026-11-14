@@ -3,7 +3,7 @@ import { applyPatch, diffArrays, parsePatch, reversePatch, structuredPatch } fro
 import { hash } from '../storage/ledger.js';
 import { EvidenceReader } from '../storage/evidence.js';
 import { scope } from '../record/workspace.js';
-import { git } from './gitrefs.js';
+import { git, gitText, listRefs, readFile, recordRef } from './gitrefs.js';
 import type { LedgerRecord } from '../core/schema.js';
 import type { SessionStore } from '../storage/store.js';
 
@@ -36,6 +36,34 @@ export interface FileWork {
   pieces?: Piece[];
   /** Why lines could not be matched, when `pieces` is absent but a chain exists. */
   lineGap?: string;
+  /** Index by index with `chain`: the same edit seen during tool calls of other sessions, when
+   * the recording cannot tell which of them made it. Each is listed too. */
+  also?: LedgerRecord[][];
+}
+
+/** Does the tool call a change was seen during name this file, or hold a line the change added,
+ * in its own input? A session waiting on a long command sees a teammate agent's edit too, but
+ * its command does not mention it. */
+function callNames(store: SessionStore, reader: EvidenceReader, change: LedgerRecord, file: string): boolean {
+  if (!change.parentId) return false;
+  const call = store.database.records('capture_id=? AND id=?', [change.captureId, change.parentId])[0];
+  let input = '';
+  try {
+    const data = call ? reader.read(call, 'data') : undefined;
+    const strings: string[] = [];
+    const walk = (value: unknown): void => {
+      if (typeof value === 'string') strings.push(value);
+      else if (value && typeof value === 'object') for (const item of Object.values(value)) walk(item);
+    };
+    walk(data === undefined ? undefined : JSON.parse(data));
+    input = strings.join('\n').replaceAll('\\', '/');
+  } catch { return false; }
+  if (!input) return false;
+  if (input.includes(file) || input.includes(path.posix.basename(file))) return true;
+  let patch: string | undefined;
+  try { patch = reader.read(change, 'patch'); } catch { patch = undefined; }
+  const added = (patch ?? '').split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++')).map(line => line.slice(1).trim()).filter(line => line.length >= 4);
+  return added.some(line => input.includes(line));
 }
 
 /** What to read: a commit against its first parent, or the index against `parent` (HEAD). */
@@ -81,30 +109,49 @@ export function readCommit(project: string, ref: string): CommitInfo {
 
 /** The recorded changes, oldest first, from one of the file's states `froms` to `to` (content
  * hashes; null is "no file"). Walks back from the newest change that produced `to`, each step
- * from a change that produced the one after it. Two sessions open in one project both see an
- * edit; the copy seen during a tool call is the one kept.
+ * from a change that produced the one after it.
+ *
+ * Every session open in a project sees each edit, so one edit can have several sightings: the
+ * same before and after, one after another in the file's history, however far apart in time (a
+ * session running a long command sees an edit only when that command ends: live test 2.9). A
+ * sighting during a tool call beats one outside any; among those, one whose call `named` the
+ * file or the added text (its own input says so), then the earliest. When that still leaves
+ * sightings in other sessions (none named it, or several did), they are kept in `also`, index
+ * by index with `chain`, so the record lists every session rather than guessing one.
  */
-export function chainOf(changes: LedgerRecord[], froms: (string | null)[], to: string | null): { chain: LedgerRecord[]; complete: boolean } {
+export function chainOf(changes: LedgerRecord[], froms: (string | null)[], to: string | null,
+  named?: (change: LedgerRecord) => boolean): { chain: LedgerRecord[]; complete: boolean; also?: LedgerRecord[][] } {
   const chain: LedgerRecord[] = [];
-  if (froms.includes(to)) return { chain, complete: true };
+  const also: LedgerRecord[][] = [];
+  const done = (complete: boolean) => also.some(list => list.length) ? { chain, complete, also } : { chain, complete };
+  if (froms.includes(to)) return done(true);
   let target = to;
   let bound = changes.length;
   while (bound > 0) {
     let i = bound - 1;
     while (i >= 0 && (changes[i].afterHash ?? null) !== target) i--;
     if (i < 0) break;
-    const same = (r: LedgerRecord) => (r.afterHash ?? null) === target && (r.beforeHash ?? null) === (changes[i].beforeHash ?? null)
-      && Math.abs(Date.parse(r.observedAt) - Date.parse(changes[i].observedAt)) <= 2_000;
+    const same = (r: LedgerRecord) => (r.afterHash ?? null) === target && (r.beforeHash ?? null) === (changes[i].beforeHash ?? null);
     let first = i;
     while (first > 0 && same(changes[first - 1])) first--;
     const group = changes.slice(first, i + 1);
-    const pick = group.find(r => r.attribution === 'observed-during-tool') ?? group.at(-1)!;
+    const during = group.filter(r => r.attribution === 'observed-during-tool');
+    let pick: LedgerRecord, others: LedgerRecord[] = [];
+    if (!during.length) pick = group.at(-1)!;
+    else {
+      const naming = named ? during.filter(named) : [];
+      const pool = naming.length ? naming : during;
+      pick = pool[0];
+      const sessions = new Set([pick.captureId]);
+      for (const r of pool) if (!sessions.has(r.captureId)) { sessions.add(r.captureId); others.push(r); }
+    }
     chain.unshift(pick);
+    also.unshift(others);
     target = pick.beforeHash ?? null;
     bound = first;
-    if (froms.includes(target)) return { chain, complete: true };
+    if (froms.includes(target)) return done(true);
   }
-  return { chain, complete: false };
+  return done(false);
 }
 
 /** Each line of the committed file, and of the base, tied to the step that wrote or removed
@@ -171,12 +218,13 @@ export function workFor(store: SessionStore, version: number, project: string, t
       .sort((a, b) => a.observedAt.localeCompare(b.observedAt) || a.seq - b.seq);
     // The committed form the recording reached; a complete chain beats a longer one.
     const fromHashes = befores.length ? befores.map(bytes => hash(bytes)) : [null];
-    let pick = 0, found = chainOf(changes, fromHashes, afters.length ? hash(afters[0]) : null);
+    const named = (change: LedgerRecord) => callNames(store, reader, change, file);
+    let pick = 0, found = chainOf(changes, fromHashes, afters.length ? hash(afters[0]) : null, named);
     for (let k = 1; k < afters.length; k++) {
-      const other = chainOf(changes, fromHashes, hash(afters[k]));
+      const other = chainOf(changes, fromHashes, hash(afters[k]), named);
       if (other.complete && !found.complete || other.complete === found.complete && other.chain.length > found.chain.length) { found = other; pick = k; }
     }
-    const { chain, complete } = found;
+    const { chain, complete, also } = found;
     const after = afters[pick];
     // The parent in the form the chain starts from, else in the same form as the commit.
     const start = complete ? chain[0]?.beforeHash ?? (after ? hash(after) : null) : undefined;
@@ -190,6 +238,7 @@ export function workFor(store: SessionStore, version: number, project: string, t
     } else work.note = 'binary';
     if (excluded(file, excludedPaths)) { work.note = 'not-watched'; continue; }
     work.chain = chain; work.complete = complete;
+    if (also) work.also = also;
     if (work.note === 'binary' || !chain.length) continue;
 
     const patches: string[] = [];
@@ -249,18 +298,30 @@ export interface RecordFile {
   chain: number[];
   pieces?: RecordPiece[];
 }
-export interface RecordSession { id: string; harness: string; recorder?: string; positions: string[] }
+export interface RecordSession { id: string; harness: string; recorder?: string; positions: string[];
+  /** The session's turns inside the record's window, first and last (t4–t9 is [4, 9]): what the
+   * guide writer may read. Its own steps are always inside, even when they came earlier. */
+  turns?: [number, number] }
+/** The stretch of work a commit's guide covers: from this person's previous commit on this
+ * branch (the newest earlier commit this data folder kept a record of, so never a pulled one)
+ * up to this commit. With no such commit, `since` is absent and the sessions are read from
+ * their start. */
+export interface RecordWindow { since?: { commit: string; at: string }; until: string }
 /** A guide is written by a model for reviewers, from the record and the steps it cites. It is
  * derived, never evidence: Wisdom checks that it covers every item and that each citation
  * exists, and keeps what that check found. */
-export interface RecordGuide { text: string; writtenAt: string; writer: string; problems: string[]; derived: true }
+export interface RecordGuide { text: string; writtenAt: string; writer: string; problems: string[]; derived: true;
+  /** How long the writer ran, and what it cost when it says (Claude Code does). */
+  seconds?: number; costUsd?: number }
 
 /** Kept in `refs/wisdom/records/<commit>` (record.json), made when the commit is noticed. */
 export interface CommitRecord {
   kind: 'wisdom-commit-record'; version: 1;
   commit: CommitInfo;
-  /** `commit` when kept at commit time; `now` when worked out on request and never stored. */
-  made: 'commit' | 'now';
+  /** `commit` when kept at commit time; `later` when kept afterwards because the job after the
+   * commit did not finish (pre-push, `wisdom guide <commit>`, the daemon's retry); `now` when
+   * worked out on request and never stored. */
+  made: 'commit' | 'later' | 'now';
   madeAt: string; wisdomVersion: string; recorder?: string;
   /** The `Wisdom-Record:` line in the commit's message. It survives what changes the hash
    * (amend, rebase, a squash merge on the server), so a reader can find this record again. */
@@ -268,9 +329,42 @@ export interface CommitRecord {
   steps: RecordStep[];
   files: RecordFile[];
   sessions: RecordSession[];
+  /** What the guide covers; set on records kept at commit time. */
+  window?: RecordWindow;
   guide?: RecordGuide;
   /** Why there is no guide, when it is on purpose (the person turned guides off) or failed. */
   guideMissing?: string;
+}
+
+/** Where the guide's window starts: the newest commit before this one, following the branch's
+ * first parents, whose record this data folder (`recorder`) kept. A pulled commit has no such
+ * record here, so the window never reaches back into a teammate's work. */
+export function windowStart(project: string, recorder: string, parent: string | undefined): RecordWindow['since'] {
+  if (!parent) return undefined;
+  const kept = new Set([...listRefs(project, 'refs/wisdom/records/')].map(([ref]) => ref.slice('refs/wisdom/records/'.length)));
+  if (!kept.size) return undefined;
+  for (const sha of gitText(project, ['rev-list', '--first-parent', '--max-count=1000', parent]).split('\n')) {
+    if (!kept.has(sha)) continue;
+    let found: CommitRecord | undefined;
+    try { found = JSON.parse(readFile(project, recordRef(sha), 'record.json')?.toString('utf8') ?? 'null') ?? undefined; } catch { found = undefined; }
+    if (found?.recorder === recorder) return { commit: sha, at: found.commit.committedAt };
+  }
+  return undefined;
+}
+
+/** A session's turns inside the window: from the turn under way when the window opened to the
+ * last turn begun by the commit, widened to hold the steps the record cites. */
+export function windowTurns(store: SessionStore, id: string, since: number | undefined, until: number, positions: string[]): [number, number] | undefined {
+  const starts = store.database.records("capture_id=? AND type='input'", [id], 'ORDER BY seq')
+    .filter(r => !r.agentId && !r.internalAgent).map(r => Date.parse(r.observedAt));
+  if (!starts.length) return undefined;
+  let from = since === undefined ? 1 : Math.max(1, starts.findLastIndex(at => at <= since) + 1);
+  let to = Math.max(1, starts.findLastIndex(at => at <= until + SLACK_MS) + 1);
+  for (const position of positions) {
+    const turn = Number(/^t(\d+)/.exec(position)?.[1]);
+    if (turn) { from = Math.min(from, turn); to = Math.max(to, turn); }
+  }
+  return [from, Math.max(from, to)];
 }
 
 /** Recorded steps an agent's tool call made: what makes a commit "agent work". */
@@ -294,9 +388,11 @@ export function toRecord(files: FileWork[], position: (record: LedgerRecord) => 
   };
   const recordFiles = files.map(file => {
     const chain = file.chain.map(step);
+    const withAlso = [...new Set(file.chain.flatMap((record, k) => [chain[k], ...(file.also?.[k] ?? []).map(step)]))];
     return { path: file.path, operation: file.operation, note: file.note, added: file.added, removed: file.removed, complete: file.complete,
-      lineGap: file.lineGap, chain,
-      pieces: file.pieces?.map(piece => ({ header: piece.header, steps: piece.steps.map(k => chain[k]), unexplained: piece.unexplained, byFile: piece.byFile })) };
+      lineGap: file.lineGap, chain: withAlso,
+      pieces: file.pieces?.map(piece => ({ header: piece.header,
+        steps: [...new Set(piece.steps.flatMap(k => [chain[k], ...(file.also?.[k] ?? []).map(step)]))], unexplained: piece.unexplained, byFile: piece.byFile })) };
   });
   return { kind: 'wisdom-commit-record', version: 1, ...base, steps, files: recordFiles, sessions: [...sessions.values()] };
 }

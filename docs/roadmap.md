@@ -18,7 +18,7 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 | Work | What you get | Effort |
 | --- | --- | --- |
 | Worth checking | A short list at the top of each session: a call that failed with no later success, a test that failed before a test file was edited, part of a session not recorded. Built from recorded facts, with no AI. | M |
-| Sessions and commits | See the commits made during a session, and find the session behind a commit | M |
+| Sessions and commits | Done: `wisdom glance --commit` finds the sessions behind a commit. Still to come: the commits made during a session, from the session's side | M |
 | Easier install | A one-line installer that includes Node, then a desktop app | L |
 
 ## Later: share the work
@@ -27,5 +27,5 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 | --- | --- | --- |
 | Handoff files | Pick sessions, run a secret check, and send one small file with no logins inside. A teammate's agent reads it and continues, even in a different harness. | L |
 | Review with evidence | Reviewers see what was asked, tried and dropped behind a PR, next to the diff | L |
-| Team sharing | Shared evidence with permissions, retention and access controls | L |
+| Team sharing | A first version is built: [team mode](team.md) shares redacted sessions and commit records through your git remote, with retention and deletion. Still to come: finer permissions and access controls | L |
 | Agent-to-agent review | Agents hand work to each other with fixed review candidates. See the [design note](design/agent-review-architecture.md). | L |

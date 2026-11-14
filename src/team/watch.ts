@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { buildRecord } from '../read/discovery.js';
 import { readCommit } from './commits.js';
-import { hooksInstalled } from './githooks.js';
+import { postCommitInstalled, retryJobs } from './githooks.js';
 import { commitFiles, gitDirs, gitText, readHead, recordRef, refExists, recorderId, resolve, setRef } from './gitrefs.js';
 import type { SessionStore } from '../storage/store.js';
 
@@ -32,12 +32,18 @@ export class CommitWatcher {
     this.lastPoll = now;
     try {
       if (!gitDirs(this.project)) return [];
-      // In team mode the git hooks keep records (and have guides written); this stands aside.
-      if (now - this.hooksCheckedAt > 10_000) { this.hooks = hooksInstalled(this.project); this.hooksCheckedAt = now; }
+      // Wisdom's post-commit hook (team mode, or local `wisdom guide on`) keeps records and has
+      // guides written, so this stands aside, and every 10 s starts again any job that died.
+      if (now - this.hooksCheckedAt > 10_000) {
+        this.hooks = postCommitInstalled(this.project); this.hooksCheckedAt = now;
+        if (this.hooks) for (const sha of retryJobs(this.dataDir)) console.error(`Wisdom started the record job of ${sha.slice(0, 12)} again: the one after the commit did not finish.`);
+      }
       if (this.hooks && !force) return [];
       const fast = readHead(this.project);
       const head = fast === null ? resolve(this.project, 'HEAD') : fast;
       if (!head || head === this.head) return [];
+      // A hook installed since the last check keeps this commit's record itself.
+      if (!force && postCommitInstalled(this.project)) { this.hooks = true; this.head = head; return []; }
       const previous = this.head;
       this.head = head;
       const list = previous ? gitText(this.project, ['rev-list', '--no-merges', '--max-count=50', `${previous}..${head}`]).split('\n').filter(Boolean) : [head];

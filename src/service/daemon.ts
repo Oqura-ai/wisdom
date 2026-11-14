@@ -107,6 +107,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   let captures: Captures;
   try { captures = new Captures(dataDir); }
   catch (error) { fs.unlinkSync(lock); throw error; }
+  captures.deferCloses = true;
   const library = new SharedLibrary(path.join(dataDir, 'shared'));
   const watcher = new CommitWatcher(captures, dataDir);
   const checks = doctor(dataDir);
@@ -123,6 +124,8 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
     };
     if (request.headers.authorization !== `Bearer ${token}`) { send(401, { error: 'Local daemon token required' }); return; }
     if (closing) { send(503, { error: 'Daemon is stopping' }); return; }
+    // A session whose end was answered is closed before anything else is served.
+    captures.finishCloses();
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (request.method === 'GET' && url.pathname === '/health') {

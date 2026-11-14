@@ -13,7 +13,9 @@ import { view } from '../read/views.js';
 // A shared file names its own sessions and files. Anything outside these shapes could write
 // outside the store's folder, so it is refused.
 const safeId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const safeFile = /^(?:payloads\/[a-f0-9]{64}|native-session\.jsonl|subagents\/[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl)$/;
+/** A copy's folder is named by the first 16 hex characters of its share file's hash. */
+const SHARE_ID = /^[a-f0-9]{16}$/;
+const safeFile =/^(?:payloads\/[a-f0-9]{64}|native-session\.jsonl|subagents\/[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl)$/;
 
 interface StoreInfo { shareId: string; sourceName: string; importedAt: string; header: ShareFile['header'] }
 
@@ -57,6 +59,7 @@ export class SharedLibrary {
    */
   constructor(readonly dir: string) {
     if (!fs.existsSync(dir)) return;
+    this.finishRemovals();
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.name.endsWith('.importing') || !fs.existsSync(path.join(dir, entry.name, 'info.json'))) continue;
       try { this.stores.set(entry.name, new SharedStore(path.join(dir, entry.name))); }
@@ -138,13 +141,59 @@ export class SharedLibrary {
     }
   }
 
-  /** Take one imported copy out (a newer version replaced it, or the team deleted it). */
-  remove(shareId: string): void {
+  /** Take one teammate's copy out (a newer version replaced it, or the team deleted it). True
+   * once its folder is gone. It is listed in `removing.json` first, so a removal cut short (a
+   * file held open for a moment, a killed daemon) is finished later, never forgotten. Copies
+   * imported by hand are never passed here. */
+  remove(shareId: string): boolean {
+    if (!SHARE_ID.test(shareId)) return false;
     const store = this.stores.get(shareId);
-    if (!store) return;
-    store.database.close();
+    store?.database.close();
     this.stores.delete(shareId);
-    fs.rmSync(store.dataDir, { recursive: true, force: true });
+    this.setPending(shareId, true);
+    return this.deleteFolder(shareId);
+  }
+
+  /** Copies whose removal has not finished yet. */
+  get pending(): string[] {
+    try { return (JSON.parse(fs.readFileSync(this.pendingFile, 'utf8')) as unknown[]).filter((id): id is string => typeof id === 'string' && SHARE_ID.test(id)); }
+    catch { return []; }
+  }
+
+  /** Finish removals left half done: those listed as pending, and any folder missing its
+   * `info.json` (only a cut-short removal leaves one: an import writes it before its folder gets
+   * its name). Runs when the library opens, before any store is, and at each team fetch. */
+  finishRemovals(): void {
+    if (!fs.existsSync(this.dir)) return;
+    const broken = fs.readdirSync(this.dir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && SHARE_ID.test(entry.name) && !this.stores.has(entry.name) && !fs.existsSync(path.join(this.dir, entry.name, 'info.json')))
+      .map(entry => entry.name);
+    for (const id of new Set([...this.pending, ...broken])) {
+      if (this.stores.has(id)) { this.stores.get(id)!.database.close(); this.stores.delete(id); }
+      this.setPending(id, true);
+      this.deleteFolder(id);
+    }
+  }
+
+  private get pendingFile(): string { return path.join(this.dir, 'removing.json'); }
+
+  private setPending(shareId: string, on: boolean): void {
+    const now = this.pending.filter(id => id !== shareId);
+    if (on) now.push(shareId);
+    if (!now.length) { fs.rmSync(this.pendingFile, { force: true }); return; }
+    fs.mkdirSync(this.dir, { recursive: true });
+    writeJson(this.pendingFile, now);
+  }
+
+  /** Delete a copy's folder. Windows refuses to delete a file another program holds open, even
+   * for a moment (a virus scanner reading a file just written), so it retries for a few seconds. */
+  private deleteFolder(shareId: string): boolean {
+    const folder = path.join(this.dir, shareId);
+    try { fs.rmSync(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+    catch (error) { console.error(`Could not remove ${folder} yet: ${error instanceof Error ? error.message : error}. Wisdom tries again at the next team fetch and when it starts.`); }
+    const gone = !fs.existsSync(folder);
+    if (gone) this.setPending(shareId, false);
+    return gone;
   }
 
   close(): void { for (const store of this.all) store.database.close(); }
