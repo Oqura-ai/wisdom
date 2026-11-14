@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { deliver, handoffFromEnv } from '../../client.js';
-import { findDataDir, harnessHome } from '../../paths.js';
+import { deliver, handoffFromEnv } from '../../service/client.js';
+import { findDataDir, harnessHome } from '../../core/paths.js';
 
 // A tiny structural interface keeps this extension independent of a second Pi
 // installation. The installed Pi supplies its real API at runtime (verified on 1.2.0).
@@ -49,7 +49,8 @@ function piVersion(): string | undefined {
  */
 export default function wisdomTracking(pi: PiAPI): void {
   const dataDir = dataFolder();
-  if (!dataDir || (globalThis as any)[loaded]) return;
+  // Wisdom's own guide writer may run Pi; its session is not the person's work.
+  if (!dataDir || (globalThis as any)[loaded] || process.env.WISDOM_GUIDE_WRITER) return;
   (globalThis as any)[loaded] = true;
   let session: { sessionId: string; source: string | null; cwd: string } | undefined;
   let warning: string | undefined;

@@ -38,7 +38,7 @@ Harness adapters (Pi extension, Claude Code/Codex hooks) + native JSONL + worksp
 
 ## Tables
 
-The executable DDL is in [database.ts](../src/database.ts). SQLite `user_version=1`
+The executable DDL is in [database.ts](../src/storage/database.ts). SQLite `user_version=1`
 is the database layout version; record `schemaVersion=1` and the daemon's
 `captureApi` (checked by clients before they record or read) describe different contracts.
 
@@ -87,37 +87,23 @@ The session's next hook event continues it, with a gap for the time in between; 
 
 ## Reading the implementation
 
-| File | Responsibility |
-| --- | --- |
-| [schema.ts](../src/schema.ts) | Zod wire validation and record/manifest types. |
-| [database.ts](../src/database.ts) | DDL, metadata persistence, indexed lookups and request-link derivation. |
-| [ledger.ts](../src/ledger.ts) | Payloads, native byte copying and evidence envelopes. |
-| [captures.ts](../src/captures.ts) | Recording lifecycle and hook/file coordination. |
-| [workspace.ts](../src/workspace.ts) | File baselines, scoped observations and patch creation. |
-| [discovery.ts](../src/discovery.ts) | The agent-facing ledger: positions, glance, open, de-duplication by `toolView`, the ceiling and continuation. |
-| [conversation.ts](../src/conversation.ts) | One turn assembled in recorded order (replies, thinking, calls, results, changes, nested subagents); shared by the ledger and the dashboard. |
-| [evidence.ts](../src/evidence.ts) | Read-local body cache and the version boundary. |
-| [content.ts](../src/content.ts) | Surface text extraction and the surface-role definition. |
-| [views.ts](../src/views.ts) | The dashboard's reads (`POST /view`). |
-| [daemon.ts](../src/daemon.ts) | Local authenticated HTTP and lifecycle. |
-| [harnesses/types.ts](../src/harnesses/types.ts) | The adapter contract: tool targets, direct file tools, how each tool is shown (`toolView`), and native-line reading. |
-| [harnesses/pi/](../src/harnesses/pi/) | Pi adapter, extension and launcher. |
-| [harnesses/claude-code/](../src/harnesses/claude-code/) | Claude Code adapter, hook mapping, and the installer that writes its hooks (run by [integrations/claude-code/hook.mjs](../integrations/claude-code/hook.mjs)) into its home. |
-| [harnesses/codex/](../src/harnesses/codex/) | Codex adapter, hook mapping, trust preflight and launcher. See [harnesses](harnesses.md#codex). |
-| [client.ts](../src/client.ts) | Daemon descriptor lookup, authenticated calls and background startup. |
-| [mcp.ts](../src/mcp.ts) / [cli.ts](../src/cli.ts) | Two clients of the same ledger; both return its text unchanged. |
-| [stats.ts](../src/stats.ts) | Dashboard project inventory and per-harness, capture, tool, file and model counts and token usage in SQL. Usage records come from each adapter's `nativeEntry().usage` ([harnesses/types.ts](../src/harnesses/types.ts)). |
-| [dashboard.ts](../src/dashboard.ts) / [dashboard/](../dashboard/) | Next.js live viewer, shipped built in `dist-dashboard/` and started by the daemon; reads through `/view`. |
-| [doctor.ts](../src/doctor.ts) | `wisdom doctor`: a read-only health check of one project. |
-| [harnesses/launch.ts](../src/harnesses/launch.ts) | What every adapter shares: finding a harness on PATH (following Windows `.cmd` shims), the hook command, where each harness's settings name Wisdom (its home, or the project), writing and removing hooks, and the reading skill. |
-| [store.ts](../src/store.ts) | `SessionStore`: what the read layer needs from a place sessions are kept. The project's own `Captures` and each `SharedStore` implement it. |
-| [shared.ts](../src/shared.ts) | Imported share files: a read-only store each, the library that imports and finds them, and the routing of `/ledger` and `/view` to the store that holds a session. |
-| [share.ts](../src/share.ts) / [secrets.ts](../src/secrets.ts) | `wisdom share`: the share file format, written and read; the secret patterns, masking and redaction. |
-| [markdown.ts](../src/markdown.ts) | `wisdom export`: one session as Markdown, built from the same turn assembly as the ledger (the `markdown` view). |
-| [handoff.ts](../src/handoff.ts) | `wisdom handoff`: which session to read, the first prompt, and the handoff the hooks pass on. |
-| [clone.ts](../src/clone.ts) | `wisdom clone`: the copied transcript under a new ID, its clone note, and the check of changed files. |
-| [connect.ts](../src/connect.ts) | `wisdom connect` and `disconnect`: Wisdom in the project's own harness settings and skill folders, `.git/info/exclude`, and `.wisdom/connected.json`, which tells the daemon which person's home to read and from when. |
-| [bin.ts](../src/bin.ts) | The installed command: checks the Node version, then loads the CLI. |
+The source is grouped by domain, so a change to one usually stays in one folder. Imports
+between folders follow one direction where possible: `core` and `storage` know nothing of
+the others; `record` writes evidence; `read` only reads it; `service` ties them together.
+
+| Folder | Domain | Files |
+| --- | --- | --- |
+| [src/](../src/) | Entry points. Installed hooks and the npm package point here, so these stay put. | [bin.ts](../src/bin.ts) checks the Node version, then loads [cli.ts](../src/cli.ts), every command. |
+| [core/](../src/core/) | Shared types and small helpers. | [schema.ts](../src/core/schema.ts) wire validation and record/manifest types; [paths.ts](../src/core/paths.ts) data folders, harness homes, worktrees; [content.ts](../src/core/content.ts) surface text extraction. |
+| [storage/](../src/storage/) | Where evidence lives. | [database.ts](../src/storage/database.ts) DDL, indexed lookups, request links; [ledger.ts](../src/storage/ledger.ts) payloads, native byte copying; [store.ts](../src/storage/store.ts) `SessionStore`, what the read layer needs; [evidence.ts](../src/storage/evidence.ts) body cache and the version boundary. |
+| [record/](../src/record/) | Turning hook events into records. | [captures.ts](../src/record/captures.ts) recording lifecycle and hook/file coordination; [workspace.ts](../src/record/workspace.ts) file baselines and patches. |
+| [read/](../src/read/) | What agents and the dashboard read. Changes here follow [policy](policy.md). | [discovery.ts](../src/read/discovery.ts) the ledger (glance, open, commits, positions, the ceiling); [conversation.ts](../src/read/conversation.ts) one turn in recorded order; [views.ts](../src/read/views.ts) the dashboard's `/view`; [stats.ts](../src/read/stats.ts) counts and token usage; [markdown.ts](../src/read/markdown.ts) `wisdom export`; [prices.ts](../src/read/prices.ts) cost estimates. |
+| [service/](../src/service/) | The background service and talking to it. | [daemon.ts](../src/service/daemon.ts) local HTTP and lifecycle; [client.ts](../src/service/client.ts) finding, calling and starting it; [mcp.ts](../src/service/mcp.ts) the MCP tool; [dashboard.ts](../src/service/dashboard.ts) starts the viewer in [dashboard/](../dashboard/). |
+| [setup/](../src/setup/) | Installing, checking and repairing. | [connect.ts](../src/setup/connect.ts) `connect`/`disconnect` and keeping `.wisdom/` out of git; [doctor.ts](../src/setup/doctor.ts) the health check; [repair.ts](../src/setup/repair.ts) repair with backups. |
+| [sessions/](../src/sessions/) | Operations on one session. | [handoff.ts](../src/sessions/handoff.ts) `wisdom handoff`; [clone.ts](../src/sessions/clone.ts) `wisdom clone`. |
+| [share/](../src/share/) | Sessions leaving or arriving as files. | [share.ts](../src/share/share.ts) the share file format; [secrets.ts](../src/share/secrets.ts) secret patterns and redaction; [shared.ts](../src/share/shared.ts) imported copies and routing reads to them. |
+| [team/](../src/team/) | Commits and [team mode](team.md). | [commits.ts](../src/team/commits.ts) matching a commit's pieces to recorded steps, and the record format; [watch.ts](../src/team/watch.ts) noticing commits in local mode; [githooks.ts](../src/team/githooks.ts) team mode's three git hooks and their background job; [writer.ts](../src/team/writer.ts) the guide writer (a cheap model through Claude Code, or a configured command); [guides.ts](../src/team/guides.ts) checking a guide, and the person's on/off switch; [gitrefs.ts](../src/team/gitrefs.ts) hidden refs, link lines and the policy file; [team.ts](../src/team/team.ts) push, fetch, delete, prune, the CI check. [storage/readstore.ts](../src/storage/readstore.ts) lets those hook processes read recordings while the daemon writes. |
+| [harnesses/](../src/harnesses/) | One folder per agent; the core reaches them only through [index.ts](../src/harnesses/index.ts). | [types.ts](../src/harnesses/types.ts) the adapter contract; [launch.ts](../src/harnesses/launch.ts) what adapters share (finding a harness, hook commands, the skill); [pi/](../src/harnesses/pi/), [claude-code/](../src/harnesses/claude-code/) (run by [integrations/claude-code/hook.mjs](../integrations/claude-code/hook.mjs)), [codex/](../src/harnesses/codex/) (see [harnesses](harnesses.md#codex)). |
 
 A read runs synchronously in the daemon's event loop, so no hook append interleaves
 with it, and every read filters by version, so a continuation sees the same evidence.

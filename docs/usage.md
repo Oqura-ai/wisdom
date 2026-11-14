@@ -15,6 +15,9 @@
 | `wisdom clone <session>` | Carry a session on as a new session of the same harness, its history copied. See [cloning a session](#cloning-a-session). |
 | `wisdom export <session>` | Write a session as Markdown anyone can read, after a check for secrets. See [exporting a session](#exporting-a-session). |
 | `wisdom glance [session\|latest]` | List recorded sessions, or show one session's shape and every turn. |
+| `wisdom glance --commit <commit>` | Show which recorded steps made each piece of a git commit, and which pieces no recording explains. |
+| `wisdom guide <commit>`, `wisdom guide on\|off` | Commit guides in any mode: a model writes one commit's guide on request, or one after each commit. Local mode keeps them on this machine. See [Guides in local mode](team.md#guides-in-local-mode). |
+| `wisdom team …`, `wisdom check --range` | Team mode: git hooks, commit guides written by a cheap model, sharing sessions through your git remote, the CI check. See [Team mode](team.md). |
 | `wisdom open <position> --capture <session\|latest>` | Read one turn, tool call or subagent, whole. |
 | `wisdom dashboard` | Print the address of the live dashboard. |
 | `wisdom doctor` | Check that everything is working. See [installation](installation.md#check-a-project). |
@@ -27,7 +30,7 @@ Every command finds `.wisdom/` from the current folder upward, the way git finds
 
 ### Two ways to record
 
-**Connected: your own login.** `wisdom connect` puts Wisdom's hook in the project's own harness settings: `.claude/settings.local.json`, `.codex/hooks.json` and `.pi/settings.json`, with the reading skill in `.claude/skills/` and `.agents/skills/`. Then `claude`, `codex` and `pi`, started in the project as you always do, record with your normal login. Nothing reaches git: those paths go in `.git/info/exclude`, your clone's own ignore file, and a settings file git already tracks is left alone. Wisdom only adds its own entries and keeps everything else in those files; `wisdom disconnect` takes them out again. Your global harness settings are not touched.
+**Connected: your own login.** `wisdom connect` puts Wisdom's hook in the project's own harness settings: `.claude/settings.local.json`, `.codex/hooks.json` and `.pi/settings.json`, with the reading skill in `.claude/skills/` and `.agents/skills/`. Then `claude`, `codex` and `pi`, started in the project as you always do, record with your normal login. Nothing reaches git: those paths go in `.git/info/exclude`, your clone's own ignore file, and a settings file git already tracks is left alone. A harness connected earlier but not found on a later `wisdom connect` (off PATH in that terminal, say) is left as it was, its files still excluded. Wisdom only adds its own entries and keeps everything else in those files; `wisdom disconnect` takes them out again. Your global harness settings are not touched.
 
 What each harness loads, verified on Claude Code 2.1.319, Codex 0.166.0 and Pi 1.2.0:
 
@@ -212,6 +215,29 @@ complete · 20 lines
 
 The [vocabulary](vocabulary.md) explains every word.
 
+### From a commit
+
+`wisdom glance --commit HEAD` (or a hash or branch) starts from git instead of a session. It lists each piece of the commit and the recorded steps that made it:
+
+```text
+commit 86cd3c028ab7 · fix invoice rounding · committed 2026-11-11 10:00Z · version 812
+parent f6c0cbf43baa · 3 files · 4 pieces: 2 from recorded steps, 2 not recorded
+the commit's own diff: git show 86cd3c028ab7
+
+src/invoice.ts · modify · +2 −1
+    @@ -2,1 +2,1 @@  t3/c2 in session 0f3c8a1e
+    @@ -3,0 +4,1 @@  t3/c2 in session 0f3c8a1e
+src/format.ts · modify · +1 −0
+    @@ -1,0 +2,1 @@  outside (changed outside any recorded step) in session 0f3c8a1e
+src/util.ts · modify · +1 −0 · not recorded
+```
+
+A session is linked only when it produced the committed file's exact contents: Wisdom follows the recorded changes, by a hash of the whole file, from the parent's file to the committed one. `not recorded` means nothing recorded explains that piece. Linked worktrees are matched the same way, by contents.
+
+When the daemon sees you make a commit, it keeps that answer as a record in your own `.git` (`refs/wisdom/records/<commit>`, never on a branch), so the link outlives the sessions it points to. Any other commit is worked out when asked. In a repository with `wisdom-team.json`, records and sessions can travel to your team: see [Team mode](team.md).
+
+A kept record with agent work also shows a **guide** at the end, `guide · plain, built from the record now, no model`: each piece's step and the request of its turn, quoted. It is built each time you read it and never stored. For an account of what the change does and why, `wisdom guide <commit>` has a model (Claude Haiku 5.5, through your Claude Code) read the commit's sessions since your previous commit and write one, kept in that commit's record on this machine. `wisdom guide on` has one written after every commit, through a single `post-commit` hook that changes no commit message and pushes nothing; it is off by default. See [Guides in local mode](team.md#guides-in-local-mode). A normal `git push` never sends `refs/wisdom/*`; `git push --mirror` does.
+
 ## The background service
 
 The daemon listens on `127.0.0.1:7434` by default. When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
@@ -248,4 +274,4 @@ To exclude files from observation, add `.wisdomignore` to the project: relative 
 
 All generated data stays local. Native transcripts and hook payloads are preserved without redaction and may contain sensitive content. `.wisdom/` also holds each harness's login (such as `.wisdom/harnesses/claude-code/home/.credentials.json`).
 
-`wisdom init` adds `.wisdom/` to `.gitignore`, but that only keeps it out of git. Leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.
+`wisdom init` and `wisdom connect` list `.wisdom/` in `.git/info/exclude`, your clone's own ignore file, so no file the project shares changes (outside a git repository, in `.gitignore`). That only keeps it out of git. Leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.

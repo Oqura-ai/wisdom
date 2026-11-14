@@ -5,13 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { call } from '../src/client.js';
-import { startDaemon, type Connection } from '../src/daemon.js';
-import { cloneTranscript, differingFiles, planClone } from '../src/clone.js';
+import { call } from '../src/service/client.js';
+import { startDaemon, type Connection } from '../src/service/daemon.js';
+import { cloneTranscript, differingFiles, planClone } from '../src/sessions/clone.js';
 import { adapter } from '../src/harnesses/index.js';
 import { moveFolder } from '../src/harnesses/types.js';
-import { draftShare, writeShare } from '../src/share.js';
-import { cloneNote, harnessHome, marker } from '../src/paths.js';
+import { draftShare, writeShare } from '../src/share/share.js';
+import { cloneNote, harnessHome, marker } from '../src/core/paths.js';
 
 function project(name: string) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `wisdom-clone-${name}-`)));
@@ -164,7 +164,7 @@ test('a session with no transcript copy cannot be cloned, and files that differ 
     await assert.rejects(planClone(daemon.connection, data, 'no-file', root), /no-file has no copy of its harness transcript, so it cannot be cloned/);
     fs.writeFileSync(path.join(root, 'same.txt'), 'kept');
     fs.writeFileSync(path.join(root, 'changed.txt'), 'edited since');
-    const kept = (await import('../src/ledger.js')).hash('kept');
+    const kept = (await import('../src/storage/ledger.js')).hash('kept');
     assert.deepEqual(differingFiles(root, [{ path: 'same.txt', afterHash: kept }, { path: 'changed.txt', afterHash: kept },
       { path: 'gone.txt', afterHash: kept }, { path: 'deleted.txt', afterHash: null }]), ['changed.txt', 'gone.txt']);
     assert.equal(cloneTranscript('pi', 'not json\n', { from: 'a', sessionId: 'b', fromFolder: 'x', toFolder: 'y' }), 'not json\n');

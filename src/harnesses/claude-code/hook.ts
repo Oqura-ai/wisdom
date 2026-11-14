@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { deliver, handoffFromEnv } from '../../client.js';
-import { hookDataDir, wisdomHomeData } from '../../paths.js';
+import { deliver, handoffFromEnv } from '../../service/client.js';
+import { hookDataDir, wisdomHomeData } from '../../core/paths.js';
 
 /** Map one Claude Code hook payload to a neutral observation. Verified against
  * Claude Code 2.1.306 payloads; unknown events are ignored, not guessed.
@@ -37,6 +37,8 @@ export async function main(named = process.argv[2], place = process.argv[3]): Pr
   for await (const chunk of process.stdin) input += chunk;
   // The project's copy of the hook stands aside in a tracked session: its home's copy records it.
   if (place === 'project' && wisdomHomeData('claude-code', process.env.CLAUDE_CONFIG_DIR)) return;
+  // Wisdom's own guide writer runs Claude Code; its session is not the person's work.
+  if (process.env.WISDOM_GUIDE_WRITER) return;
   const event = JSON.parse(input);
   const mapped = observation(event);
   if (!mapped) return;

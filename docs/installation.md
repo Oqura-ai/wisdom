@@ -89,7 +89,7 @@ Stop the service, then copy the whole `.wisdom/` folder, including payloads and 
    Remove-Item -Recurse -Force .wisdom   # Windows PowerShell
    ```
 
-   You can also remove the `.wisdom/` line from the project's `.gitignore`.
+   You can also remove Wisdom's block from `.git/info/exclude`, and the `.wisdom/` line from the project's `.gitignore` if an older version added it.
 
 If you connected a project, run `wisdom disconnect` in it first, so its settings no longer name Wisdom. There is nothing else to undo. Wisdom never changes `~/.claude`, `~/.codex` or `~/.pi/agent`, so a plain `claude`, `codex` or `pi` is exactly as it was. The one exception is yours to choose: deleting a connected session in the dashboard with **Also delete the harness's own copy** ticked removes that session's own files there.
 

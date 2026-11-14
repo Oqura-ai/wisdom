@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { call } from '../src/client.js';
-import { startDaemon } from '../src/daemon.js';
+import { call } from '../src/service/client.js';
+import { startDaemon } from '../src/service/daemon.js';
 
 const bin = fileURLToPath(new URL('../src/bin.js', import.meta.url));
 const run = (cwd: string, ...args: string[]) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', windowsHide: true });

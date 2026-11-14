@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { startDaemon } from '../src/daemon.js';
-import { call, connectionAt } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call, connectionAt } from '../src/service/client.js';
 import { observation } from '../src/harnesses/claude-code/hook.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 
@@ -134,6 +134,7 @@ test('with its daemon down, a Claude Code hook keeps the event, starts the daemo
   } finally {
     await call(connection, '/stop', {});
     for (let i = 0; i < 100 && fs.existsSync(path.join(data, 'daemon.json')); i++) await new Promise(resolve => setTimeout(resolve, 100));
-    fs.rmSync(root, { recursive: true, force: true });
+    // The stopped daemon's process can hold its files a moment longer on Windows.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 });

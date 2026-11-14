@@ -7,12 +7,12 @@ import zlib from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { call } from '../src/client.js';
-import { startDaemon, type Connection } from '../src/daemon.js';
-import { chooseSource, type HandoffSession } from '../src/handoff.js';
-import { draftShare, writeShare } from '../src/share.js';
-import { SharedLibrary } from '../src/shared.js';
-import { marker } from '../src/paths.js';
+import { call } from '../src/service/client.js';
+import { startDaemon, type Connection } from '../src/service/daemon.js';
+import { chooseSource, type HandoffSession } from '../src/sessions/handoff.js';
+import { draftShare, writeShare } from '../src/share/share.js';
+import { SharedLibrary } from '../src/share/shared.js';
+import { marker } from '../src/core/paths.js';
 
 const bin = fileURLToPath(new URL('../src/bin.js', import.meta.url));
 const secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz123456';
@@ -130,6 +130,62 @@ test('a file dropped into the shared folder is imported by itself, once it stops
     library.poll(Date.now() + 20_000);
     assert(fs.existsSync(path.join(library.dir, 'broken.wisdom-share.rejected')));
   } finally { library.close(); await cleanup(senderDaemon, receiver, sender); }
+});
+
+test('opening an imported copy writes nothing, so removing it right after does not race a scanner', async () => {
+  const { sender, daemon: senderDaemon, file } = await shareFrom();
+  const receiver = project('nowrite');
+  try {
+    const first = new SharedLibrary(path.join(receiver.data, 'shared'));
+    const { store } = first.import(file);
+    first.close();
+    const db = path.join(store.dataDir, 'ledger.sqlite');
+    const before = fs.readFileSync(db);
+    const again = new SharedLibrary(path.join(receiver.data, 'shared'));
+    again.sessions();
+    again.close();
+    assert(fs.readFileSync(db).equals(before), 'open and close left the file as it was');
+  } finally { await cleanup(senderDaemon, receiver, sender); }
+});
+
+test('a removal cut short is finished later; a copy imported by hand is never touched', async () => {
+  const { sender, daemon: senderDaemon, file } = await shareFrom();
+  const other = await shareFrom('hand-session');
+  const receiver = project('halfremoved');
+  const dir = path.join(receiver.data, 'shared');
+  try {
+    const library = new SharedLibrary(dir);
+    const team = library.import(file).store.shared.shareId;
+    const byHand = library.import(other.file).store.shared.shareId;
+    library.close();
+    // Live test 7.2: the delete stopped after info.json, leaving the session's ledger behind.
+    fs.rmSync(path.join(dir, team, 'info.json'));
+    const reopened = new SharedLibrary(dir);
+    try {
+      assert.deepEqual(fs.readdirSync(dir).sort(), [byHand], 'the half-removed folder is finished when the library opens');
+      assert.deepEqual(reopened.all.map(s => s.shared.shareId), [byHand]);
+      assert.deepEqual(reopened.pending, []);
+    } finally { reopened.close(); }
+
+    // A file held open: on Windows the delete fails, the copy stays pending and is not called
+    // removed; the next fetch (finishRemovals) deletes it once the file is free.
+    const library2 = new SharedLibrary(dir);
+    const again = library2.import(file).store.shared.shareId;
+    const { DatabaseSync } = await import('node:sqlite');
+    const holder = new DatabaseSync(path.join(dir, again, 'ledger.sqlite'));
+    holder.prepare('SELECT count(*) FROM records').get();
+    const gone = library2.remove(again);
+    if (process.platform === 'win32') {
+      assert.equal(gone, false, 'not reported removed while its folder is there');
+      assert.deepEqual(library2.pending, [again]);
+      assert(fs.existsSync(path.join(dir, again)));
+    } else assert.equal(gone, true);
+    holder.close();
+    library2.finishRemovals();
+    assert.deepEqual(library2.pending, []);
+    assert.deepEqual(fs.readdirSync(dir).sort(), [byHand]);
+    library2.close();
+  } finally { await cleanup(senderDaemon, other.daemon, receiver, sender, other.sender); }
 });
 
 test('a share file that names a path outside its own folder is refused, and nothing is written', async () => {

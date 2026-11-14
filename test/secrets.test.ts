@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { maskSecret, redactSecrets, redactionMarker, scanSecrets } from '../src/secrets.js';
+import { maskSecret, redactSecrets, redactionMarker, scanSecrets } from '../src/share/secrets.js';
 
 const openai = 'sk-proj-abcdefghijklmnopqrstuvwxyz123456';
 const github = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';

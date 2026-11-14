@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from '../src/daemon.js';
-import { call } from '../src/client.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call } from '../src/service/client.js';
 import { installPi, piCommand } from '../src/harnesses/pi/launch.js';
 
 test('installed Pi records real write/edit/failing/nested tools and can be queried mid-session', { timeout: 30000 }, async () => {

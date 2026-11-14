@@ -5,17 +5,21 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
-import { call, connectionAt, ensureDaemon } from './client.js';
-import { startDaemon, type Connection } from './daemon.js';
-import { diagnose, formatChecks, wisdomVersion } from './doctor.js';
-import { harnessByCommand, planHandoff } from './handoff.js';
-import { connect, disconnect, type Connectable } from './connect.js';
-import { planClone } from './clone.js';
-import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share.js';
-import { redactSecrets } from './secrets.js';
-import { serveMcp } from './mcp.js';
-import { findDataDir, marker, movedFrom } from './paths.js';
-import { writeJson } from './ledger.js';
+import { call, connectionAt, ensureDaemon } from './service/client.js';
+import { startDaemon, type Connection } from './service/daemon.js';
+import { diagnose, formatChecks, wisdomVersion } from './setup/doctor.js';
+import { harnessByCommand, planHandoff } from './sessions/handoff.js';
+import { connect, disconnect, ignoreDataFolder, type Connectable } from './setup/connect.js';
+import { planClone } from './sessions/clone.js';
+import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share/share.js';
+import { redactSecrets } from './share/secrets.js';
+import { prCheck } from './team/team.js';
+import { POLICY_FILE, readPolicy, writePolicy } from './team/gitrefs.js';
+import { guideCommit, installHooks, LOCAL_HOOKS, removeHooks, runGitHook } from './team/githooks.js';
+import { guidesOn, setGuides } from './team/guides.js';
+import { serveMcp } from './service/mcp.js';
+import { findDataDir, marker, movedFrom } from './core/paths.js';
+import { writeJson } from './storage/ledger.js';
 import { installPi, launchPi, piCommand } from './harnesses/pi/launch.js';
 import { installClaudeCode, launchClaudeCode } from './harnesses/claude-code/launch.js';
 import { installCodex, launchCodex } from './harnesses/codex/launch.js';
@@ -41,8 +45,27 @@ Read a session
   wisdom dashboard                Print the address of the live dashboard
   wisdom glance                   List recorded sessions, newest first
   wisdom glance <session>         Show one session's shape and every turn
+  wisdom glance --commit <commit> Show which recorded steps made each piece of a git commit
   wisdom open <position> --capture <session>
                                   Read one turn, tool call or subagent, whole
+
+Team mode (a repository with wisdom-team.json)
+  wisdom team init                Start team mode: write wisdom-team.json for an admin to commit
+  wisdom team hooks on|off        Wisdom's git hooks: a link line on each commit, its record and
+                                  guide written after it, and both sent with your push (init and
+                                  connect turn them on in a team-mode repository)
+  wisdom guide on|off             Whether a model (Haiku 5.5) writes a guide after each commit,
+                                  reading its sessions since your last commit. Team mode: on by
+                                  default; off, Wisdom writes a plain guide from the record.
+                                  Local mode: off by default; on installs one post-commit hook,
+                                  changes no commit message and pushes nothing
+  wisdom guide <commit>           Have a model write that commit's guide now, any mode, from its
+                                  record's window. Without one, glance --commit shows a plain
+                                  guide built from the record in local mode
+  wisdom check --range A..B       In CI: each agent commit has a guide, its sessions are pushed
+  wisdom team push|fetch          Send your sessions and commit records now, or read teammates'
+  wisdom team delete <session>    Remove a pushed session for everyone
+  wisdom team prune               Remove pushed sessions older than the policy keeps them
 
 Share a session
   wisdom share <session>...       Write a file to send a teammate, after a check for secrets
@@ -64,6 +87,7 @@ Other
 Options
   --cwd DIR, --data DIR           Use the project at DIR, or the data folder DIR
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
+  --remote NAME, --range A..B     team, check: another remote than the policy's; the PR's commits
   --from <session-id>             handoff: the session to read (default: the newest other one)
   --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
@@ -83,12 +107,14 @@ async function main(): Promise<void> {
   const { positionals, values } = parseArgs({ args: separator < 0 ? args : args.slice(0, separator), allowPositionals: true,
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
-      help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
+      help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, commit: { type: 'string' }, remote: { type: 'string' }, range: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
       'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
   if (!command || values.help) { console.log(help); return; }
+  // Run by Wisdom's own git hooks; never fails, so a hook never fails git.
+  if (command === 'githook') { if (first && values.data) runGitHook(first, positionals.slice(2), path.resolve(values.data)); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
     daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
@@ -96,18 +122,29 @@ async function main(): Promise<void> {
     handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
     clone: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
-    glance: ['cwd', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
+    glance: ['cwd', 'commit', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
+    guide: ['cwd'], check: ['cwd', 'range', 'remote'], team: ['cwd', 'remote'],
   };
   const allowed = options[command];
   if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
   if (separator >= 0 && !['track', 'handoff'].includes(command)) throw new Error('Arguments after -- are only supported by track and handoff');
-  if (command !== 'share' && positionals.length > (['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
+  if (command !== 'share' && positionals.length > (['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
   if (command === 'init') { await init(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
   if (command === 'connect') { await connectProject(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
+  // These two work in any git checkout, with no data folder: an admin's first step, and CI.
+  if (command === 'check' && values.range) {
+    const result = prCheck(path.resolve(values.cwd ?? process.cwd()), values.range, values.remote);
+    console.log(result.text); if (!result.ok) process.exitCode = 1; return;
+  }
+  if (command === 'team' && first === 'init') {
+    const { file, policy, created } = writePolicy(path.resolve(values.cwd ?? process.cwd()));
+    console.log(created ? `Wrote ${file} (repo ID ${policy.repoId}). Commit it to turn team mode on for everyone; remove it to go back to local mode.` : `${POLICY_FILE} is already there: ${file}`);
+    return;
+  }
   const explicit = values.data ?? process.env.WISDOM_DATA_DIR;
   const start = path.resolve(values.cwd ?? process.cwd());
   const found = explicit ? path.resolve(explicit) : findDataDir(start);
@@ -168,6 +205,7 @@ async function main(): Promise<void> {
   if (command === 'export') { process.exitCode = await exportMarkdown(first, values, dataDir, port); return; }
   if (command === 'clone') { process.exitCode = await clone(first, values, dataDir, port); return; }
   if (command === 'mcp') { await serveMcp(await ensureDaemon(dataDir, port)); return; }
+  if (command === 'guide' || command === 'check' || command === 'team') { process.exitCode = await teamCommand(command, positionals.slice(1), values, dataDir); return; }
   // glance and open: the same request an agent sends through MCP, printed as the same text.
   const number = (flag: string, value?: string) => {
     if (value !== undefined && !/^\d+$/.test(value)) throw new Error(`${flag} needs a whole number.`);
@@ -175,7 +213,7 @@ async function main(): Promise<void> {
   };
   const reading = { from: number('--from', values.from), at: number('--at', values.at) };
   if (command === 'open' && !first) throw new Error('Use: wisdom open POSITION --capture CAPTURE|latest');
-  const input = command === 'glance' ? { capture: first, glance: true, ...reading } : { capture: values.capture, open: first, ...reading };
+  const input = command === 'glance' ? { capture: first, glance: true, commit: values.commit, ...reading } : { capture: values.capture, open: first, ...reading };
   console.log((await call(await ensureDaemon(dataDir), '/ledger', input)).text);
 }
 
@@ -223,6 +261,7 @@ async function runDaemon(dataDir: string, port: number | undefined, dashboard: b
 async function init(project: string, values: any, port?: number): Promise<void> {
   const { dataDir, fresh } = makeProject(project);
   console.log(fresh ? `Wisdom is set up in ${project}` : `Wisdom was already set up in ${project}. Its hooks and skills are refreshed.`);
+  teamHooks(project, dataDir);
   const known = fresh ? undefined : movedFrom(dataDir);
   if (known) console.log(`This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
   console.log('\nStart an agent:');
@@ -252,11 +291,23 @@ function makeProject(project: string): { dataDir: string; fresh: boolean } {
   const fresh = !fs.existsSync(path.join(dataDir, marker));
   fs.mkdirSync(dataDir, { recursive: true });
   if (fresh) writeJson(path.join(dataDir, marker), { project, createdAt: new Date().toISOString() });
-  const ignore = path.join(project, '.gitignore');
-  const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
-  const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
-  if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
+  ignoreDataFolder(project);
   return { dataDir, fresh };
+}
+
+/** In a team-mode repository, Wisdom's git hooks; in a local one, only the post-commit hook,
+ * and only when the person turned guides on (wisdom guide on). Run again, it repairs them. */
+function teamHooks(project: string, dataDir: string): void {
+  try {
+    if (!readPolicy(project)) {
+      if (!guidesOn(dataDir, false)) return;
+      const { dir } = installHooks(project, dataDir, LOCAL_HOOKS);
+      console.log(`Guides after each commit are on (wisdom guide on): Wisdom's post-commit hook is in ${dir}. Turn it off with: wisdom guide off`);
+      return;
+    }
+    const { dir, chained } = installHooks(project, dataDir);
+    console.log(`Team mode: Wisdom's git hooks are in ${dir}${chained.length ? ` (your own ${chained.join(', ')} still ${chained.length === 1 ? 'runs' : 'run'} first)` : ''}. Turn them off with: wisdom team hooks off`);
+  } catch (error) { console.log(`Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
 }
 
 /** The harnesses that run here: each is asked for its version. */
@@ -275,6 +326,7 @@ function installedHarnesses(values: any): Connectable[] {
 /** Record plain `claude`, `codex` and `pi` in this project with the person's own login. */
 async function connectProject(project: string, values: any, port?: number): Promise<void> {
   const { dataDir, fresh } = makeProject(project);
+  teamHooks(project, dataDir);
   const found = installedHarnesses(values);
   const result = connect(dataDir, found);
   console.log(`${fresh ? 'Wisdom is set up in' : 'Wisdom is connected in'} ${project}. Start your agent here as you always do, with your own login:\n`);
@@ -285,6 +337,7 @@ async function connectProject(project: string, values: any, port?: number): Prom
   };
   for (const harness of Object.keys(names) as Connectable[]) {
     const line = result.connected.includes(harness) ? next[harness]
+      : result.kept.includes(harness) ? `not found now, so its earlier connection was left as it was (git still ignores its files). Run wisdom connect again where ${harness === 'claude-code' ? 'claude' : harness} is on PATH to refresh it.`
       : !found.includes(harness) ? 'not installed. Run wisdom connect again after installing it.'
       : `not connected: git tracks ${path.relative(project, settingsFile(dataDir, harness, 'project'))}, and Wisdom will not put this machine's paths in it. Use wisdom track ${harness === 'claude-code' ? 'claude' : harness}.`;
     console.log(`  ${names[harness].padEnd(12)} ${line}`);
@@ -467,4 +520,80 @@ main().catch(error => { console.error(errorText(error)); process.exitCode = 1; }
 function errorText(error: any): string {
   if (error?.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') return `Unknown option ${/'([^']+)'/.exec(error.message)?.[1] ?? ''}. Run: wisdom --help`;
   return error instanceof Error ? error.message : String(error);
+}
+
+/** guide, check and team. Settings change files here; sharing asks the daemon, which holds
+ * the recordings and teammates' copies. */
+async function teamCommand(command: string, args: string[], values: { remote?: string }, dataDir: string): Promise<number> {
+  const project = path.dirname(dataDir);
+  const [action, session] = args;
+  if (command === 'guide') {
+    if (!action) throw new Error('Use: wisdom guide on|off, or wisdom guide <commit> to have a model write one commit\'s guide now. A commit\'s guide is shown by wisdom glance --commit <commit>.');
+    const team = !!readPolicy(project);
+    if (action === 'on' || action === 'off') {
+      setGuides(dataDir, action === 'on');
+      if (team) {
+        console.log(action === 'on' ? 'A model writes the guides of your commits with agent work, reading their sessions since your previous commit (Claude Haiku 5.5 through your Claude Code, unless wisdom-team.json names another writer).'
+          : 'No model writes your commit guides: Wisdom writes a plain one from each commit\'s record, citing the steps that made it and quoting what was asked in their turns. It costs nothing and does not explain why beyond those requests.');
+        return 0;
+      }
+      if (action === 'off') {
+        const removed = removeHooks(project, LOCAL_HOOKS);
+        console.log(`No model writes guides after your commits${removed.length ? '; Wisdom\'s post-commit hook is removed' : ''}. `
+          + 'wisdom glance --commit still shows a plain guide built from the record, and wisdom guide <commit> writes a model guide on request.');
+        return 0;
+      }
+      try {
+        const { dir, chained } = installHooks(project, dataDir, LOCAL_HOOKS);
+        console.log(`After each commit with agent work, a model now writes its guide (Claude Haiku 5.5 through your Claude Code), reading its sessions since your previous commit. `
+          + `Wisdom's post-commit hook is in ${dir}${chained.length ? ' (your own post-commit still runs first)' : ''}. `
+          + 'Your commit messages are not changed, and nothing is pushed: guides stay in this clone\'s refs/wisdom. Turn it off with: wisdom guide off');
+        return 0;
+      } catch (error) {
+        console.log(`Guides after each commit are on, but the hook that starts them is not installed. ${error instanceof Error ? error.message : error}`);
+        return 1;
+      }
+    }
+    const record = guideCommit(dataDir, action);
+    const sha = record.commit.sha.slice(0, 12);
+    console.log(`Guide written by ${record.guide!.writer} for ${sha} · ${record.guide!.problems.length ? `did not pass Wisdom's check: ${record.guide!.problems.join('; ')}` : 'it passed Wisdom\'s check'}.`);
+    console.log(`Kept in refs/wisdom/records/${record.commit.sha}${team ? ', and sent with your next push' : ', on this machine only'}. Read it: wisdom glance --commit ${sha}`);
+    return 0;
+  }
+  if (command === 'check') throw new Error('Use: wisdom check --range <base>..<head>, in CI. A commit\'s guide is written and checked by itself after the commit.');
+  if (action === 'hooks') {
+    if (session === 'off') { const removed = removeHooks(project); console.log(removed.length ? `Removed Wisdom's ${removed.join(', ')} hooks.` : 'Wisdom\'s git hooks were not installed.'); return 0; }
+    if (session !== 'on') throw new Error('Use: wisdom team hooks on|off');
+    if (!readPolicy(project)) throw new Error(`This repository has no ${POLICY_FILE}, so it is in local mode and needs no git hooks.`);
+    const { dir, chained } = installHooks(project, dataDir);
+    console.log(`Wisdom's git hooks are in ${dir}${chained.length ? `; your own ${chained.join(', ')} still run first` : ''}.`);
+    return 0;
+  }
+  const connection = await ensureDaemon(dataDir);
+  if (action === 'push') {
+    const result = await call(connection, '/team', { action: 'push', remote: values.remote });
+    for (const s of result.sessions) console.log(`session ${s.id}: ${s.state}${s.heldBack ? ' (tried again at each push)' : ''}`);
+    console.log(`${result.records} commit record${result.records === 1 ? '' : 's'} pushed to ${result.remote}.${result.recordRedactions ? ` ${result.recordRedactions} possible secret${result.recordRedactions === 1 ? '' : 's'} redacted in them first.` : ''}`);
+    if (result.missing.length) { console.log(`Not on ${result.remote} yet, so reviewers cannot open them: ${result.missing.join(', ')}`); return 1; }
+    console.log('Ready: every session these records name is on the remote.');
+    return 0;
+  }
+  if (action === 'fetch') {
+    const result = await call(connection, '/team', { action: 'fetch', remote: values.remote });
+    console.log(`${result.imported.length} teammate session${result.imported.length === 1 ? '' : 's'} updated, ${result.removed.length} removed by the team's deletion list, ${result.records} commit records here.`);
+    if (result.notRemoved) console.log(`${result.notRemoved} removed teammate cop${result.notRemoved === 1 ? 'y is' : 'ies are'} still on disk (a file was in use). Wisdom deletes ${result.notRemoved === 1 ? 'it' : 'them'} at the next team fetch or when it starts.`);
+    return 0;
+  }
+  if (action === 'delete') {
+    if (!session) throw new Error('Use: wisdom team delete <session>');
+    const result = await call(connection, '/team', { action: 'delete', session, remote: values.remote });
+    console.log(`Deleted ${result.key} from the team remote and added it to the deletion list, so no clone pushes it back. Your own recording here is kept.`);
+    return 0;
+  }
+  if (action === 'prune') {
+    const result = await call(connection, '/team', { action: 'prune', remote: values.remote });
+    console.log(result.removed.length ? `Removed ${result.removed.length} pushed sessions older than the policy keeps them.` : 'Nothing is older than the policy keeps.');
+    return 0;
+  }
+  throw new Error('Use: wisdom team init|push|fetch|delete <session>|prune');
 }

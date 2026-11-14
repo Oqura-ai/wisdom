@@ -11,9 +11,9 @@ import { installPi, launchPi } from '../src/harnesses/pi/launch.js';
 import { resolveCommand, staleHooks } from '../src/harnesses/launch.js';
 import { installClaudeCode, launchClaudeCode } from '../src/harnesses/claude-code/launch.js';
 import { installCodex } from '../src/harnesses/codex/launch.js';
-import { startDaemon } from '../src/daemon.js';
-import { call, connectionAt, spool } from '../src/client.js';
-import { findDataDir, hookDataDir, marker } from '../src/paths.js';
+import { startDaemon } from '../src/service/daemon.js';
+import { call, connectionAt, spool } from '../src/service/client.js';
+import { findDataDir, hookDataDir, marker } from '../src/core/paths.js';
 
 const temp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `wisdom-${name}-`));
 
@@ -123,6 +123,13 @@ test('every session is its own record, whatever started it: resumes continue, fo
     assert.equal(daemon.captures.get('one').manifest.endReason, 'session-ended: exit');
     // Codex ends every session it opened when it quits; a session not being watched has nothing to close.
     assert.equal((await end('one')).recorded, false);
+    // A session's end is answered before its capture closes (closing rescans the workspace, longer
+    // than Claude Code waits for its exit hook); the next request closes it before it is served.
+    const event = { harness: 'codex', cwd: workspace, observation: { observationId: randomUUID(), sessionId: 'two', type: 'session_ended', data: { reason: 'exit' } } };
+    assert.equal(daemon.captures.route(event as any)?.captureId, 'two');
+    assert.equal(daemon.captures.get('two').manifest.status, 'recording', 'answered, not closed yet');
+    await call(c, '/ledger', { capture: 'two', glance: true });
+    assert.equal(daemon.captures.get('two').manifest.endReason, 'session-ended: exit');
     // Resume: same session, same record, its turns continue after a gap.
     assert.equal((await say('one', 'again')).captureId, 'one');
 

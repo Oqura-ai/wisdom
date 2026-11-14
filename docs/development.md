@@ -30,6 +30,8 @@ Run one file after building with `node --test dist/test/ledger.test.js`, and fil
 - The Pi integration test starts the installed Pi with its agent folder set up as `wisdom init` does, in an isolated temporary workspace. A local scripted provider drives real file tools and nested calls with no network requests or model spend. It checks that Pi loads the skill from its home, reads while Pi is running, the opened turn, and the mirrored transcript byte for byte. It starts Pi the way `wisdom track pi` does; set `WISDOM_PI_ENTRY` to use another installation.
 - `WISDOM_CODEX_BIN` overrides the Codex executable for its test.
 
+Real agents, model guides, a git host, two people at once and Windows file handling need a live run. [Live testing](live-testing.md) says which changes need which checks.
+
 ## Dashboard
 
 ```sh
@@ -66,14 +68,14 @@ npm publish
 
 Read these in order:
 
-1. [schema.ts](../src/schema.ts): record vocabulary and the ledger, view and capture request schemas.
-2. [harnesses/](../src/harnesses/): one adapter per harness. [types.ts](../src/harnesses/types.ts) is the contract, and each harness's `launch.ts` writes its hooks into its home. [pi/extension.ts](../src/harnesses/pi/extension.ts), [claude-code/hook.ts](../src/harnesses/claude-code/hook.ts) and [codex/hook.ts](../src/harnesses/codex/hook.ts) send events through `deliver` in [client.ts](../src/client.ts).
-3. [captures.ts](../src/captures.ts): routing by session, the spool, the session-file scan, and operation/change coordination.
-4. [workspace.ts](../src/workspace.ts): scoped file observation and diff generation.
-5. [database.ts](../src/database.ts) and [ledger.ts](../src/ledger.ts): SQLite, payloads and native mirroring.
-6. [discovery.ts](../src/discovery.ts): the agent-facing ledger (glance, open, positions, the ceiling). [conversation.ts](../src/conversation.ts) assembles one turn in recorded order, [evidence.ts](../src/evidence.ts) reads exact bodies at a version, and [content.ts](../src/content.ts) extracts surface text. [stats.ts](../src/stats.ts) and [views.ts](../src/views.ts) serve the dashboard.
-7. [daemon.ts](../src/daemon.ts): the small HTTP boundary and daemon lifecycle.
-8. [cli.ts](../src/cli.ts), [client.ts](../src/client.ts), [mcp.ts](../src/mcp.ts), [doctor.ts](../src/doctor.ts): human and agent interfaces.
+1. [schema.ts](../src/core/schema.ts): record vocabulary and the ledger, view and capture request schemas.
+2. [harnesses/](../src/harnesses/): one adapter per harness. [types.ts](../src/harnesses/types.ts) is the contract, and each harness's `launch.ts` writes its hooks into its home. [pi/extension.ts](../src/harnesses/pi/extension.ts), [claude-code/hook.ts](../src/harnesses/claude-code/hook.ts) and [codex/hook.ts](../src/harnesses/codex/hook.ts) send events through `deliver` in [client.ts](../src/service/client.ts).
+3. [captures.ts](../src/record/captures.ts): routing by session, the spool, the session-file scan, and operation/change coordination.
+4. [workspace.ts](../src/record/workspace.ts): scoped file observation and diff generation.
+5. [database.ts](../src/storage/database.ts) and [ledger.ts](../src/storage/ledger.ts): SQLite, payloads and native mirroring.
+6. [discovery.ts](../src/read/discovery.ts): the agent-facing ledger (glance, open, positions, the ceiling). [conversation.ts](../src/read/conversation.ts) assembles one turn in recorded order, [evidence.ts](../src/storage/evidence.ts) reads exact bodies at a version, and [content.ts](../src/core/content.ts) extracts surface text. [stats.ts](../src/read/stats.ts) and [views.ts](../src/read/views.ts) serve the dashboard.
+7. [daemon.ts](../src/service/daemon.ts): the small HTTP boundary and daemon lifecycle.
+8. [cli.ts](../src/cli.ts), [client.ts](../src/service/client.ts), [mcp.ts](../src/service/mcp.ts), [doctor.ts](../src/setup/doctor.ts): human and agent interfaces.
 
 [Architecture](architecture.md) has the storage details and a file-by-file map.
 
@@ -81,6 +83,6 @@ Read these in order:
 
 - Changes to how evidence is recorded, stored or read follow the [data policy](policy.md), including its checklist.
 - Use `node:test` and `node:assert/strict`. Name tests `test/*.test.ts` and describe observable behaviour in their titles. Isolate filesystem and database tests in temporary directories, and close daemons during cleanup.
-- Add regression coverage for changed behaviour, and run `npm run check` and `npm test` before submitting.
+- Add regression coverage for changed behaviour, and run `npm run check` and `npm test` before submitting. If the change touches an area in [live testing](live-testing.md#what-needs-a-live-run-and-why), run those checks too and list them in the PR.
 - Never commit `.wisdom/`. It holds unredacted transcripts and harness logins.
 - Docs live in `docs/`, with lowercase, hyphenated filenames.
