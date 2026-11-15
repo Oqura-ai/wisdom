@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 520" role="img" aria-labelledby="t d">
+  <title id="t">One repository, the whole team</title>
+  <desc id="d">Maya works with Claude Code, Sam with Codex and Lee with Pi. Each pushes to the same git remote, origin, as usual. Beside the branches, under refs/wisdom/ and the repository's ID, it keeps a record for each commit and every teammate's sessions. Anyone on the team runs wisdom team fetch and reads any commit with wisdom glance --commit, and CI checks every pull request with wisdom check.</desc>
+  <style>
+  :root { --paper:#f6f8fb; --ink:#344d67; --soft:#6f87a1; --muted:#7a8da3; --line:#d8e1ec;
+          --surface:#fcfdff; --blue:#c6d9e8; --sage:#cfdfd1; --peach:#e8d2c5; --lilac:#d9d1e8; --sand:#e7dfc2; }
+  * { box-sizing:border-box; }
+  
+  svg { font-family:Arial,Helvetica,sans-serif; }
+  text { fill:var(--ink); }
+  .eyebrow { font-size:14px; letter-spacing:2.8px; fill:var(--muted); }
+  .name { font-size:22px; }
+  .serif { font-family:Georgia,'Times New Roman',serif; }
+  .head { font-size:25px; letter-spacing:-.5px; }
+  .mono { font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:14px; fill:var(--soft); }
+  .small { font-size:15px; fill:var(--soft); }
+  .note { font-family:Georgia,'Times New Roman',serif; font-style:italic; font-size:18px; fill:var(--soft); }
+  .card { fill:var(--surface); stroke:#d1deea; stroke-width:1.5; filter:url(#depth); }
+  .wire { fill:none; stroke:#aec2d5; stroke-width:2; stroke-linecap:round; }
+  .local { fill:#eef3f8; fill-opacity:.55; stroke:#c4d3e3; stroke-width:1.5; stroke-dasharray:5 6; }
+  .tile { fill:#e1e9f3; stroke:#bacddd; }
+  .cell { stroke:none; }
+</style>
+  <defs>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fcfdff"/><stop offset="1" stop-color="#eef3f8"/></linearGradient>
+    <filter id="depth" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#405d7e" flood-opacity=".10"/>
+    </filter>
+    <marker id="tip" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M3 2 L10 6 L3 10" fill="none" stroke="#8fa8bf" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <!-- The Wisdom bot face (from the banner), radius 22; fill comes from the circle drawn under it. -->
+    <clipPath id="fc"><circle cx="0" cy="0" r="22"/></clipPath>
+    <g id="face-detail">
+      <g clip-path="url(#fc)">
+        <ellipse cx="6.8" cy="15.8" rx="31.7" ry="18.1" transform="rotate(-25 6.8 15.8)" fill="#6a8da3" opacity=".17"/>
+        <ellipse cx="-18" cy="-9" rx="11.3" ry="27.2" transform="rotate(25 -18 -9)" fill="#fff" opacity=".27"/>
+      </g>
+      <circle r="22" fill="none" stroke="#9fb3c7" stroke-width="1.3"/>
+      <rect x="-8.6" y="-4.8" width="4.4" height="9.6" rx="2.4" fill="#344d67"/>
+      <rect x="4.3" y="-4.8" width="4.4" height="9.6" rx="2.4" fill="#344d67"/>
+    </g>
+  </defs>
+  <style>.eyebrow{font-size:15px}.mono{font-size:18px;fill:#5b7491}.small{font-size:20px;fill:#3f5873}.head{font-size:28px}.note{font-size:21px;fill:#5b7491}.addr{fill:#344d67}</style>
+  <rect x=".75" y=".75" width="1038.5" height="518.5" rx="24" fill="url(#paper)" stroke="#d4deea" stroke-width="1.5"/>
+
+  <text x="30" y="72" class="eyebrow">EACH PERSON PUSHES</text>
+  <text x="380" y="72" class="eyebrow">ONE REPOSITORY</text>
+  <text x="760" y="72" class="eyebrow">ANYONE READS</text>
+
+  <!-- Teammates: three cards 90 tall, 15 apart (centres 145, 250, 355) -->
+  <g>
+    <rect x="30" y="100" width="260" height="90" rx="16" class="card"/>
+    <g transform="translate(78 145)"><circle r="22" fill="#e8d2c5"/><use href="#face-detail"/></g>
+    <text x="118" y="140" class="name">Maya</text><text x="118" y="166" class="mono">Claude Code</text>
+  </g>
+  <g>
+    <rect x="30" y="205" width="260" height="90" rx="16" class="card"/>
+    <g transform="translate(78 250)"><circle r="22" fill="#cfdfd1"/><use href="#face-detail"/></g>
+    <text x="118" y="245" class="name">Sam</text><text x="118" y="271" class="mono">Codex</text>
+  </g>
+  <g>
+    <rect x="30" y="310" width="260" height="90" rx="16" class="card"/>
+    <g transform="translate(78 355)"><circle r="22" fill="#d9d1e8"/><use href="#face-detail"/></g>
+    <text x="118" y="350" class="name">Lee</text><text x="118" y="376" class="mono">Pi</text>
+  </g>
+
+  <!-- The repository: one card, 100 to 400 (centre 250). Session cells take each pusher's colour. -->
+  <g>
+    <rect x="380" y="100" width="300" height="300" rx="16" class="card"/>
+    <text x="402" y="144" class="serif head">origin</text>
+    <text x="402" y="172" class="mono">your git remote</text>
+    <line x1="402" y1="194" x2="658" y2="194" stroke="#e4ebf3" stroke-width="1.5"/>
+    <text x="402" y="230" class="small">branches, as usual</text>
+    <line x1="402" y1="254" x2="658" y2="254" stroke="#e4ebf3" stroke-width="1.5"/>
+    <text x="402" y="290" class="mono addr">refs/wisdom/&lt;repo-id&gt;/</text>
+    <text x="402" y="330" class="mono">records</text>
+    <rect x="500" y="312" width="18" height="22" rx="3" fill="#c6d9e8"/>
+    <rect x="524" y="312" width="18" height="22" rx="3" fill="#c6d9e8"/>
+    <rect x="548" y="312" width="18" height="22" rx="3" fill="#c6d9e8"/>
+    <rect x="572" y="312" width="18" height="22" rx="3" fill="#c6d9e8"/>
+    <rect x="596" y="312" width="18" height="22" rx="3" fill="#c6d9e8"/>
+    <text x="402" y="372" class="mono">sessions</text>
+    <rect x="500" y="354" width="18" height="22" rx="3" fill="#e8d2c5"/>
+    <rect x="524" y="354" width="18" height="22" rx="3" fill="#e8d2c5"/>
+    <rect x="548" y="354" width="18" height="22" rx="3" fill="#cfdfd1"/>
+    <rect x="572" y="354" width="18" height="22" rx="3" fill="#cfdfd1"/>
+    <rect x="596" y="354" width="18" height="22" rx="3" fill="#d9d1e8"/>
+    <rect x="620" y="354" width="18" height="22" rx="3" fill="#d9d1e8"/>
+  </g>
+
+  <!-- Readers, centred on the repository (centre 250) -->
+  <g>
+    <rect x="760" y="120" width="250" height="120" rx="16" class="card"/>
+    <text x="782" y="162" class="name">Any teammate</text>
+    <text x="782" y="194" class="mono">wisdom team fetch</text>
+    <text x="782" y="220" class="mono">glance --commit</text>
+  </g>
+  <g>
+    <rect x="760" y="260" width="250" height="120" rx="16" class="card"/>
+    <text x="782" y="302" class="name">CI</text>
+    <text x="782" y="334" class="mono">wisdom check</text>
+    <text x="782" y="360" class="mono">on pull requests</text>
+  </g>
+
+  <!-- Wires: start 2 past a card, end 4 before the next; fan in and out at the repository's centre. -->
+  <path class="wire" d="M292 145 C334 145 334 250 376 250" marker-end="url(#tip)"/>
+  <path class="wire" d="M292 250 L376 250" marker-end="url(#tip)"/>
+  <path class="wire" d="M292 355 C334 355 334 250 376 250" marker-end="url(#tip)"/>
+  <path class="wire" d="M682 250 C719 250 719 180 756 180" marker-end="url(#tip)"/>
+  <path class="wire" d="M682 250 C719 250 719 320 756 320" marker-end="url(#tip)"/>
+
+  <line x1="507" y1="446" x2="533" y2="446" stroke="#b5c7d8"/>
+  <text x="520" y="482" class="note" text-anchor="middle">Everyone pushes their own sessions. Anyone on the team can read them.</text>
+</svg>

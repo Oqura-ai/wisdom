@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@oqura/wisdom"><img src="https://img.shields.io/badge/npm-%40oqura%2Fwisdom-CB3837?logo=npm" alt="npm: @oqura/wisdom"></a>
+  <a href="https://oqura-ai.github.io/wisdom-docs/"><img src="https://img.shields.io/badge/docs-wisdom--docs-0891b2" alt="Docs: wisdom-docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D24-green.svg" alt="Node 24+">
 </p>
@@ -21,14 +22,15 @@ Wisdom keeps a local record you and your agents can read:
 - File diffs alongside the requests and tool calls recorded around them.
 - A common way to browse Claude Code, Codex and Pi sessions, one turn at a time.
 - Session history to help with reviews, follow-up work and handoffs between agents.
+- Each commit linked back to the recorded steps that made it.
 
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/how-it-works.png" alt="Claude Code, Codex CLI and Pi send events through hooks or an extension to a local daemon on 127.0.0.1, which saves them in .wisdom/ (SQLite, diffs, transcript copies). The dashboard, the CLI (glance, open) and the agent skill read it. Nothing is uploaded or summarized." width="900">
+  <img src="docs/assets/how-it-works.png" alt="Claude Code, Codex CLI and Pi send events through hooks or an extension to a local daemon on 127.0.0.1, which saves them in .wisdom/ (SQLite, diffs, transcript copies). At each commit, Wisdom keeps a record in your repository's .git that links each change to the step that made it. The dashboard, the CLI (glance, open, glance --commit) and the agent skill read it. In team mode, which is opt-in, git push sends records and sessions to your own git remote for teammates and CI." width="900">
 </p>
 
-The agent's own hooks send each event to a small daemon on your machine. The daemon saves it in the project's `.wisdom/` folder, along with a byte-for-byte copy of the agent's transcript and the diffs of the files it watches. If the daemon is down, events are kept and recorded when it comes back; the agent is never blocked.
+The agent's own hooks send each event to a small daemon on your machine. The daemon saves it in the project's `.wisdom/` folder, along with a byte-for-byte copy of the agent's transcript and the diffs of the files it watches. If the daemon is down, events are kept and recorded when it comes back; the agent is never blocked. When you commit, Wisdom keeps a record in your repository's `.git` that links each change to the step that made it.
 
 ## Quick start
 
@@ -87,6 +89,11 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom export <id> --out session.md` | A session as Markdown, for a PR or an issue |
 | `wisdom glance --commit HEAD` | Which recorded steps made each piece of a commit, with its guide |
 | `wisdom guide on` / `off` | A model writes each commit's guide, or Wisdom's plain one does |
+| `wisdom guide <commit>` | Have a model write one commit's guide now |
+| `wisdom team init` | Turn on team mode: write `wisdom-team.json` to commit |
+| `wisdom team fetch` / `push` | Read teammates' sessions, or send yours without a `git push` |
+| `wisdom team delete <id>` | Remove a pushed session for everyone |
+| `wisdom check --range A..B` | In CI: each agent commit has a guide and its sessions are pushed |
 | `wisdom doctor` | Check the setup and print the fix for each problem |
 | `wisdom disconnect` | Stop recording a connected project; recordings are kept |
 
@@ -113,11 +120,34 @@ The request and the reply both say docstring; the diff shows the line below chan
 
 ## From a commit back to its sessions
 
-`wisdom glance --commit HEAD` lists each piece of a commit with the recorded step that made it, and says `not recorded` for anything no session explains. Wisdom keeps that answer for each commit you make, in your own `.git`, never on a branch.
+New in 0.6.0, in beta: `npm install -g @oqura/wisdom@beta`.
 
-Each commit with agent work can also get a short **guide**: what changed and why, citing the steps. By default Wisdom builds a plain one from the record; `wisdom guide on` has a cheap model (Claude Haiku through your own Claude Code) read the sessions since your last commit and write it.
+`wisdom glance --commit HEAD` lists each piece of a commit with the recorded step that made it, and says `not recorded` for anything no session explains. Start from `git blame` and you get from a line of code to the turn that wrote it. Wisdom keeps that answer for each commit you make while it runs, in your own `.git`, never on a branch.
 
-**Team mode** is opt-in: commit a `wisdom-team.json`. Then each `git push` also sends the commits' records and their sessions, secrets redacted, to hidden refs in your own git remote. Teammates read them with `wisdom team fetch`, and CI checks every PR with `wisdom check`. Details in [team mode](docs/team.md).
+Each commit with agent work can also get a short **guide**: what changed and why, citing the steps. Outside team mode, Wisdom builds a plain one from the record each time you read it; `wisdom guide on` has a cheap model (Claude Haiku through your own Claude Code) read the sessions since your last commit and write it.
+
+## Team mode
+
+Team mode lets teammates read the sessions behind each other's commits. It's opt-in per repository, and everything travels through your own git remote as hidden refs, never on a branch and never to Wisdom.
+
+<p align="center">
+  <img src="docs/assets/team-mode.svg" alt="Maya works with Claude Code, Sam with Codex and Lee with Pi. Each pushes to the same git remote, origin, as usual. Beside the branches, under refs/wisdom/ and the repository's ID, it keeps a record for each commit and every teammate's sessions. Anyone on the team runs wisdom team fetch and reads any commit with wisdom glance --commit, and CI checks every pull request with wisdom check." width="700">
+</p>
+
+```sh
+wisdom team init                  # writes wisdom-team.json; commit and push it
+wisdom connect                    # every teammate, after pulling it: installs Wisdom's git hooks
+git commit && git push            # as usual
+wisdom team fetch                 # bring teammates' sessions here, read-only
+wisdom glance --commit <commit>   # any commit, with the steps that made it and its guide
+```
+
+- **On commit**, Wisdom adds a `Wisdom-Record:` line to the message, so the record follows the commit through an amend, a rebase or a squash merge. A background job then keeps the record, and for agent work a model writes the guide. Run `wisdom guide off` to get Wisdom's plain guide instead.
+- **On push**, your `git push` waits for any guide still being written, up to five minutes, then sends the sessions and the records, every possible secret redacted. A failure here never stops your push.
+- **In CI**, `wisdom check --range origin/main..HEAD` fails a pull request whose agent commits have no guide, or whose sessions aren't on the remote.
+- **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.json`.
+
+Tested with GitHub so far, not yet GitLab, and a pull request from a fork can't push sessions. Details in [team mode](docs/team.md).
 
 ## Dashboard
 
@@ -135,7 +165,7 @@ More in [dashboard](docs/dashboard.md).
 
 ## Privacy
 
-Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything. In team mode, sessions and commit records are redacted the same way before a push, and go only to your own git remote; your recorded sessions are never changed. The check finds known shapes only, and a team can add its own scanner.
+Everything stays in the project's `.wisdom/` folder on your machine. Git ignores it, but it holds sessions unredacted, so keep it out of shared drives and zips. `wisdom share` and `wisdom export` check for API keys, tokens, email addresses and similar before writing anything. In team mode, sessions and commit records are redacted the same way before a push, and go only to your own git remote; your recorded sessions are never changed. The check finds known shapes only, and a team can add its own scanner. Recording uses no model, and Wisdom calls one only to write the commit guides you turn on, by default through your own Claude Code.
 
 ## Status
 
@@ -143,7 +173,9 @@ Early. Tested on Windows, macOS and Linux. See [limitations](docs/limitations.md
 
 ## Documentation
 
-[Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)
+[Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Team mode](docs/team.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)
+
+The documentation site, with guides and examples: [oqura-ai.github.io/wisdom-docs](https://oqura-ai.github.io/wisdom-docs/).
 
 ## Contributing
 
