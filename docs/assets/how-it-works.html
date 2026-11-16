@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How Wisdom works</title>
-<!-- Source of docs/assets/how-it-works.png. Theme from the landing page and product demo. -->
+<!-- Source of docs/assets/how-it-works.png. Render the SVG at 1600 x 730 with deviceScaleFactor 2 and omitBackground: true to preserve transparent corners. -->
 <style>
   :root { --paper:#f6f8fb; --ink:#344d67; --soft:#6f87a1; --muted:#7a8da3; --line:#d8e1ec;
           --surface:#fcfdff; --blue:#c6d9e8; --sage:#cfdfd1; --peach:#e8d2c5; --lilac:#d9d1e8; --sand:#e7dfc2; }
   * { box-sizing:border-box; }
-  html, body { margin:0; background:var(--paper); }
+  html, body { margin:0; background:transparent; }
   svg { display:block; width:100%; max-width:1600px; height:auto; margin:0 auto; font-family:Arial,Helvetica,sans-serif; }
   text { fill:var(--ink); }
   .eyebrow { font-size:14px; letter-spacing:2.8px; fill:var(--muted); }
@@ -51,7 +51,8 @@
     </g>
   </defs>
 
-  <rect x=".75" y=".75" width="1598.5" height="728.5" rx="24" fill="url(#paper)" stroke="#d4deea" stroke-width="1.5"/>
+  <!-- Shared README frame: 2% corner radius and 0.125% border, relative to the canvas width. -->
+  <rect x="1" y="1" width="1598" height="728" rx="32" fill="url(#paper)" stroke="#d4deea" stroke-width="2"/>
 
   <!-- Column labels -->
   <text x="80" y="76" class="eyebrow">YOUR AGENTS</text>

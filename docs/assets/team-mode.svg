@@ -42,7 +42,8 @@
     </g>
   </defs>
   <style>.eyebrow{font-size:15px}.mono{font-size:18px;fill:#5b7491}.small{font-size:20px;fill:#3f5873}.head{font-size:28px}.note{font-size:21px;fill:#5b7491}.addr{fill:#344d67}</style>
-  <rect x=".75" y=".75" width="1038.5" height="518.5" rx="24" fill="url(#paper)" stroke="#d4deea" stroke-width="1.5"/>
+  <!-- Shared README frame: 2% corner radius and 0.125% border, relative to the canvas width. -->
+  <rect x=".65" y=".65" width="1038.7" height="518.7" rx="20.8" fill="url(#paper)" stroke="#d4deea" stroke-width="1.3"/>
 
   <text x="30" y="72" class="eyebrow">EACH PERSON PUSHES</text>
   <text x="380" y="72" class="eyebrow">ONE REPOSITORY</text>

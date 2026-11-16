@@ -1,7 +1,7 @@
 # Wisdom
 
 <p align="center">
-  <img src="docs/assets/wisdom-banner.svg" alt="Wisdom — The intent behind every change your coding agent makes, readable by you and by any agent" width="1200">
+  <img src="docs/assets/wisdom-banner.svg" alt="Wisdom — The intent behind every change your coding agent makes, readable by you and by any agent" width="900">
 </p>
 
 <p align="center">
@@ -131,7 +131,7 @@ Each commit with agent work can also get a short **guide**: what changed and why
 Team mode lets teammates read the sessions behind each other's commits. It's opt-in per repository, and everything travels through your own git remote as hidden refs, never on a branch and never to Wisdom.
 
 <p align="center">
-  <img src="docs/assets/team-mode.svg" alt="Maya works with Claude Code, Sam with Codex and Lee with Pi. Each pushes to the same git remote, origin, as usual. Beside the branches, under refs/wisdom/ and the repository's ID, it keeps a record for each commit and every teammate's sessions. Anyone on the team runs wisdom team fetch and reads any commit with wisdom glance --commit, and CI checks every pull request with wisdom check." width="700">
+  <img src="docs/assets/team-mode.svg" alt="Maya works with Claude Code, Sam with Codex and Lee with Pi. Each pushes to the same git remote, origin, as usual. Beside the branches, under refs/wisdom/ and the repository's ID, it keeps a record for each commit and every teammate's sessions. Anyone on the team runs wisdom team fetch and reads any commit with wisdom glance --commit, and CI checks every pull request with wisdom check." width="900">
 </p>
 
 ```sh
