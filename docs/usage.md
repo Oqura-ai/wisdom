@@ -247,13 +247,46 @@ A kept record with agent work also shows a **guide** at the end, `guide · plain
 
 ## The background service
 
-The daemon listens on `127.0.0.1:7434` by default. When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
+The daemon listens on `127.0.0.1:7434` by default, or from `daemon.port` in [`wisdom.yaml`](#settings). When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
 
 A recording capture becomes interrupted when the daemon restarts. It does not silently resume with a missing file baseline. The session's next event continues it, with a gap for the time in between. A turn that had not settled stays open, so its calls and reply stay in it.
+
+## Settings
+
+`wisdom init` and `wisdom connect` write `wisdom.yaml` at the project's top, with every default shown and commented out. Remove the `#` (and the space after it) in front of a line to change that setting. In a git repository it goes in the clone's own `.git/info/exclude`, so it stays yours and no shared file changes.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `harnesses.claude`, `.codex`, `.pi` | `true` | `false`: `init` and `connect` set that harness up no more. An earlier connection is left as it was; `wisdom disconnect` removes all of Wisdom's. |
+| `paths.claude`, `.codex`, `.pi` | the installed one | Another installation, as `--claude-bin`, `--codex-bin` and `--pi-entry` do, for setup, `track`, `doctor` and the guide writer. A name is looked up on PATH; a path is taken from the project's folder. Pi's is its CLI's `.js` file. |
+| `skill` | `true` | `false`: Wisdom's reading skill is taken out of each place it went, and no command puts it back. |
+| `mcp` | `true` | `false`: tracked Claude Code and Codex sessions start without the read-only `ledger` tool. Connected sessions never get it. |
+| `daemon.port` | `7434` | The first port the daemon tries; when another project holds it, the next free pair. `--port` still asks for one port exactly. |
+| `daemon.dashboard` | `true` | `false` starts the daemon without the dashboard, as `--no-dashboard` does. |
+| `recording.idleMinutes` | `10` | A session with no event this long, and no tool running, is closed; its next event continues it. Read when a session starts being watched. |
+| `recording.maxFileMB` | `1` | A file bigger than this, 1 to 16, has its change recorded as a gap, without its contents. |
+| `recording.ignore` | none | Files or folders, from the project's top, never recorded: as `.wisdomignore` (still read too) takes them, with no `*` or `..`. |
+| `recording.skipFolders` | none | Folder names skipped anywhere, besides the built-in ones ([limitations](limitations.md#files)), such as `target`, `vendor` or `coverage`. A session's manifest keeps what it was recorded with. |
+| `guides.on` | on in team mode, off in local | Whether a model writes your commit guides. `wisdom guide on\|off` writes it, keeping the rest of the file. |
+| `guides.model` | `claude-haiku-5-5` | The model your commit guides are written with, through your Claude Code. In team mode, `guides.model` in `wisdom-team.json` wins. |
+| `guides.timeoutSeconds` | `150` | How long one guide may take to write, 30 to 300. |
+| `guides.turns` | `30` | How many steps the Claude Code writer may take reading the sessions, 5 to 60. Fewer is cheaper; too few can leave a guide unwritten. |
+| `guides.extra` | none | Your own words, added after the writer's rules. Wisdom's check of the guide is the same. |
+| `handoff.longSessionTokens` | `150000` | A session that has used more tokens than this gets a note: a new session starts lighter. |
+| `handoff.extra` | none | Your own words, added to every handoff prompt as `This project also asks: …`, before its last part. That part always stands: with `--emit`, change nothing, even if asked above. |
+| `share.secrets` | `ask` | What `share` and `export` do with what the check finds when no flag says: `ask`, `redact` or `keep`, said in a line when the file chose. |
+| `prices.<model>` | the built-in table | Codex cost estimates, `{ input, cached, output }` in US dollars per million tokens. Read when the daemon starts. |
+
+`wisdom init` also shows Wisdom's handoff prompt and the commit guide prompt in the file, as comments, made by the same code that makes every real one, with example facts.
+
+- **A flag wins** over the file, and the file over the default. Without the file, or with only comments, everything is the default.
+- **A mistake is named, never half-read.** With a setting Wisdom does not know (a typo such as `dashbord`), a wrong value or broken YAML, every setting is its default until it is fixed, so recording never stops. Each command that reads the file says why, `init` and `connect` say so too, and `wisdom doctor` reports it as a problem. Hooks never read the file.
+- **Running `init` or `connect` again** refreshes a file that still holds only defaults, so a newer Wisdom's defaults show. A file with a setting of your own is never rewritten.
 
 ## Files
 
 ```text
+wisdom.yaml                    # Your settings for this project (see Settings); git ignores it
 .wisdom/
   wisdom.json                  # Marks the project; written by wisdom init
   daemon.json                  # Local connection details; do not commit
@@ -281,5 +314,4 @@ To exclude files from observation, add `.wisdomignore` to the project: relative 
 ## Privacy
 
 All generated data stays local. Native transcripts and hook payloads are preserved without redaction and may contain sensitive content. `.wisdom/` also holds each harness's login (such as `.wisdom/harnesses/claude-code/home/.credentials.json`).
-
 `wisdom init` and `wisdom connect` list `.wisdom/` in `.git/info/exclude`, your clone's own ignore file, so no file the project shares changes (outside a git repository, in `.gitignore`). That only keeps it out of git. Leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.

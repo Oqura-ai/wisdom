@@ -3,7 +3,7 @@ import path from 'node:path';
 import { writeJson } from '../storage/ledger.js';
 import { harnessHome } from '../core/paths.js';
 import { trackedByGit } from './connect.js';
-import { hookState, installSkill, settingsFile, settingsFiles, skillState, type Place } from '../harnesses/launch.js';
+import { hookState, placeSkill, settingsFile, settingsFiles, skillState, type Place } from '../harnesses/launch.js';
 import { connectClaudeCode, installClaudeCode } from '../harnesses/claude-code/launch.js';
 import { connectCodex, installCodex } from '../harnesses/codex/launch.js';
 import { connectPi, installPi } from '../harnesses/pi/launch.js';
@@ -64,7 +64,7 @@ export function repair(dataDir: string, now = new Date()): { backup: Backup; cod
   writeJson(path.join(folder, 'backup.json'), backup);
   for (const { harness, place } of targets) {
     writers[harness][place](dataDir);
-    if (place === 'project') installSkill(path.dirname(path.dirname(skillFolder(dataDir, harness, place))));
+    if (place === 'project') placeSkill(path.dirname(path.dirname(skillFolder(dataDir, harness, place))), dataDir);
   }
   return { backup, codexReview: targets.some(target => target.harness === 'codex' && target.problem === 'hooks') };
 }

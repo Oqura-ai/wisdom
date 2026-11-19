@@ -8,8 +8,13 @@ import { createInterface } from 'node:readline/promises';
 import { call, connectionAt, ensureDaemon, startDetached } from './service/client.js';
 import { startDaemon, type Connection } from './service/daemon.js';
 import { diagnose, formatChecks, wisdomVersion } from './setup/doctor.js';
-import { harnessByCommand, planHandoff } from './sessions/handoff.js';
-import { connect, disconnect, ignoreDataFolder, type Connectable } from './setup/connect.js';
+import { handoffPrompt, harnessByCommand, planHandoff } from './sessions/handoff.js';
+import { connect, disconnect, ignoreDataFolder, ignoreSettingsFile, type Connectable } from './setup/connect.js';
+import { usePrices } from './read/prices.js';
+import { guidePrompt } from './team/writer.js';
+import type { CommitRecord } from './team/commits.js';
+import type { SessionStore } from './storage/store.js';
+import { DEFAULT_MODEL, harnessOn, harnessPath, SETTINGS_FILE, settingsOrDefaults, shownAs, writeSettings, type Settings } from './core/settings.js';
 import { planClone } from './sessions/clone.js';
 import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share/share.js';
 import { redactSecrets } from './share/secrets.js';
@@ -33,6 +38,8 @@ Set up
   wisdom disconnect               Stop that, taking out what connect added; recordings are kept
   wisdom init                     Record agents started with wisdom track, each with its own login here
   wisdom doctor                   Check that everything is working
+  wisdom.yaml                     Your settings for the project: init and connect write it, with
+                                  every default; change a line to change one
 
 Run an agent
   wisdom track claude|codex|pi    Start an agent in this project, recording
@@ -58,8 +65,9 @@ Team mode (a repository with wisdom-team.json)
   wisdom team hooks on|off        Wisdom's git hooks: a link line on each commit, its record and
                                   guide written after it, and both sent with your push (init and
                                   connect turn them on in a team-mode repository)
-  wisdom guide on|off             Whether a model (Haiku 5.5) writes a guide after each commit,
-                                  reading its sessions since your last commit. Team mode: on by
+  wisdom guide on|off             Whether a model (Haiku 5.5, or guides.model in wisdom.yaml)
+                                  writes a guide after each commit, reading its sessions since
+                                  your last commit. Team mode: on by
                                   default; off, Wisdom writes a plain guide from the record.
                                   Local mode: off by default; on installs one post-commit hook,
                                   changes no commit message and pushes nothing
@@ -176,7 +184,10 @@ async function main(): Promise<void> {
   if (stale.length) console.error(`Wisdom's hooks for ${stale.join(', ')} point to a Wisdom build that has moved, so they cannot run. Run: wisdom init`);
   if (command === 'daemon') {
     if (first === 'run') {
-      const daemon = await runDaemon(dataDir, port, !values['no-dashboard']);
+      // Hooks start the daemon too, so a broken wisdom.yaml means the defaults here, never no daemon.
+      const { daemon: chosen, prices } = settingsOrDefaults(path.dirname(dataDir));
+      usePrices(prices);
+      const daemon = await runDaemon(dataDir, port, !values['no-dashboard'] && chosen?.dashboard !== false, chosen?.port);
       console.error(`Wisdom listening at ${daemon.connection.url}; data: ${dataDir}`);
       const viewer = (await call(daemon.connection, '/health')).dashboard;
       console.error(viewer.url ? `Dashboard: ${viewer.url}` : `Dashboard not started: ${viewer.reason}`);
@@ -252,13 +263,13 @@ async function stopDaemon(dataDir: string): Promise<void> {
   console.log(fs.existsSync(file) ? 'Wisdom is stopping.' : 'Wisdom stopped.');
 }
 
-/** The daemon's default port is 7434; when another project's daemon holds it, the next
- * free pair is used (daemon.json says which). An explicit --port is used as given.
+/** The daemon's first port is 7434, or wisdom.yaml's daemon.port; when another project's daemon
+ * holds it, the next free pair is used (daemon.json says which). An explicit --port is used as given.
  */
-async function runDaemon(dataDir: string, port: number | undefined, dashboard: boolean) {
-  for (let candidate = port ?? 7434; ; candidate += 2) {
+async function runDaemon(dataDir: string, port: number | undefined, dashboard: boolean, first = 7434) {
+  for (let candidate = port ?? first; ; candidate += 2) {
     try { return await startDaemon(dataDir, candidate, { dashboardPort: dashboard && candidate ? candidate + 1 : undefined }); }
-    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= 7434 + 40) throw error; }
+    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= first + 40) throw error; }
   }
 }
 
@@ -266,14 +277,17 @@ async function runDaemon(dataDir: string, port: number | undefined, dashboard: b
  * harness's home there, and a running daemon. Running it again repairs the hooks.
  */
 async function init(project: string, values: any, port?: number): Promise<void> {
-  const { dataDir, fresh } = makeProject(project);
+  const { dataDir, fresh, settings } = makeProject(project);
   console.log(fresh ? `Wisdom is set up in ${project}` : `Wisdom was already set up in ${project}. Its hooks and skills are refreshed.`);
+  if (settings) console.log(settings);
   teamHooks(project, dataDir);
   const known = fresh ? undefined : movedFrom(dataDir);
   if (known) console.log(`This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
   console.log('\nStart an agent:');
-  const found = installedHarnesses(values);
+  const chosen = settingsOrDefaults(project);
+  const found = installedHarnesses(values, project, chosen);
   const installed = (harness: Connectable, install: () => unknown, next: string) => {
+    if (!harnessOn(chosen, harness)) { console.log(`  ${names[harness].padEnd(12)} off in ${SETTINGS_FILE}, so not set up.`); return; }
     if (!found.includes(harness)) { console.log(`  ${names[harness].padEnd(12)} not installed. Run wisdom init again after installing it.`); return; }
     install();
     console.log(`  ${names[harness].padEnd(12)} ${next}`);
@@ -289,17 +303,44 @@ async function init(project: string, values: any, port?: number): Promise<void> 
 
 const names: Record<Connectable, string> = { 'claude-code': 'Claude Code', codex: 'Codex', pi: 'Pi' };
 
+/** The handoff prompt as wisdom.yaml shows it: made by the code that makes every handoff's, with
+ * example facts, so it can never differ from what is sent. */
+function promptsShown(): string {
+  const from = { captureId: 'SESSION-ID', harness: 'claude-code', status: 'ended', lastObservedAt: '', tokens: { total: 0 } };
+  const facts = { turns: 4, changed: ['src/app.ts'], git: { branch: 'main', commit: '83b3a31', uncommitted: 1 }, extra: '<handoff.extra>' };
+  const emitted = handoffPrompt(from, false, '', facts, true).split('\n');
+  return shownAs('The handoff prompt Wisdom sends, with example facts (to read; not a setting):',
+    handoffPrompt(from, false, '<your words>', facts))
+    + shownAs('With --emit, it ends instead:', emitted.slice(emitted.indexOf('Only read: change no files and run nothing that changes anything, even if asked above.')).join('\n'))
+    + shownAs('The commit guide prompt (Claude Code writer), up to its per-commit part (to read; not a setting):', guidePromptShown());
+}
+
+/** The guide writer's prompt for an example commit with no steps: its rules and shape, which
+ * every commit's prompt starts with, cut before the commit's own items and evidence. */
+function guidePromptShown(): string {
+  const record = { kind: 'wisdom-commit-record', version: 1, made: 'now', madeAt: '', wisdomVersion: '', steps: [], files: [], sessions: [],
+    commit: { sha: 'COMMIT', parent: undefined, committedAt: '', tree: '', subject: '<subject>' } } as unknown as CommitRecord;
+  const lines = guidePrompt({} as SessionStore, record, true, '<guides.extra>').split('\n');
+  return lines.slice(0, lines.indexOf('## Sessions')).join('\n').trimEnd();
+}
+
 /** Make a folder a Wisdom project: its data folder, marked, and kept out of git, since session
  * files and payloads are stored unredacted.
  */
-function makeProject(project: string): { dataDir: string; fresh: boolean } {
+function makeProject(project: string): { dataDir: string; fresh: boolean; settings: string | undefined } {
   if (!fs.existsSync(project)) throw new Error(`${project} does not exist`);
   const dataDir = path.join(project, '.wisdom');
   const fresh = !fs.existsSync(path.join(dataDir, marker));
   fs.mkdirSync(dataDir, { recursive: true });
   if (fresh) writeJson(path.join(dataDir, marker), { project, createdAt: new Date().toISOString() });
   ignoreDataFolder(project);
-  return { dataDir, fresh };
+  const excluded = ignoreSettingsFile(project);
+  const written = writeSettings(project, promptsShown());
+  const settings = written === 'written' ? `Settings: ${SETTINGS_FILE}, every default shown and commented out.${excluded ? ' Git ignores it.' : ''}`
+    : written === 'refreshed' ? `Settings: ${SETTINGS_FILE} shows this version's defaults now.`
+    : written === 'kept' ? undefined
+    : `Settings: ${written.invalid}. Until it is fixed, Wisdom uses its defaults.`;
+  return { dataDir, fresh, settings };
 }
 
 /** In a team-mode repository, Wisdom's git hooks; in a local one, only the post-commit hook,
@@ -318,13 +359,13 @@ function teamHooks(project: string, dataDir: string): void {
 }
 
 /** The harnesses that run here: each is asked for its version. */
-function installedHarnesses(values: any): Connectable[] {
+function installedHarnesses(values: any, project: string, settings: Settings): Connectable[] {
   const programs: Record<Connectable, () => Command> = {
-    'claude-code': () => resolveCommand(values['claude-bin'] ?? 'claude'),
-    codex: () => resolveCommand(values['codex-bin'] ?? 'codex'),
-    pi: () => piCommand(values['pi-entry']),
+    'claude-code': () => resolveCommand(values['claude-bin'] ?? harnessPath(project, settings, 'claude-code') ?? 'claude'),
+    codex: () => resolveCommand(values['codex-bin'] ?? harnessPath(project, settings, 'codex') ?? 'codex'),
+    pi: () => piCommand(values['pi-entry'] ?? harnessPath(project, settings, 'pi')),
   };
-  return (Object.keys(programs) as Connectable[]).filter(harness => {
+  return (Object.keys(programs) as Connectable[]).filter(harness => harnessOn(settings, harness)).filter(harness => {
     try { const { command, args } = programs[harness](); execFileSync(command, [...args, '--version'], { windowsHide: true, stdio: 'ignore' }); return true; }
     catch { return false; }
   });
@@ -332,9 +373,10 @@ function installedHarnesses(values: any): Connectable[] {
 
 /** Record plain `claude`, `codex` and `pi` in this project with the person's own login. */
 async function connectProject(project: string, values: any, port?: number): Promise<void> {
-  const { dataDir, fresh } = makeProject(project);
+  const { dataDir, fresh, settings } = makeProject(project);
   teamHooks(project, dataDir);
-  const found = installedHarnesses(values);
+  const chosen = settingsOrDefaults(project);
+  const found = installedHarnesses(values, project, chosen);
   const result = connect(dataDir, found);
   console.log(`${fresh ? 'Wisdom is set up in' : 'Wisdom is connected in'} ${project}. Start your agent here as you always do, with your own login:\n`);
   const next: Record<Connectable, string> = {
@@ -343,16 +385,19 @@ async function connectProject(project: string, values: any, port?: number): Prom
     pi: 'pi       (start it in this folder, and trust this project when it asks)',
   };
   for (const harness of Object.keys(names) as Connectable[]) {
-    const line = result.connected.includes(harness) ? next[harness]
+    const line = !harnessOn(chosen, harness)
+      ? `off in ${SETTINGS_FILE}, so not set up.${result.kept.includes(harness) ? ' Its earlier connection was left as it was; wisdom disconnect removes all of Wisdom\'s.' : ''}`
+      : result.connected.includes(harness) ? next[harness]
       : result.kept.includes(harness) ? `not found now, so its earlier connection was left as it was (git still ignores its files). Run wisdom connect again where ${harness === 'claude-code' ? 'claude' : harness} is on PATH to refresh it.`
       : !found.includes(harness) ? 'not installed. Run wisdom connect again after installing it.'
       : `not connected: git tracks ${path.relative(project, settingsFile(dataDir, harness, 'project'))}, and Wisdom will not put this machine's paths in it. Use wisdom track ${harness === 'claude-code' ? 'claude' : harness}.`;
     console.log(`  ${names[harness].padEnd(12)} ${line}`);
   }
-  console.log(`\nWisdom added its hook and reading skill to: ${result.files.map(file => path.relative(project, file)).join(', ') || 'nothing'}.`);
+  console.log(`\nWisdom added its hook${chosen.skill === false ? '' : ' and reading skill'} to: ${result.files.map(file => path.relative(project, file)).join(', ') || 'nothing'}.`);
   console.log(result.excluded ? 'They are listed in .git/info/exclude, so git ignores them and they never reach your teammates. wisdom disconnect removes them.'
     : 'This folder is not a git repository, so nothing was excluded from git. wisdom disconnect removes them.');
   await ensureDaemon(dataDir, port);
+  if (settings) console.log(settings);
   console.log('Keep .wisdom/ private: it holds your sessions, unredacted. Git ignores it, but leave it out of zips and synced folders.');
 }
 
@@ -377,9 +422,12 @@ async function track(harness: string | undefined, values: any, args: string[], d
   if ((values['codex-bin'] || values['setup-hooks'] || values['trust-all-hooks']) && harness !== 'codex') {
     throw new Error('--codex-bin, --setup-hooks and --trust-all-hooks apply only to track codex');
   }
-  const launch: Launch = harness === 'pi' ? launchPi({ entry: values['pi-entry'], args, dataDir, place })
-    : harness === 'claude' ? launchClaudeCode({ command: values['claude-bin'], args, dataDir, cliPath, place })
-    : harness === 'codex' ? await launchCodex({ command: values['codex-bin'], args, dataDir, cliPath, cwd, setupHooks: values['setup-hooks'], trustAllHooks: values['trust-all-hooks'], place })
+  // Another installation: the flag, or else the one wisdom.yaml names.
+  const project = path.dirname(path.resolve(dataDir));
+  const chosen = settingsOrDefaults(project);
+  const launch: Launch = harness === 'pi' ? launchPi({ entry: values['pi-entry'] ?? harnessPath(project, chosen, 'pi'), args, dataDir, place })
+    : harness === 'claude' ? launchClaudeCode({ command: values['claude-bin'] ?? harnessPath(project, chosen, 'claude-code'), args, dataDir, cliPath, place })
+    : harness === 'codex' ? await launchCodex({ command: values['codex-bin'] ?? harnessPath(project, chosen, 'codex'), args, dataDir, cliPath, cwd, setupHooks: values['setup-hooks'], trustAllHooks: values['trust-all-hooks'], place })
     : (() => { throw new Error('Use: wisdom track pi|claude|codex'); })();
   if (launch.setupOnly) console.error('Open /hooks in Codex, review and trust the Wisdom hooks, then quit and run wisdom track codex. '
     + 'Until they are trusted, sessions are read from their files only.');
@@ -399,17 +447,27 @@ function withoutCaller(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return rest;
 }
 
+/** What to do with possible secrets: a flag, else wisdom.yaml's share.secrets, else ask. A choice
+ * the file made is said, so nothing is redacted or kept without a line saying why. */
+function secretsChoice(values: any, settings: Settings, found: number, say: (line: string) => void): { redact?: boolean; keep?: boolean } {
+  if (values.redact || values['keep-secrets']) return { redact: values.redact, keep: values['keep-secrets'] };
+  const chosen = settings.share?.secrets ?? 'ask';
+  if (chosen !== 'ask' && found) say(chosen === 'redact' ? `Redacting them all, as ${SETTINGS_FILE} says (share.secrets: redact).` : `Keeping them as they are, as ${SETTINGS_FILE} says (share.secrets: keep).`);
+  return { redact: chosen === 'redact', keep: chosen === 'keep' };
+}
+
 /** Write one file a teammate can read: chosen sessions, their evidence, no logins. What looks
  * like a secret is shown first, and is redacted in the file, kept, or the share cancelled.
  */
 async function share(refs: string[], values: any, dataDir: string, port?: number): Promise<number> {
   if (!refs.length) throw new Error('Use: wisdom share SESSION... [--out FILE] [--redact | --keep-secrets]');
   if (values.redact && values['keep-secrets']) throw new Error('--redact and --keep-secrets are alternatives; choose one.');
+  const chosen = settingsOrDefaults(path.dirname(path.resolve(dataDir)));
   const draft = await draftShare(await ensureDaemon(dataDir, port), refs);
   if (draft.findings.length) console.log(formatFindings(draft.findings));
   const prompt = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
   let redact;
-  try { redact = await chooseRedactions(draft.findings, { redact: values.redact, keep: values['keep-secrets'] }, prompt && (question => prompt.question(question))); }
+  try { redact = await chooseRedactions(draft.findings, secretsChoice(values, chosen, draft.findings.length, console.log), prompt && (question => prompt.question(question))); }
   finally { prompt?.close(); }
   if (!redact) { console.log('Cancelled. Nothing was written.'); return 1; }
   const out = path.resolve(values.out ?? defaultSharePath(dataDir, draft));
@@ -460,11 +518,12 @@ async function exportMarkdown(ref: string | undefined, values: any, dataDir: str
   const { captureId, markdown } = await call(await ensureDaemon(dataDir, port), '/view', { view: 'markdown', capture: ref });
   // A finding is placed by the turn heading above it.
   const place = (index: number) => [...markdown.slice(0, index).matchAll(/^## (t\d+|Outside any turn)/gm)].at(-1)?.[1] ?? 'header';
+  const chosen = settingsOrDefaults(path.dirname(path.resolve(dataDir)));
   const findings = findSecrets([{ text: markdown, place }]);
   if (findings.length) console.error(formatFindings(findings));
   const prompt = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stderr }) : undefined;
   let redact;
-  try { redact = await chooseRedactions(findings, { redact: values.redact, keep: values['keep-secrets'] }, prompt && (question => prompt.question(question))); }
+  try { redact = await chooseRedactions(findings, secretsChoice(values, chosen, findings.length, console.error), prompt && (question => prompt.question(question))); }
   finally { prompt?.close(); }
   if (!redact) { console.error('Cancelled. Nothing was written.'); return 1; }
   const document = redactSecrets(markdown, new Map(redact.map(finding => [finding.value, finding.kind])));
@@ -594,6 +653,12 @@ function errorText(error: any): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The model a guide of this person's is written with: the team's, else wisdom.yaml's, else Haiku. */
+function guideModel(project: string): string {
+  const model = readPolicy(project)?.guides?.model ?? settingsOrDefaults(project).guides?.model ?? DEFAULT_MODEL;
+  return model === DEFAULT_MODEL ? 'Claude Haiku 5.5' : model;
+}
+
 /** guide, check and team. Settings change files here; sharing asks the daemon, which holds
  * the recordings and teammates' copies. */
 async function teamCommand(command: string, args: string[], values: { remote?: string }, dataDir: string): Promise<number> {
@@ -605,7 +670,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     if (action === 'on' || action === 'off') {
       setGuides(dataDir, action === 'on');
       if (team) {
-        console.log(action === 'on' ? 'A model writes the guides of your commits with agent work, reading their sessions since your previous commit (Claude Haiku 5.5 through your Claude Code, unless wisdom-team.json names another writer).'
+        console.log(action === 'on' ? `A model writes the guides of your commits with agent work, reading their sessions since your previous commit (${guideModel(project)} through your Claude Code, unless wisdom-team.json names another writer).`
           : 'No model writes your commit guides: Wisdom writes a plain one from each commit\'s record, citing the steps that made it and quoting what was asked in their turns. It costs nothing and does not explain why beyond those requests.');
         return 0;
       }
@@ -617,7 +682,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
       }
       try {
         const { dir, chained } = installHooks(project, dataDir, LOCAL_HOOKS);
-        console.log(`After each commit with agent work, a model now writes its guide (Claude Haiku 5.5 through your Claude Code), reading its sessions since your previous commit. `
+        console.log(`After each commit with agent work, a model now writes its guide (${guideModel(project)} through your Claude Code), reading its sessions since your previous commit. `
           + `Wisdom's post-commit hook is in ${dir}${chained.length ? ' (your own post-commit still runs first)' : ''}. `
           + 'Your commit messages are not changed, and nothing is pushed: guides stay in this clone\'s refs/wisdom. Turn it off with: wisdom guide off');
         return 0;

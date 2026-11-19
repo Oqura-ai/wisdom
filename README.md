@@ -61,6 +61,8 @@ wisdom dashboard
 
 The first time in a project, Codex asks you to trust it and to approve Wisdom's hooks in `/hooks`, and Pi asks you to trust it. On Windows PowerShell with scripts blocked, use `wisdom.cmd` and `npm.cmd`.
 
+Your settings for the project are in `wisdom.yaml`, which `wisdom connect` writes with every default shown: the guide model, the dashboard port and what to leave out of recordings. Git ignores it. See [settings](docs/usage.md#settings).
+
 ## Supported agents
 
 | Agent | Tested with | Records through | Notes |

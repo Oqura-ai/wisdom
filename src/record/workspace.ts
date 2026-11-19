@@ -51,7 +51,7 @@ export class Workspace {
     const relative = path.relative(this.root, absolute);
     if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) return null;
     const parts = relative.split(path.sep);
-    if (parts.some(part => scope.excludedDirectories.includes(part))) return null;
+    if (parts.some(part => this.ledger.manifest.scope.excludedDirectories.includes(part))) return null;
     const normalized = parts.join('/');
     if (this.ledger.manifest.scope.excludedPaths.some(prefix => normalized === prefix || normalized.startsWith(prefix + '/'))) return null;
     if (absolute === this.ledger.dir || absolute.startsWith(this.ledger.dir + path.sep)) return null;
@@ -66,7 +66,7 @@ export class Workspace {
       if (!real.startsWith(this.root + path.sep)) { this.ledger.gap('outside-workspace', file); return undefined; }
       const stat = fs.statSync(absolute);
       if (!stat.isFile()) return undefined;
-      if (stat.size > scope.maxFileBytes) { this.ledger.gap('oversize-file', file); return undefined; }
+      if (stat.size > this.ledger.manifest.scope.maxFileBytes) { this.ledger.gap('oversize-file', file); return undefined; }
       if (this.memoryBytes - (this.files.get(file)?.size ?? 0) + stat.size > scope.maxTotalBytes) {
         this.ledger.gap('baseline-memory-limit', file); return undefined;
       }

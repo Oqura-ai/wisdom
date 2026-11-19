@@ -87,7 +87,7 @@ proves nothing.
 | `.wisdom/harnesses/<harness>/<session>/` | A byte copy of the agent's transcript, payloads by hash | Never |
 | `.wisdom/harnesses/<harness>/home/` | The agent's home for `wisdom track` (holds its login) | Never |
 | `.wisdom/daemon.json`, `daemon.log`, `spool/` | The running daemon; events kept while it was down | Never |
-| `.wisdom/config.json` | `guides: true/false` from `wisdom guide on/off` | Never |
+| `wisdom.yaml` | `guides: on: true/false` from `wisdom guide on/off` (git ignores it) | Never |
 | `.wisdom/jobs/`, `jobs.log` | A commit's record and guide job while it runs; its result line | Never |
 | `.wisdom/recorder.json` | A random ID naming your sessions on the remote | Its ID, in ref names |
 | `.wisdom/shared/`, `team-imports.json` | Teammates' sessions, read-only | Never |
@@ -146,7 +146,7 @@ guide · plain, built from the record now, no model · derived, not evidence · 
 | 2.14 | `glance --commit HEAD` twice on a 2.1 commit | Both outputs; the record's version count | The same guide; still one version (reading writes nothing) |
 | 2.15 | `wisdom guide HEAD` (a model guide on request) | Output; the record; `ls-remote` | `Guide written by claude-haiku-5-5 … it passed Wisdom's check`, `Kept in refs/wisdom/records/<sha>, on this machine only`; glance shows it instead of the plain one; nothing on the remote |
 | 2.16 | `wisdom guide` on (a) a commit from before Wisdom ran, (b) a hand-edit commit, (c) a commit whose session you deleted | Output | (a) `No record was kept …`; (b) `… has no recorded agent work …`; (c) `No guide written: the guide must read session …`. No model is called |
-| 2.17 | `wisdom guide on` in local mode | Output; `.git/hooks`; `.wisdom/config.json`; `git status` | Only a `post-commit` hook; `"guides": true`; messages unchanged, nothing pushed |
+| 2.17 | `wisdom guide on` in local mode | Output; `.git/hooks`; `wisdom.yaml`; `git status` | Only a `post-commit` hook; `guides: on: true`; messages unchanged, nothing pushed |
 | 2.18 | With guides on: an agent edits, you commit, then `git push` | The message; `jobs.log`; the record; `ls-remote` | No `Wisdom-Record:`; a `jobs.log` line with writer seconds and cost; the guide in the record; the push sends no Wisdom refs |
 | 2.19 | On a throwaway branch: track a `.husky/` folder, `git config core.hooksPath .husky`, `wisdom guide on` | Output; `git status` | Refuses to write into the tracked folder and prints the `post-commit` line to add. Then `git config --unset core.hooksPath` (it affects every branch) and delete the branch |
 | 2.20 | `wisdom guide off` in local mode; an agent edits; commit | Output; hooks; glance | The hook removed; the plain guide again; earlier model guides kept |

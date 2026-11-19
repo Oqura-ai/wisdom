@@ -4,11 +4,13 @@ import type { Connection } from '../service/daemon.js';
 import { adapter } from '../harnesses/index.js';
 import { differingFiles } from './clone.js';
 import { gitText } from '../team/gitrefs.js';
+import { settingsOrDefaults } from '../core/settings.js';
 
 /** `wisdom track` names harnesses by their command; the ledger by their adapter. */
 export const harnessByCommand: Record<string, string> = { claude: 'claude-code', codex: 'codex', pi: 'pi' };
 
-/** A target this long already fills much of a context window before it reads anything. */
+/** A target that has used this many tokens (or wisdom.yaml's handoff.longSessionTokens) gets a
+ * note: a new session starts lighter. */
 const LONG_SESSION_TOKENS = 150_000;
 
 export interface HandoffSession { captureId: string; harness: string; status: string; lastObservedAt: string; tokens: { total: number }; shared?: object }
@@ -58,6 +60,8 @@ export interface HandoffFacts {
   differing?: string[];
   /** The branch and commit the work is on, and how many files are not committed. */
   git?: { branch: string; commit: string; uncommitted: number };
+  /** The person's own words for every handoff (wisdom.yaml handoff.extra), placed before the last part. */
+  extra?: string;
   /** The handoff was run from inside the sending session, so the words are its own; else a person's. */
   inside?: boolean;
 }
@@ -83,6 +87,8 @@ export function handoffPrompt(from: HandoffSession, resumed: boolean, words = ''
     + (from.status === 'recording' ? ' It is still running: the handoff its newest turn is waiting on is this one.' : ''));
   if (facts.git) lines.push(`The work is on branch ${facts.git.branch} at ${facts.git.commit}, with ${plural(facts.git.uncommitted, 'file')} not committed.`);
   if (facts.differing?.length) lines.push(`Since you last worked here, files you changed are different on disk: ${files(facts.differing)}. Read them before trusting what you remember.`);
+  // Before Wisdom's last part, which always stands: with --emit, "even if asked above" covers these words too.
+  if (facts.extra?.trim()) lines.push('', `This project also asks: ${facts.extra.trim()}`);
   if (!emit) {
     lines.push('', 'Before changing anything, read it. Then say in a few lines what you understood and what you will do first.');
     return lines.join('\n');
@@ -125,6 +131,7 @@ async function projectSessions(connection: Connection): Promise<HandoffSession[]
  */
 export async function planHandoff(connection: Connection, target: string, from: string | undefined, words: string, project: string, self?: string, emit = false): Promise<HandoffPlan> {
   const sessions = await projectSessions(connection);
+  const chosen = settingsOrDefaults(project).handoff ?? {};
   const harness = harnessByCommand[target];
   const existing = harness ? undefined : sessions.find(session => session.captureId === target);
   if (!harness && !existing) {
@@ -143,15 +150,15 @@ export async function planHandoff(connection: Connection, target: string, from: 
   const env = { WISDOM_HANDOFF: JSON.stringify({ id: handoffId, from: source.captureId }) };
   const inside = source.captureId === self;
   if (!existing) {
-    const prompt = handoffPrompt(source, false, words, { ...await recordFacts(connection, source.captureId), git: workspaceGit(project), inside }, emit);
+    const prompt = handoffPrompt(source, false, words, { ...await recordFacts(connection, source.captureId), git: workspaceGit(project), inside, extra: chosen.extra }, emit);
     const [command, ...args] = emit ? background!(prompt) : [target, ...readsAllowed, prompt];
     return { command, args, handoffId, env, prompt, from: source };
   }
 
   const { workspaceRoot, source: targetSource } = await call(connection, '/resolve', { session: existing.captureId });
-  const prompt = handoffPrompt(source, true, words, { ...await recordFacts(connection, source.captureId, { captureId: existing.captureId, workspaceRoot }), git: workspaceGit(workspaceRoot), inside }, emit);
+  const prompt = handoffPrompt(source, true, words, { ...await recordFacts(connection, source.captureId, { captureId: existing.captureId, workspaceRoot }), git: workspaceGit(workspaceRoot), inside, extra: chosen.extra }, emit);
   const [command, ...args] = emit ? background!(prompt, existing.captureId) : [...resume(existing.captureId), ...readsAllowed, prompt];
-  const note = existing.tokens.total > LONG_SESSION_TOKENS
+  const note = existing.tokens.total > (chosen.longSessionTokens ?? LONG_SESSION_TOKENS)
     ? `${existing.captureId} is long (${existing.tokens.total.toLocaleString('en-US')} tokens). A new session starts lighter: wisdom handoff ${command} --from ${source.captureId}`
     : undefined;
   return { command, args, cwd: workspaceRoot, handoffId, env, prompt, from: source, target: existing, targetSource, note };

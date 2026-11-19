@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { home, hookCommand, installSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, withHooks, withoutHooks, type Command, type Launch, type Place } from '../launch.js';
+import { home, hookCommand, mcpOn, placeSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, withHooks, withoutHooks, type Command, type Launch, type Place } from '../launch.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
   'PostToolUseFailure', 'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact'] as const;
@@ -22,7 +22,7 @@ function writeHooks(dataDir: string, place: Place): void {
 export function installClaudeCode(dataDir: string): string {
   const folder = home(dataDir, 'claude-code');
   writeHooks(dataDir, 'home');
-  installSkill(folder);
+  placeSkill(folder, dataDir);
   return folder;
 }
 
@@ -52,7 +52,8 @@ export function launchClaudeCode(options: { command?: string; args: string[]; da
   try { program = resolveCommand(name); execFileSync(program.command, [...program.args, '--version'], { encoding: 'utf8', windowsHide: true }); }
   catch { throw new Error(`Cannot run Claude Code (${name}). Install it or pass --claude-bin.`); }
   const mcp = { mcpServers: { wisdom: { command: process.execPath, args: [options.cliPath, 'mcp', '--data', options.dataDir] } } };
+  const withMcp = mcpOn(options.dataDir);
   return { command: program.command, env: options.place === 'project' ? {} : { CLAUDE_CONFIG_DIR: installClaudeCode(options.dataDir) },
     // `--mcp-config` takes several values: written apart, it would also take a prompt that follows.
-    args: [...program.args, `--mcp-config=${JSON.stringify(mcp)}`, ...options.args] };
+    args: [...program.args, ...(withMcp ? [`--mcp-config=${JSON.stringify(mcp)}`] : []), ...options.args] };
 }

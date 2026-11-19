@@ -153,7 +153,7 @@ are installed, the daemon's own commit watcher stands aside.
 | `retentionDays` | none | `wisdom team prune` removes pushed sessions older than this. |
 | `keepReferenced` | `true` | Prune keeps sessions a pushed record still names. |
 | `check` | none | Your own command, run on each session file before it is pushed, with the file's path last. It may change the file; a non-zero exit stops that session's upload. Wisdom's own filter is basic. Add your rules here. A session held back this way is tried again at each push, which says so in one line with a short cause (refused, could not run here, timed out), never the command's own output. |
-| `guides.model` | `claude-haiku-5-5` | The model that writes guides. |
+| `guides.model` | `claude-haiku-5-5` | The model that writes guides. Unset here, each person's own `guides.model` in [`wisdom.yaml`](usage.md#settings) is used. |
 | `guides.command` | Claude Code (`claude -p --model <model>`, with only Wisdom's ledger tool) | Any other writer: it reads the prompt on stdin, prints the guide, and finds the model in `WISDOM_GUIDE_MODEL`. Use it for Codex, Pi, an API key, or a local model. It gets the cited steps already opened (up to 6,000 characters each, 60,000 in all) and may not use tools, so it does not read the rest of the window. The guide names its writer as the command followed by `(model not named)`, since the command picks its own model; set `guides.model` as well and it reads `<model> via <command>`. |
 
 ## What a guide costs

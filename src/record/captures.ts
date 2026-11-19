@@ -9,6 +9,7 @@ import { adapter, harnessNames } from '../harnesses/index.js';
 import type { NativeEntry } from '../harnesses/types.js';
 import { surfaceText } from '../core/content.js';
 import { GUIDE_OPENING } from '../team/plain.js';
+import { settingsOrDefaults } from '../core/settings.js';
 import { cloneNote, harnessHome, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch, type Connected } from '../core/paths.js';
 
 interface RunningCapture {
@@ -23,10 +24,12 @@ interface RunningCapture {
   awaiting: Set<string>;
   lastSeen: number;
   lastReconcile: number;
+  /** IDLE_MS, or wisdom.yaml's recording.idleMinutes when the session started being watched. */
+  idleMs: number;
 }
 
-/** A session with no event for this long, and no tool running, stops being watched.
- * Its next event continues it. Hooks have no heartbeat, so silence is the only signal. */
+/** A session with no event for this long, and no tool running, stops being watched (by default:
+ * see idleMs). Its next event continues it. Hooks have no heartbeat, so silence is the only signal. */
 const IDLE_MS = 10 * 60_000;
 /** A session file unchanged this long, with no record, is a session nobody reported. */
 const QUIET_MS = 2 * 60_000;
@@ -197,6 +200,9 @@ export class Captures {
     if (excludedPaths.some(value => value.includes('*') || value.startsWith('/') || value.split('/').includes('..'))) {
       throw new Error('.wisdomignore accepts relative file/directory paths, without globs or ..');
     }
+    // wisdom.yaml's recording settings join .wisdomignore; the manifest keeps what this session used.
+    const recording = settingsOrDefaults(path.dirname(path.resolve(this.dataDir))).recording;
+    excludedPaths.push(...recording?.ignore ?? []);
     // Recorder files must never become evidence of the agent editing its project.
     const dataRelative = path.relative(fs.realpathSync(input.workspaceRoot), this.dataDir).replaceAll('\\', '/');
     if (!dataRelative) throw new Error('The daemon data directory cannot be the tracked workspace root.');
@@ -217,7 +223,7 @@ export class Captures {
       workspaceRoot: fs.realpathSync(input.workspaceRoot), status: found ? 'closed' : 'recording',
       startedAt: lines?.dated.find(([id]) => !id || !copiedIds.has(id))?.[1] ?? (file ? new Date(Math.min(file.birthtimeMs, file.mtimeMs)).toISOString() : now),
       ...(found ? { endedAt: file ? file.mtime.toISOString() : now, endReason: 'found-in-session-file' } : {}),
-      scope: { ...scope, excludedPaths } };
+      scope: { ...scope, ...recording?.maxFileMB ? { maxFileBytes: recording.maxFileMB * 1024 * 1024 } : {}, excludedDirectories: [...new Set([...scope.excludedDirectories, ...recording?.skipFolders ?? []])], excludedPaths } };
     const ledger = new Ledger(this.captureDir(manifest), manifest, this.database, true);
     this.ledgers.set(id, ledger);
     if (found) {
@@ -291,7 +297,8 @@ export class Captures {
 
   private watch(ledger: Ledger, cwd?: string): void {
     this.running.set(ledger.manifest.captureId, { ledger, workspace: new SessionFiles(ledger, cwd), active: new Map(), turns: new Map(),
-      transcriptFinished: new Set(), awaiting: new Set(), lastSeen: Date.now(), lastReconcile: Date.now() });
+      transcriptFinished: new Set(), awaiting: new Set(), lastSeen: Date.now(), lastReconcile: Date.now(),
+      idleMs: (settingsOrDefaults(path.dirname(path.resolve(this.dataDir))).recording?.idleMinutes ?? IDLE_MS / 60_000) * 60_000 });
   }
 
   /** The turns a record already has, so a session continuing after a restart keeps its
@@ -487,7 +494,7 @@ export class Captures {
     this.drainSpool();
     for (const [id, capture] of this.running) {
       try {
-        if (!capture.active.size && Date.now() - capture.lastSeen > IDLE_MS) { this.close(id, 'idle'); continue; }
+        if (!capture.active.size && Date.now() - capture.lastSeen > capture.idleMs) { this.close(id, 'idle'); continue; }
         capture.ledger.syncSource();
         if (!capture.active.size) {
           capture.workspace.flush();

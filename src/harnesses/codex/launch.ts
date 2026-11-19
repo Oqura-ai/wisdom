@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { home, hookCommand, installSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, withHooks, withoutHooks, type Command, type Launch, type Place } from '../launch.js';
+import { home, hookCommand, mcpOn, placeSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, withHooks, withoutHooks, type Command, type Launch, type Place } from '../launch.js';
 import { userHome } from '../index.js';
 
 export const hookEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
@@ -26,7 +26,7 @@ function writeHooks(dataDir: string, place: Place): string {
 export function installCodex(dataDir: string): { home: string; command: string } {
   const folder = home(dataDir, 'codex');
   const command = writeHooks(dataDir, 'home');
-  installSkill(folder);
+  placeSkill(folder, dataDir);
   return { home: folder, command };
 }
 
@@ -166,7 +166,7 @@ export async function launchCodex(options: {
     console.error('Note: the node_repl MCP server is enabled. Commands it runs inside one call are invisible to hooks; '
       + 'Wisdom still records their file changes. Add -- -c mcp_servers.node_repl.enabled=false to see each command.');
   }
-  const mcp = ['-c', `mcp_servers.wisdom.command=${JSON.stringify(process.execPath)}`, '-c',
+  const mcp = !mcpOn(options.dataDir) ? [] : ['-c', `mcp_servers.wisdom.command=${JSON.stringify(process.execPath)}`, '-c',
     `mcp_servers.wisdom.args=${JSON.stringify([options.cliPath, 'mcp', '--data', options.dataDir])}`];
   return { command, env, args: [...program.args, '-C', options.cwd, ...mcp,
     ...(options.trustAllHooks ? ['--dangerously-bypass-hook-trust'] : []), ...options.args] };

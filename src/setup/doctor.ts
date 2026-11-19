@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { call } from '../service/client.js';
 import { CAPTURE_API, type Connection } from '../service/daemon.js';
 import { harnessHome, movedFrom, spoolDir } from '../core/paths.js';
+import { harnessPath, readSettings, SETTINGS_FILE, settingsOrDefaults } from '../core/settings.js';
 import { hookCommand, hookState, resolveCommand, skillState, type Command, type Place } from '../harnesses/launch.js';
 import { hookEvents, inspectHooks, requireTrustedHooks } from '../harnesses/codex/launch.js';
 import { piCommand } from '../harnesses/pi/launch.js';
@@ -34,6 +35,8 @@ function versionOf(program: () => Command): string | undefined {
  */
 export async function diagnose(dataDir: string, bins: { claude?: string; codex?: string; pi?: () => string | undefined } = {}): Promise<Check[]> {
   const project = path.dirname(path.resolve(dataDir));
+  // Quiet: its Settings check below names any problem once.
+  const settings = settingsOrDefaults(project, true);
   const checks = [await daemonCheck(dataDir)];
   checks.push(dashboardCheck(dataDir, checks[0]!));
   const version = (key: keyof typeof testedWith, found: string) => found === testedWith[key] || found === 'unknown'
@@ -53,15 +56,16 @@ export async function diagnose(dataDir: string, bins: { claude?: string; codex?:
       : { level: 'note', name, detail: 'not installed' };
     if (!found) return { level: 'note', name, detail: 'hooks are set up, but the harness itself was not found' };
     const differs = found !== testedWith[key] && found !== 'unknown';
+    if (settings.skill === false) return { level: differs ? 'note' : 'ok', name, detail: `hooks in place${where}, skill off in ${SETTINGS_FILE}, ${version(key, found)}` };
     const skill = skillState(dataDir, key, place);
     if (skill !== 'current') return { level: 'note', name, detail: `hooks in place${where}, ${version(key, found)}. Its reading skill is ${skill}, so its agents may not know how to read recordings.`, fix };
     return { level: differs ? 'note' : 'ok', name, detail: `hooks in place${where}, skill installed, ${version(key, found)}` };
   };
-  checks.push(harness('Claude Code', 'claude-code', versionOf(() => resolveCommand(bins.claude ?? 'claude'))));
-  const codexBin = bins.codex ?? 'codex';
+  checks.push(harness('Claude Code', 'claude-code', versionOf(() => resolveCommand(bins.claude ?? harnessPath(project, settings, 'claude-code') ?? 'claude'))));
+  const codexBin = bins.codex ?? harnessPath(project, settings, 'codex') ?? 'codex';
   const codex = harness('Codex', 'codex', versionOf(() => resolveCommand(codexBin)));
   checks.push(codex.detail.startsWith('hooks in place') ? await codexTrust(codex, codexBin, dataDir, project, placeOf('codex')) : codex);
-  checks.push(harness('Pi', 'pi', (bins.pi ?? (() => versionOf(piCommand)))()));
+  checks.push(harness('Pi', 'pi', (bins.pi ?? (() => versionOf(() => piCommand(harnessPath(project, settings, 'pi')))))()));
 
   const waiting = countFiles(spoolDir(dataDir));
   checks.push(waiting
@@ -69,6 +73,10 @@ export async function diagnose(dataDir: string, bins: { claude?: string; codex?:
     : { level: 'ok', name: 'Spool', detail: 'no events waiting' });
   const moved = movedFrom(dataDir);
   if (moved) checks.push({ level: 'note', name: 'Project', detail: `moved from ${moved}. Recorded sessions follow it when the daemon next starts.` });
+  if (fs.existsSync(path.join(project, SETTINGS_FILE))) {
+    try { readSettings(project); checks.push({ level: 'ok', name: 'Settings', detail: `${SETTINGS_FILE} reads correctly` }); }
+    catch (error) { checks.push({ level: 'problem', name: 'Settings', detail: `${error instanceof Error ? error.message : error}. Until it is fixed, Wisdom uses its defaults.`, fix: `edit ${SETTINGS_FILE}` }); }
+  }
   return checks;
 }
 
