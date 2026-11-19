@@ -29,6 +29,7 @@ Harness adapters (Pi extension, Claude Code/Codex hooks) + native JSONL + worksp
 
 .wisdom/wisdom.json                                           (marks the project; written by wisdom init)
 .wisdom/spool/<harness>/<session>/<event>.json                (events a hook kept while the daemon was down)
+.wisdom/handoffs/<handoff>.txt, .log                          (a background handoff's answer and log)
 .wisdom/harnesses/<harness>/home/                             (the harness's own files: settings with Wisdom's hooks, login, native sessions, the source of truth)
 .wisdom/harnesses/<harness>/<capture>/native-session.jsonl    (native evidence)
 .wisdom/harnesses/<harness>/<capture>/payloads/<sha256>       (hook bodies / patches)

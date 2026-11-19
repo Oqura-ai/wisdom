@@ -18,6 +18,7 @@ export const pi: HarnessAdapter = {
   homeEnv: 'PI_CODING_AGENT_DIR',
   defaultHome: ['.pi', 'agent'],
   resume: sessionId => ['pi', '--session', sessionId],
+  // No `background`: Pi reads recordings only through its shell, which could also change files.
   toolTarget: (_toolName, input) => typeof input?.path === 'string' ? input.path : undefined,
   isDirectFileTool: toolName => ['read', 'edit', 'write'].includes(toolName),
   toolView: toolName => ['edit', 'write'].includes(toolName) ? 'patch' : toolName === 'read' ? 'file' : 'full',

@@ -88,7 +88,8 @@ Every harness is an adapter; none is central.
   would log the person out of their own tool. A project's copy of the hook stands aside in
   a tracked session, so no session is recorded twice.
 - **Never blocks, never loses.** A hook never stops the harness. An event the daemon
-  cannot take is kept in the spool and recorded later, marked late; the hook warns.
+  cannot take is kept in the spool and recorded later, marked late; the hook starts the
+  daemon, and warns unless that was all it needed.
   A session whose hooks never ran is read from its own file and marked as such. Verify
   the harness's real hook behaviour with its installed version (Codex needs JSON output
   from every hook).

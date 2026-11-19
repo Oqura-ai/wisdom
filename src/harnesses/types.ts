@@ -60,6 +60,13 @@ export interface HarnessAdapter {
   defaultHome: string[];
   /** The harness's own command to continue a session by its ID. */
   resume(sessionId: string): string[];
+  /** The harness's own command to take a handoff with no person there, and exit: a new
+   * session, or this one continued. It may only read: recordings and the project's files,
+   * never a change, enforced by the harness itself. Absent when the harness cannot be held to that. */
+  background?(prompt: string, sessionId?: string): string[];
+  /** Arguments that let a session a handoff opens read recordings without asking the person,
+   * since reading changes nothing. Absent when the harness does not ask. */
+  readsAllowed?: string[];
   /** File named by a direct file tool's input, if any. */
   toolTarget(toolName: string, input: any): string | undefined;
   /** Tools that touch nothing but their named target. Others need a workspace reconcile. */

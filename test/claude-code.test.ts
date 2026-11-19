@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { startDaemon } from '../src/service/daemon.js';
-import { call, connectionAt } from '../src/service/client.js';
+import { call, connectionAt, deliver } from '../src/service/client.js';
 import { observation } from '../src/harnesses/claude-code/hook.js';
 import { claudeCode } from '../src/harnesses/claude-code/adapter.js';
 
@@ -108,14 +108,15 @@ test('a Claude Code capture records hooks, patches, subagents and its transcript
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('with its daemon down, a Claude Code hook keeps the event, starts the daemon and never blocks', async () => {
+test('with its daemon down, a Claude Code hook keeps the event, starts the daemon, and warns only when the daemon refuses', async () => {
   const { spawnSync } = await import('node:child_process');
   const hook = path.resolve('integrations', 'claude-code', 'hook.mjs');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-nodaemon-'));
   const data = path.join(root, 'data'); fs.mkdirSync(data);
   const run = (event: unknown) => spawnSync(process.execPath, [hook, data], { input: JSON.stringify(event), encoding: 'utf8' });
   const kept = run({ ...common, cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'while down' });
-  assert.equal(kept.status, 1, 'exit code 1 warns; 2 would block'); assert.match(kept.stderr, /Wisdom kept this UserPromptSubmit/);
+  // The hook started the daemon, which records the kept event: nothing to tell the person.
+  assert.equal(kept.status, 0); assert.equal(kept.stderr, '');
   // The hook starts the daemon and returns; on a busy machine the daemon may still be writing
   // its address. Wait for it (up to 20 s) rather than fail on a slow start.
   const wait = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -131,6 +132,9 @@ test('with its daemon down, a Claude Code hook keeps the event, starts the daemo
     assert.match(text, /^t1  in {8}while down$/m);
     const live = run({ ...common, cwd: root, hook_event_name: 'Stop', last_assistant_message: 'ok' });
     assert.equal(live.status, 0); assert.equal(live.stderr, '');
+    // A running daemon that refuses an event is not fixed by starting it: the hook still warns.
+    const refused = await deliver(data, { harness: 'claude-code', cwd: root, observation: { observationId: randomUUID(), sessionId: common.session_id } } as any);
+    assert.ok(refused.spooled);
   } finally {
     await call(connection, '/stop', {});
     for (let i = 0; i < 100 && fs.existsSync(path.join(data, 'daemon.json')); i++) await new Promise(resolve => setTimeout(resolve, 100));

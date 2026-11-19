@@ -1,6 +1,6 @@
 ---
 name: wisdom-ledger
-description: Read a recorded coding-agent session (Pi, Claude Code, or Codex) from the Wisdom ledger to review what was asked, done, changed and claimed, or to debug tracked agent work. Two moves, glance and open, return recorded evidence in plain text.
+description: Read a recorded coding-agent session (Pi, Claude Code, or Codex) from the Wisdom ledger to review what was asked, done, changed and claimed, or to debug tracked agent work. Two moves, glance and open, return recorded evidence in plain text. Also use it to hand work, a bug or a follow-up to another session (the one that wrote the code, or a new Claude Code or Codex session) with `wisdom handoff`.
 ---
 
 # Read a Wisdom session
@@ -89,6 +89,22 @@ smallest proof, compare the final reply's claims with the evidence, and stop.
 - `reported-by-harness` on a patch is the harness's own account of the change: Wisdom did not observe it.
 - `observed during c1` means the change happened while that call ran: timing, not proof of
   authorship. `external-or-unknown` means no tool call was running.
+
+## Handing work to another session
+
+When the user asks you to hand work to another session (one that made the code you found a
+problem in, or a new Claude Code or Codex session), run
+`wisdom handoff <full session ID | claude | codex> --emit "<what it should know>"` (always
+`--emit`: without it the session opens in a terminal, which you can't use). In those quoted
+words, in a few plain lines: the goal; what you found, with positions (`t3/c2`) and file names;
+what you tried and ruled out; and what you want back. Wisdom adds the facts itself (your turns
+and changed files, the branch, files that changed since that session last worked), so don't
+repeat those. That session reads yours in the background, checks it, changes nothing, and the
+command prints `Handoff complete: …` with its reply (what happened, still open, conflicts or
+questions, next), or `Handoff failed: …`. The work goes on there when the user opens it with
+`wisdom resume`. Run it as a background command if you can, so you keep working, and tell the
+user what it printed. From Codex or Pi, add `--from <your session ID>`. Into a session that is
+still open, it starts nothing.
 
 ## Limits
 

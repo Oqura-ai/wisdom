@@ -13,6 +13,7 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | At most about 20 projects running at once | Each running project takes a pair of ports, and each daemon and dashboard stay in memory. | L |
 | No search | You read one session at a time. | L |
 | Delete only in the dashboard | Sessions are deleted from the dashboard; there is no command for it in the terminal. | S |
+| An emitted handoff only reads | With `--emit`, the session that takes it reads and replies, held to reading by its harness; the work goes on when you open it with `wisdom resume`. Verified with Claude Code and Codex (whose hooks must be trusted first). Pi can't take one, since it reads only through its shell. Only Claude Code tells its shell which session it is in (from Codex or Pi, pass `--from`). | M |
 | Connected recording has limits | With `wisdom connect`, Claude Code and Pi record only when started in the project's top folder; Codex needs the project trusted and Wisdom's hooks reviewed once, and ignores them in a git worktree. `wisdom track` records these, with one login per project. | M |
 | Failed subagents go unmarked | A subagent cut off before it stops loses its report, transcript and tokens, with no gap to say so. | M |
 | Sessions aren't linked | Forks and `/clear` are a flat list, and `/rewind` isn't marked. | M |
@@ -24,7 +25,6 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 | `git push --mirror` sends records | A normal push never sends `refs/wisdom/*`. A mirror push sends every ref, so commit records and model guides go too, in local mode as well. | Ongoing |
 | Long replies through a shell | A harness can cut long shell output. Claude Code saves it to a file and Codex removes the middle, both with a notice, and the skill teaches agents to read the rest. It relies on the agent following that. | S |
 | The secret check finds known shapes only | `wisdom share` catches common keys, tokens and `PASSWORD=` style values, and misses others. Look through what you send. | Ongoing |
-| A warning on the first event | When the daemon isn't running, the first hook shows a warning such as `SessionStart:startup hook error`. Nothing is lost, but it looks broken. | S |
 | Codex cost is an estimate | Codex reports tokens, not cost. The dashboard prices them at OpenAI's standard API rates for short prompts, read on a set date. Long prompts cost more, prices change, a model not in the table shows no cost, and on a ChatGPT plan you aren't billed per token. | S to keep current |
 | Large projects | Past 10,000 files or 64 MiB of retained contents, changes become gaps instead of diffs. | M |
 | Sessions sharing a folder | Two sessions in one folder see each other's changes, labelled honestly. A commit gives each piece to the session whose own call named the file or held its text; when none did, it lists every session that saw it. | L |
@@ -45,7 +45,7 @@ What a harness does not report cannot be read: thinking a provider encrypts, too
 - User shell commands outside model tool hooks are observed through filesystem activity and native records. They are not automatically attributed as agent tool calls.
 - Changes during tools are labelled `observed-during-tool`, with all active tool IDs. This is temporal evidence, not proof of exclusive authorship. Idle changes are `external-or-unknown`.
 - A failed tool can leave changes, which are still recorded. Pending calls remain visible if recording stops.
-- If recording fails, nothing is blocked: the event is kept in the spool and a warning is shown (Claude Code and Codex hooks exit 1, Pi shows a notice). What the spool can't hold is the file baseline, so changes made while the daemon was down have no patch. A session whose hooks never ran has only what its own file says.
+- If recording fails, nothing is blocked: the event is kept in the spool and the daemon is started. A warning is shown only when the daemon refused the event, was too slow, or could not be started (Claude Code and Codex hooks exit 1, Pi shows a notice). What the spool can't hold is the file baseline, so changes made while the daemon was down have no patch. A session whose hooks never ran has only what its own file says.
 - Native-message links to a turn are temporal, especially after queued input, steering or branching. Read versions freeze evidence, not the codebase itself.
 
 ### Files

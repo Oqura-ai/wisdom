@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
-import { call, connectionAt, ensureDaemon } from './service/client.js';
+import { call, connectionAt, ensureDaemon, startDetached } from './service/client.js';
 import { startDaemon, type Connection } from './service/daemon.js';
 import { diagnose, formatChecks, wisdomVersion } from './setup/doctor.js';
 import { harnessByCommand, planHandoff } from './sessions/handoff.js';
@@ -37,9 +37,13 @@ Set up
 Run an agent
   wisdom track claude|codex|pi    Start an agent in this project, recording
   wisdom resume <session-id>      Continue a recorded session (takes the full ID)
-  wisdom handoff <claude|codex|pi|session-id> [--from <session-id>]
-                                  Continue work in a new or existing session, which
-                                  reads the other session first
+  wisdom handoff <claude|codex|pi|session-id> [--from <session-id>] ["what it should know"]
+                                  Continue work in a new or existing session, which reads the
+                                  other session first
+  wisdom handoff ... --emit       The same in the background, while you keep working: it reads
+                                  the session, changes nothing, and its reply is printed when it
+                                  is done (Ctrl+C stops waiting, not the handoff). Continue there
+                                  later with wisdom resume
 
 Read a session
   wisdom dashboard                Print the address of the live dashboard
@@ -88,7 +92,7 @@ Options
   --cwd DIR, --data DIR           Use the project at DIR, or the data folder DIR
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
   --remote NAME, --range A..B     team, check: another remote than the policy's; the PR's commits
-  --from <session-id>             handoff: the session to read (default: the newest other one)
+  --from <session-id>             handoff: the session to read (default: the one running it, or the newest other one)
   --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
@@ -108,18 +112,20 @@ async function main(): Promise<void> {
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, commit: { type: 'string' }, remote: { type: 'string' }, range: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
-      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' },
+      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' }, emit: { type: 'boolean' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
   if (!command || values.help) { console.log(help); return; }
   // Run by Wisdom's own git hooks; never fails, so a hook never fails git.
   if (command === 'githook') { if (first && values.data) runGitHook(first, positionals.slice(2), path.resolve(values.data)); return; }
+  // Started by `wisdom handoff --emit`, in a process of its own: runs one background harness.
+  if (command === 'handoff-run') { if (first) await runBackgroundHarness(first); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
     daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
-    handoff: ['cwd', 'port', 'from', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
+    handoff: ['cwd', 'port', 'from', 'emit', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
     clone: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     glance: ['cwd', 'commit', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
@@ -129,7 +135,8 @@ async function main(): Promise<void> {
   if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
   if (separator >= 0 && !['track', 'handoff'].includes(command)) throw new Error('Arguments after -- are only supported by track and handoff');
-  if (command !== 'share' && positionals.length > (['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
+  // A handoff's words may follow its target without `--`: PowerShell drops a `--` it is given.
+  if (!['share', 'handoff'].includes(command) && positionals.length >(['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
@@ -199,7 +206,7 @@ async function main(): Promise<void> {
     // A session continues in the home it ran in: Wisdom's, or the person's own in a connected project.
     process.exitCode = await track(harness, { ...values, cwd: session.workspaceRoot }, args, dataDir, port, {}, sessionPlace(dataDir, session.harness, session.source)); return;
   }
-  if (command === 'handoff') { process.exitCode = await handoff(first, values, harnessArgs.join(' '), dataDir, port); return; }
+  if (command === 'handoff') { process.exitCode = await handoff(first, values, [...positionals.slice(2), ...harnessArgs].join(' '), dataDir, port); return; }
   if (command === 'share') { process.exitCode = await share(positionals.slice(1), values, dataDir, port); return; }
   if (command === 'import') { await importShare(first, dataDir, port); return; }
   if (command === 'export') { process.exitCode = await exportMarkdown(first, values, dataDir, port); return; }
@@ -351,9 +358,10 @@ async function connectProject(project: string, values: any, port?: number): Prom
 
 /** Start a harness in this project. Tracked (`place` home), it runs with its home in the
  * project's data folder, whose hooks record it. Connected (`place` project), it runs with the
- * person's own home and login, and the project's settings record it.
+ * person's own home and login, and the project's settings record it. With `output`, it runs
+ * in the background (see runHarness).
  */
-async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number, env: Record<string, string> = {}, place: Place = 'home'): Promise<number> {
+async function track(harness: string | undefined, values: any, args: string[], dataDir: string, port?: number, env: Record<string, string> = {}, place: Place = 'home', output?: Output): Promise<number> {
   const name = harnessByCommand[harness ?? ''];
   if (place === 'project' && name && hookState(dataDir, name as Connectable, 'project') === 'none') {
     throw new Error(`This ${names[name as Connectable]} session runs with your own login, and this project is not connected, so it would not be recorded. Run: wisdom connect`);
@@ -381,7 +389,14 @@ async function track(harness: string | undefined, values: any, args: string[], d
       : 'Wisdom is recording sessions in this harness home.');
   }
   // The ledger skill calls this installation's CLI from the project.
-  return runHarness(launch, cwd, { ...process.env, ...env, ...launch.env, WISDOM_CLI_PATH: cliPath });
+  const own = { ...env, ...launch.env, WISDOM_CLI_PATH: cliPath };
+  return output ? runInBackground(launch, cwd, own, output) : runHarness(launch, cwd, { ...withoutCaller(process.env), ...own });
+}
+
+/** The session that ran this command keeps its WISDOM_SESSION: a harness started here is another session. */
+function withoutCaller(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { WISDOM_SESSION: _caller, ...rest } = env;
+  return rest;
 }
 
 /** Write one file a teammate can read: chosen sessions, their evidence, no logins. What looks
@@ -482,32 +497,89 @@ async function importShare(file: string | undefined, dataDir: string, port?: num
   console.log(`Read-only, as recorded on the sender's machine. Read it with: wisdom glance ${result.sessions[0].captureId.slice(0, 8)}`);
 }
 
-/** Continue work in another session that reads this one first: a new session in any
- * harness, or an existing one resumed. A running session cannot take outside input, so
- * for one the prompt is printed to paste instead.
+/** Continue work in another session that reads this one first: a new session in any harness,
+ * or an existing one resumed, opened in this terminal. Emitted, it runs in the background instead
+ * and changes nothing (each adapter's `background` holds it to reading); this command waits and
+ * prints its reply, and stopping the wait (Ctrl+C) leaves it working. The work goes on in that
+ * session later, with `wisdom resume`. A running session cannot take outside input, so for one
+ * the prompt is printed to paste instead.
  */
 async function handoff(target: string | undefined, values: any, words: string, dataDir: string, port?: number): Promise<number> {
-  if (!target) throw new Error('Use: wisdom handoff claude|codex|pi|SESSION-ID [--from SESSION-ID]');
-  const plan = await planHandoff(await ensureDaemon(dataDir, port), target, values.from, words);
+  if (!target) throw new Error('Use: wisdom handoff claude|codex|pi|SESSION-ID [--from SESSION-ID] [--emit] ["what it should know"]');
+  const connection = await ensureDaemon(dataDir, port);
+  const emit = Boolean(values.emit);
+  const plan = await planHandoff(connection, target, values.from, words, path.dirname(path.resolve(dataDir)), process.env.WISDOM_SESSION, emit);
   if (plan.target?.status === 'recording') {
-    console.error(`Session ${plan.target.captureId} is still running, so Wisdom cannot start it. Paste this into it instead:\n`);
+    console.error(`Session ${plan.target.captureId} is still running, so Wisdom cannot start it. Paste this into it instead,`
+      + ` or hand the work to a new session: wisdom handoff ${plan.command} --from ${plan.from.captureId}${emit ? ' --emit' : ''}\n`);
     console.log(plan.prompt);
     return 1;
   }
   if (plan.note) console.error(`Note: ${plan.note}`);
-  console.error(plan.target
-    ? `Resuming ${plan.target.harness} session ${plan.target.captureId}; it reads ${plan.from.harness} session ${plan.from.captureId} first.`
-    : `Starting a new ${plan.command} session; it reads ${plan.from.harness} session ${plan.from.captureId} first.`);
+  const reads = `it reads ${plan.from.harness} session ${plan.from.captureId} first.`;
+  console.error(emit ? `Handing off to ${plan.target ? `${plan.target.harness} session ${plan.target.captureId}` : `a new ${plan.command} session`}, in the background; ${reads}`
+    : plan.target ? `Resuming ${plan.target.harness} session ${plan.target.captureId}; ${reads}` : `Starting a new ${plan.command} session; ${reads}`);
   // A resumed session continues in the home it ran in; a new one runs connected when this project is.
   const place = plan.target ? sessionPlace(dataDir, plan.target.harness, plan.targetSource)
     : hookState(dataDir, harnessByCommand[plan.command] as Connectable, 'project') === 'none' ? 'home' : 'project';
-  return track(plan.command, { ...values, cwd: plan.cwd ?? values.cwd }, plan.args, dataDir, port, plan.env, place);
+  if (!emit) return track(plan.command, { ...values, cwd: plan.cwd ?? values.cwd }, plan.args, dataDir, port, plan.env, place);
+  const folder = path.join(dataDir, 'handoffs');
+  fs.mkdirSync(folder, { recursive: true });
+  const base = path.join(folder, plan.handoffId);
+  const output = { reply: `${base}.txt`, log: `${base}.log`, code: `${base}.code`, spec: `${base}.json` };
+  process.once('SIGINT', () => { console.error(`\nStopped waiting. The handoff goes on; its answer will be in ${output.reply}`); process.exit(130); });
+  const code = await track(plan.command, { ...values, cwd: plan.cwd ?? values.cwd }, plan.args, dataDir, port, plan.env, place, output);
+  if (code !== 0) {
+    const last = fs.readFileSync(output.log, 'utf8').trim().split(/\r?\n/).at(-1);
+    console.error(`Handoff failed: ${plan.command} exited with code ${code}${last ? `: ${last}` : ''}. Its log: ${output.log}`);
+    return code;
+  }
+  // Its hooks report the session it ran in; without them Wisdom cannot say which it was.
+  const session: string | undefined = plan.target?.captureId
+    ?? await call(connection, '/resolve', { handoff: plan.handoffId }).then(found => found.captureId, () => undefined);
+  const reply = fs.readFileSync(output.reply, 'utf8').trim();
+  console.log(session ? `Handoff complete: ${plan.target ? `${plan.target.harness} session ${session} continued after` : `new ${plan.command} session ${session} continues`} ${plan.from.captureId}.`
+    : `Handoff finished, but Wisdom has no record of it: ${plan.command}'s hooks did not report. Run: wisdom doctor`);
+  if (reply) console.log(`\n${reply}`);
+  if (session) console.log(`\nRead what it did: wisdom glance ${session}`);
+  return 0;
 }
+
+/** A harness running in the background: what it prints (its answer), what it reports (its
+ * log), its exit code, written last, and what to start, for the process that runs it. */
+interface Output { reply: string; log: string; code: string; spec: string }
 
 function runHarness(launch: Launch, cwd: string, env: NodeJS.ProcessEnv): Promise<number> {
   const child = spawn(launch.command, launch.args, { cwd, stdio: 'inherit', windowsHide: true, env });
   return new Promise((resolve, reject) => {
     child.once('error', reject); child.once('exit', code => resolve(code ?? 1));
+  });
+}
+
+/** Start a harness in the background through `wisdom handoff-run`, in a process of its own that
+ * is not this one's child: on Windows a terminal's Ctrl+C can end a command with every process
+ * it started, detached or not (seen in VS Code's terminal). Started like the daemon, the harness
+ * outlives this command, which only waits for its exit code. `env` is what Wisdom adds, never
+ * the whole environment, since it is written to a file.
+ */
+async function runInBackground(launch: Launch, cwd: string, env: Record<string, string>, output: Output): Promise<number> {
+  writeJson(output.spec, { command: launch.command, args: launch.args, cwd, env, reply: output.reply, log: output.log, code: output.code });
+  startDetached([fileURLToPath(new URL('./cli.js', import.meta.url)), 'handoff-run', output.spec]);
+  while (!fs.existsSync(output.code)) await new Promise(resolve => setTimeout(resolve, 250));
+  return Number(fs.readFileSync(output.code, 'utf8'));
+}
+
+/** `wisdom handoff-run`: run one background harness, its output to files, then its exit code,
+ * which the waiting `wisdom handoff --emit` reads. */
+function runBackgroundHarness(specFile: string): Promise<void> {
+  const spec = JSON.parse(fs.readFileSync(specFile, 'utf8'));
+  fs.rmSync(specFile, { force: true });
+  const files = [fs.openSync(spec.reply, 'w'), fs.openSync(spec.log, 'w')];
+  const child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: { ...withoutCaller(process.env), ...spec.env }, stdio: ['ignore', ...files], windowsHide: true });
+  files.forEach(file => fs.closeSync(file));
+  return new Promise(resolve => {
+    const done = (code: number, why?: string) => { if (why) fs.appendFileSync(spec.log, `${why}\n`); fs.writeFileSync(spec.code, String(code)); resolve(); };
+    child.once('error', error => done(1, String(error))); child.once('exit', code => done(code ?? 1));
   });
 }
 

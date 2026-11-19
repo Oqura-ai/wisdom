@@ -52,7 +52,7 @@ Your harness keeps its sessions in its own home (`~/.claude`, `~/.codex`, `~/.pi
 
 ### Either way
 
-**Wisdom never stops the harness.** Each hook sends its event to the daemon. If the daemon is down or refuses, the hook keeps the event in `.wisdom/spool/`, starts the daemon, and shows a warning. The daemon records kept events in order when it is back, marked `delivered-late`. File changes made while it was down are not observed, and the glance says so.
+**Wisdom never stops the harness.** Each hook sends its event to the daemon. If the daemon is down or refuses, the hook keeps the event in `.wisdom/spool/` and starts the daemon. It shows a warning only when that is not enough: the daemon refused the event, answered too slowly, or could not be started. The daemon records kept events in order when it is back, marked `delivered-late`. File changes made while it was down are not observed, and the glance says so.
 
 **Nothing in the home goes unnoticed.** Every 10 seconds the daemon looks at the session files in the harness homes, and, for a connected harness, at this project's session files in your own home changed since you connected. A session file with no record, unchanged for two minutes (hooks untrusted or disabled, for example), becomes a record read from that file. Its typed prompts appear as `in (from session file)`, its replies, calls and results as the harness wrote them, with a `not-recorded-live` gap (no hook events, no observed file changes). Lines a session gained while nothing recorded are read the same way.
 
@@ -62,20 +62,27 @@ Your harness keeps its sessions in its own home (`~/.claude`, `~/.codex`, `~/.pi
 
 ## Handing work on
 
-When an agent runs out mid-task, or you want another harness to carry on, hand the work on:
+When an agent runs out mid-task, you want another harness to carry on, or a session finds a problem that belongs to another session's work, hand the work on. The other session opens in your terminal and reads that session first; you carry on there.
 
 ```sh
-wisdom handoff codex                          # a new Codex session reads the newest session from another harness
+wisdom handoff codex                          # a new Codex session reads the newest session from another harness, else Codex's own
 wisdom handoff pi --from 0f3c8a1e-…           # name the session to read, by its full ID
 wisdom handoff 0f3c8a1e-… --from 01a1aca0-…   # resume an existing session, which reads what happened since
-wisdom handoff codex -- also run the tests    # add your own words to its first prompt
+wisdom handoff codex "the tests fail on CI"   # add what it should know to its first prompt
+wisdom handoff 0f3c8a1e-… --emit "…"          # in the background, reading only, while you keep working
 ```
 
-The new or resumed session starts with a first prompt that names the other session's full ID and tells the agent to read it with `wisdom glance` and `wisdom open` before changing anything. Nothing is summarized: the agent reads the record itself, through the skill in its home.
+The words can also follow `--` (`wisdom handoff codex -- the tests fail on CI`), but PowerShell drops a `--` it is given, so quoting them works in every shell.
+
+The new or resumed session starts with a first prompt Wisdom writes from facts, never a summary. It starts with your words, then names the other session's full ID and tells the agent to read it with `wisdom glance` and `wisdom open`, before changing anything, and to check its claims against its own evidence. It says how many turns the session has (start with the newest), which files it changed, the branch, commit and number of files not committed, and, for an existing session, which of its own files are different on disk since it last worked, so it does not trust a stale memory. Nothing is summarized: the agent reads the record itself, through the skill in its home. Claude Code may run Wisdom's two reading commands and its `ledger` tool without asking you; everything else asks as usual. The words are labelled as the sending session's own when the handoff runs from inside it, and as yours when you type it in a terminal. An agent that hands off writes, in the quoted words, the goal, what it found (with positions such as `t3/c2`), what it tried and ruled out, and what it wants back.
+
+**Emitting** (`--emit`) hands the work on without opening anything: the other session reads it in the background and changes nothing, so you, or the agent that ran the command, keep working. The work goes on in that session later, when you open it with `wisdom resume`. It replies in four parts: what happened, what is still open, conflicts with its own earlier work (or, for a new session, its questions), and what it would do next. The harness runs in its own background mode, held to reading by the harness itself, not only by the prompt. Claude Code runs `claude -p` with no editing tools and `dontAsk`, so its shell runs only `wisdom glance` and `wisdom open`, and it may also use Wisdom's `ledger` tool and read the project's files. Codex runs `codex exec` in its `read-only` sandbox. Pi can't take an emitted handoff: it reads a recording only through its shell, which could also change files; it can still be the session that hands off. The command waits, then prints `Handoff complete: …` with the session that took it and its reply, or `Handoff failed: …` with its log. Ctrl+C stops the waiting, not the handoff. Replies and logs are kept in `.wisdom/handoffs/`.
+
+Run from inside a Claude Code session, the handoff reads that session by default: Wisdom's SessionStart hook gives the session's shell its ID as `WISDOM_SESSION`. From Codex or Pi, name it with `--from`. An agent emits (it can't open a session in its own terminal), as a background command if its harness can, so it keeps working while it waits.
 
 Each session says how it is linked. The glance shows `continues <id> (<harness>)` for a new session, or `continued after <id> (<harness>) · at t5` for an existing one, and the dashboard shows the link from both ends. One handoff links one session: a `/clear` or `/new` later in the same process is not a continuation.
 
-A session that is still running can't take outside input, so a handoff into one starts nothing and prints the prompt for you to paste. A very long existing session gets a note suggesting a new session instead, because its old context plus the reading can fill the window quickly. Codex needs its hooks trusted, as for `wisdom track codex`.
+A session that is still running can't take outside input, so a handoff into one starts nothing and prints the prompt for you to paste, and the command for a new session instead. A very long existing session gets a note suggesting a new session instead, because its old context plus the reading can fill the window quickly. Codex needs its hooks trusted, as for `wisdom track codex`.
 
 ## Sharing a session
 
@@ -256,6 +263,7 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
   ledger.sqlite-wal            # SQLite may keep sidecar files while running
   ledger.sqlite-shm
   spool/<harness>/<session>/   # Events a hook kept while the daemon was down
+  handoffs/<id>.txt, <id>.log  # A background handoff's answer and log
   deleted.json                 # Hashes of deleted sessions' IDs, never recorded again
   backups/<time>/              # Files a dashboard repair changed, as they were before
   harnesses/<harness>/home/    # The harness's own folder: settings with Wisdom's hooks,
