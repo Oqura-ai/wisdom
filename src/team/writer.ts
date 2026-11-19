@@ -23,7 +23,7 @@ import type { SessionStore } from '../storage/store.js';
  *      sits in an earlier turn than the edit, which is why it may read the whole window. It
  *      did not do the work, so it has no stake in flattering it.
  *
- * A team's own writer (guides.command in wisdom-team.json) reads a prompt on stdin with the
+ * A team's own writer (guides.command in wisdom-team.yaml) reads a prompt on stdin with the
  * steps already opened, and may not use tools. A person who turns guides off (`wisdom guide
  * off`) gets a plain guide that Wisdom writes from the record, with no model at all.
  *
@@ -147,7 +147,7 @@ export function claudeOutput(stdout: string): Output {
 }
 
 /** The command that writes, and how it is named in the record. Undefined when none is there.
- * The model: the team's (wisdom-team.json) first, then the person's own (wisdom.yaml). */
+ * The model: the team's (wisdom-team.yaml) first, then the person's own (wisdom.yaml). */
 function writerCommand(policy: Policy | undefined, dataDir: string): Writer | undefined {
   const project = path.dirname(path.resolve(dataDir));
   const settings = settingsOrDefaults(project);
@@ -205,7 +205,7 @@ export function writeGuide(store: SessionStore, record: CommitRecord, dataDir: s
     return { guide: { text, writtenAt: new Date().toISOString(), writer: PLAIN_WRITER, problems: checkGuide(text, record, stores, ids), derived: true } };
   }
   const writer = writerCommand(policy, dataDir);
-  if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.json names no guides.command' };
+  if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.yaml names no guides.command' };
   let prompt = guidePrompt(store, record, writer.explore, settingsOrDefaults(path.dirname(path.resolve(dataDir))).guides?.extra);
   let text = '', problems: string[] = [], costUsd: number | undefined;
   const started = Date.now();

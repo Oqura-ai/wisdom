@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { yaml } from '../core/settings.js';
 
 // Hooks import this module (through the commit gate), so it stays free of the database.
 function writeJson(file: string, value: unknown): void {
@@ -141,7 +142,7 @@ export const remoteRef = (repoId: string, local: string) => local.replace(/^refs
 
 // ---------- policy and recorder ----------
 
-/** `wisdom-team.json`, committed at the repository's top: its presence is team mode. Without
+/** `wisdom-team.yaml`, committed at the repository's top: its presence is team mode. Without
  * it Wisdom is in local mode, and nothing is pushed, gated or checked. */
 export interface Policy {
   version: 1;
@@ -189,7 +190,7 @@ export function recordsWithIds(cwd: string, ids: string[]): { commit: string; te
   return found.sort((a, b) => ids.indexOf(/"recordId":\s*"([^"]+)"/.exec(a.text)![1]) - ids.indexOf(/"recordId":\s*"([^"]+)"/.exec(b.text)![1]));
 }
 
-export const POLICY_FILE = 'wisdom-team.json';
+export const POLICY_FILE = 'wisdom-team.yaml';
 
 /** Whether a commit was made in team mode: its tree holds the policy file. Work committed
  * before team mode was turned on (local mode) stays private: its records are never pushed and
@@ -203,7 +204,9 @@ export function readPolicy(cwd: string): Policy | undefined {
   try { top = topLevel(cwd); } catch { return undefined; }
   const file = path.join(top, POLICY_FILE);
   if (!fs.existsSync(file)) return undefined;
-  const policy = JSON.parse(fs.readFileSync(file, 'utf8')) as Policy;
+  let policy: Policy;
+  try { policy = yaml().parse(fs.readFileSync(file, 'utf8')) as Policy; }
+  catch (error) { throw new Error(`${file} is not valid YAML: ${error instanceof Error ? error.message.split('\n')[0] : error}`); }
   if (policy.version !== 1 || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._-]{8,}$/.test(policy.repoId)) {
     throw new Error(`${file} is not a Wisdom team policy this version reads (version 1, a repoId of 8+ letters, digits, . _ -).`);
   }
@@ -214,7 +217,20 @@ export function writePolicy(cwd: string): { file: string; policy: Policy; create
   const file = path.join(topLevel(cwd), POLICY_FILE);
   if (fs.existsSync(file)) return { file, policy: readPolicy(cwd)!, created: false };
   const policy: Policy = { version: 1, repoId: randomUUID(), remote: 'origin', identity: true, requireGuides: true, keepReferenced: true };
-  fs.writeFileSync(file, JSON.stringify(policy, null, 2) + '\n');
+  fs.writeFileSync(file, `# Wisdom team mode: committed, it turns team mode on for everyone; removed, Wisdom is in local mode.
+# A line starting with # is an option: remove the "# " to use it. See docs/team.md.
+version: 1
+repoId: ${policy.repoId}
+remote: origin              # where sessions and commit records are pushed
+identity: true              # each pushed session names its recorder's git name and email
+requireGuides: true         # an agent commit needs a guide that passed its check
+keepReferenced: true        # prune keeps sessions a commit record still points to
+# retentionDays: 30         # wisdom team prune removes pushed sessions older than this
+# check: node scan.mjs      # run on each session file before it is pushed; a non-zero exit holds it back
+# guides:
+#   model: claude-haiku-5-5   # the model that writes guides (wins over each person's wisdom.yaml)
+#   command: ""             # another writer: reads the prompt on stdin and prints the guide
+`);
   return { file, policy, created: true };
 }
 

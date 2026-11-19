@@ -241,7 +241,7 @@ src/util.ts · modify · +1 −0 · not recorded
 
 A session is linked only when it produced the committed file's exact contents: Wisdom follows the recorded changes, by a hash of the whole file, from the parent's file to the committed one. `not recorded` means nothing recorded explains that piece. Linked worktrees are matched the same way, by contents.
 
-When the daemon sees you make a commit, it keeps that answer as a record in your own `.git` (`refs/wisdom/records/<commit>`, never on a branch), so the link outlives the sessions it points to. Any other commit is worked out when asked. In a repository with `wisdom-team.json`, records and sessions can travel to your team: see [Team mode](team.md).
+When the daemon sees you make a commit, it keeps that answer as a record in your own `.git` (`refs/wisdom/records/<commit>`, never on a branch), so the link outlives the sessions it points to. Any other commit is worked out when asked. In a repository with `wisdom-team.yaml`, records and sessions can travel to your team: see [Team mode](team.md).
 
 A kept record with agent work also shows a **guide** at the end, `guide · plain, built from the record now, no model`: each piece's step and the request of its turn, quoted. It is built each time you read it and never stored. For an account of what the change does and why, `wisdom guide <commit>` has a model (Claude Haiku 5.5, through your Claude Code) read the commit's sessions since your previous commit and write one, kept in that commit's record on this machine. `wisdom guide on` has one written after every commit, through a single `post-commit` hook that changes no commit message and pushes nothing; it is off by default. See [Guides in local mode](team.md#guides-in-local-mode). A normal `git push` never sends `refs/wisdom/*`; `git push --mirror` does.
 
@@ -268,7 +268,7 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
 | `recording.ignore` | none | Files or folders, from the project's top, never recorded: as `.wisdomignore` (still read too) takes them, with no `*` or `..`. |
 | `recording.skipFolders` | none | Folder names skipped anywhere, besides the built-in ones ([limitations](limitations.md#files)), such as `target`, `vendor` or `coverage`. A session's manifest keeps what it was recorded with. |
 | `guides.on` | on in team mode, off in local | Whether a model writes your commit guides. `wisdom guide on\|off` writes it, keeping the rest of the file. |
-| `guides.model` | `claude-haiku-5-5` | The model your commit guides are written with, through your Claude Code. In team mode, `guides.model` in `wisdom-team.json` wins. |
+| `guides.model` | `claude-haiku-5-5` | The model your commit guides are written with, through your Claude Code. In team mode, `guides.model` in `wisdom-team.yaml` wins. |
 | `guides.timeoutSeconds` | `150` | How long one guide may take to write, 30 to 300. |
 | `guides.turns` | `30` | How many steps the Claude Code writer may take reading the sessions, 5 to 60. Fewer is cheaper; too few can leave a guide unwritten. |
 | `guides.extra` | none | Your own words, added after the writer's rules. Wisdom's check of the guide is the same. |

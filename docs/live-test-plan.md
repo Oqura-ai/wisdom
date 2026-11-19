@@ -98,7 +98,7 @@ proves nothing.
 | `refs/wisdom/sessions/<recorder>/<session>` | `session.wisdom-share` (redacted) and `meta.json`, one version per push | Team mode: on push |
 | `refs/wisdom/deleted`, `refs/wisdom/fetched/…` | The team's deletion list; teammates' refs as fetched | The list, yes |
 | On the remote: `refs/wisdom/<repo-id>/{records,sessions,deleted}` | The team's copy | It is the remote |
-| `wisdom-team.json` | The team policy | A tracked file |
+| `wisdom-team.yaml` | The team policy | A tracked file |
 
 ## 1. Install and local basics
 
@@ -155,7 +155,7 @@ guide · plain, built from the record now, no model · derived, not evidence · 
 
 | # | Do | Proof | You should see |
 | --- | --- | --- | --- |
-| 3.1 | `wisdom team init`; commit and push `wisdom-team.json` | The file | `version`, a `repoId`, `remote: origin` |
+| 3.1 | `wisdom team init`; commit and push `wisdom-team.yaml` | The file | `version`, a `repoId`, `remote: origin` |
 | 3.2 | `wisdom init` in alice and bob | Output; `.git/hooks` | `Wisdom's git hooks are in …`; three hooks |
 | 3.3 | `wisdom team hooks off`; add your own `.git/hooks/post-commit` (`echo mine`); `wisdom team hooks on`; commit | Output; hooks; the commit | `your own post-commit still runs first`; yours kept as `post-commit.pre-wisdom`; `mine` printed; the commit still gets its `Wisdom-Record:` line and record |
 | 3.4 | On branch `husky`: tracked `.husky/`, `core.hooksPath .husky`, `wisdom team hooks on` | Output; `git status` | Refuses; prints the three lines to add; `.husky/` untouched. Unset `core.hooksPath` afterwards |
@@ -178,8 +178,8 @@ exists, belongs to one of the commit's sessions and sits inside its window.
 | 4.6 | **You** commit an agent's edit | The record | A guide too |
 | 4.7 | You commit only your own edit | The record; `jobs.log` | `not recorded`; `no guide (no agent work)` |
 | 4.8 | `wisdom guide off`; an agent commits | `jobs.log`; glance | `guide by Wisdom, no model (wisdom guide off)` in about a second; each piece `Made by … Asked in …` |
-| 4.9 | Set `"guides": { "command": "codex exec --skip-git-repo-check -" }` in `wisdom-team.json`; an agent edits; commit | `jobs.log`; glance | `guide by codex exec --skip-git-repo-check - (model not named)`; no cost shown (only Claude Code reports one). The switch and writer are fixed when you commit, so restoring the file right after is safe |
-| 4.10 | In a terminal without `claude` on PATH, a Pi agent edits; commit | glance | `guide · none: no guide writer: Claude Code is not installed and wisdom-team.json names no guides.command`. Do not run `wisdom connect` in that terminal |
+| 4.9 | Set `"guides": { "command": "codex exec --skip-git-repo-check -" }` in `wisdom-team.yaml`; an agent edits; commit | `jobs.log`; glance | `guide by codex exec --skip-git-repo-check - (model not named)`; no cost shown (only Claude Code reports one). The switch and writer are fixed when you commit, so restoring the file right after is safe |
+| 4.10 | In a terminal without `claude` on PATH, a Pi agent edits; commit | glance | `guide · none: no guide writer: Claude Code is not installed and wisdom-team.yaml names no guides.command`. Do not run `wisdom connect` in that terminal |
 | 4.11 | `git commit --amend`; rebase a branch | Message; records | The same `Wisdom-Record:` line; a new record under each new hash |
 | 4.12 | Three commits in a row in one agent turn | `.wisdom/jobs/`; `jobs.log` | Three `job ·` lines; three records with guides |
 | 4.12b | The agent's last action is a commit; exit the agent at once | `jobs.log` after a minute | The record and guide arrive anyway; a job that died is retried (`attempt 2`) |
@@ -193,7 +193,7 @@ exists, belongs to one of the commit's sessions and sits inside its window.
 | # | Do | Proof | You should see |
 | --- | --- | --- | --- |
 | 5.1 | In alice: `git push` | Output | `Wisdom: N commit records and M session version(s) sent to origin.` |
-| 5.1b | Branch from the commit **before** `wisdom-team.json`; an agent edits; commit; merge into main; push | `ls-remote`; output | That commit's record and session stay home; the merge commit has no record (git runs no post-commit for a merge) |
+| 5.1b | Branch from the commit **before** `wisdom-team.yaml`; an agent edits; commit; merge into main; push | `ls-remote`; output | That commit's record and session stay home; the merge commit has no record (git runs no post-commit for a merge) |
 | 5.2 | Check the remote | `git ls-remote origin "refs/wisdom/*"` | `refs/wisdom/<repo-id>/records/<sha>` and `…/sessions/<recorder>/<session>` |
 | 5.3 | What exactly was sent | `meta.json` of a pushed session | Harness, recorder, your git name and email with `"basis": "git config"`, `redactions` (distinct values); one commit per pushed version |
 | 5.4 | Put a fake key (`sk-test-` and 20+ letters) and `DB_PASSWORD=fake…` in a prompt; commit; push | The unpacked share file; the pushed record; `wisdom open` locally | Neither value on the remote, `[redacted by sender: …]` in their place; your local session keeps them. Note what the host's own secret scanning says |

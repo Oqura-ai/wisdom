@@ -4,7 +4,7 @@ Wisdom works on one machine by default (local mode). Team mode lets a team read 
 other's sessions from a commit, through the team's own git remote. Nothing goes to
 Wisdom: sessions and records are hidden git refs in your own repository.
 
-A repository is in team mode when it has a committed `wisdom-team.json` at its top.
+A repository is in team mode when it has a committed `wisdom-team.yaml` at its top.
 Without that file, Wisdom changes no commit message and pushes nothing, and by default
 installs no git hooks and calls no model, so you can use Wisdom in any project, including open
 source ones whose owners don't. See [Guides in local mode](#guides-in-local-mode).
@@ -72,7 +72,7 @@ as it would in any Claude Code session.
    originals here. It never sends the `.wisdom/` folder or any login. A failure there never
    stops your push; it says so.
    Only commits made in team mode travel: a commit whose tree already holds
-   `wisdom-team.json`. Work you recorded before team mode was turned on (local-mode records,
+   `wisdom-team.yaml`. Work you recorded before team mode was turned on (local-mode records,
    their sessions, their guides) stays on your machine, and no guide is written for it at push.
 5. **Review.** A reviewer runs `wisdom team fetch`, then `wisdom glance --commit <commit>`.
    Each piece points to the step that made it, checked against the fetched session, with
@@ -92,7 +92,7 @@ the model back on.
 
 | Command | What it does |
 | --- | --- |
-| `wisdom team init` | Writes `wisdom-team.json` with a new repo ID. An admin commits it. |
+| `wisdom team init` | Writes `wisdom-team.yaml` with a new repo ID. An admin commits it. |
 | `wisdom init`, `wisdom connect` | In a team-mode repository, also install the git hooks. |
 | `wisdom team hooks on\|off` | Installs or removes the three git hooks. |
 | `wisdom guide on\|off` | Team mode: who writes your guides, a model reading the sessions (on, the default) or Wisdom from the record with no model (off). Local mode: whether a model writes one after each commit (off by default; on installs only `post-commit`). Each commit's job goes by the switch, and by the policy's `guides` writer, as they were at that commit. |
@@ -130,19 +130,20 @@ are installed, the daemon's own commit watcher stands aside.
 
 ## The policy file
 
-```json
-{
-  "version": 1,
-  "repoId": "5d0c3c1e-8a5b-4b8e-9d0e-2f1c7a3b9e11",
-  "remote": "origin",
-  "identity": true,
-  "requireGuides": true,
-  "keepReferenced": true,
-  "retentionDays": 90,
-  "check": "node scripts/scan-session.mjs",
-  "guides": { "model": "claude-haiku-5-5" }
-}
+```yaml
+version: 1
+repoId: 5d0c3c1e-8a5b-4b8e-9d0e-2f1c7a3b9e11
+remote: origin
+identity: true
+requireGuides: true
+keepReferenced: true
+retentionDays: 90
+check: node scripts/scan-session.mjs
+guides:
+  model: claude-haiku-5-5
 ```
+
+`wisdom team init` writes the file with these defaults and the optional ones commented out.
 
 | Field | Default | Meaning |
 | --- | --- | --- |

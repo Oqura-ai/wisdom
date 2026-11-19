@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { parse, stringify } from 'yaml';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { startDaemon } from '../src/service/daemon.js';
 import { call } from '../src/service/client.js';
@@ -68,8 +69,8 @@ test('team mode: every commit gets its link line, a model writes the guide after
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\ntwo\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  const policy = JSON.parse(fs.readFileSync(policyFile, 'utf8'));
-  fs.writeFileSync(policyFile, JSON.stringify({ ...policy, guides: { command: fakeWriter(root) } }, null, 2));
+  const policy = parse(fs.readFileSync(policyFile, 'utf8'));
+  fs.writeFileSync(policyFile, stringify({ ...policy, guides: { command: fakeWriter(root) } }, null, 2));
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
   const base = alice.git('rev-parse', 'HEAD');
 
@@ -180,7 +181,7 @@ test('team mode: every commit gets its link line, a model writes the guide after
     assert.match(checkGuide(offRecord.guide.text.replace('[t2/c1 alice-se]', '[t1/c1 alice-se]'), narrow, () => daemon.captures, ids).join('\n'), /outside this commit's window/);
 
     // Retention keeps a session a pushed record still names.
-    fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), retentionDays: 30 }));
+    fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), retentionDays: 30 }));
     assert.deepEqual(prune(daemon.captures, undefined, Date.now() + 90 * 86_400_000), []);
 
     // Deleted for the team: Bob's copy goes, his read says so, and CI notices.
@@ -229,7 +230,7 @@ test('a hook already in place keeps running first, and a hooks folder the reposi
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('without wisdom-team.json nothing is added to a commit message and nothing is pushed', { skip: !hasGit }, async () => {
+test('without wisdom-team.yaml nothing is added to a commit message and nothing is pushed', { skip: !hasGit }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-local-')));
   const origin = path.join(root, 'origin.git');
   execFileSync('git', ['init', '-q', '--bare', origin], { windowsHide: true });
@@ -240,7 +241,7 @@ test('without wisdom-team.json nothing is added to a commit message and nothing 
     fs.writeFileSync(message, 'fix\n');
     runGitHook('prepare-commit-msg', [message, 'message'], me.data);
     assert.equal(fs.readFileSync(message, 'utf8'), 'fix\n');
-    await assert.rejects(call(daemon.connection, '/team', { action: 'push' }), /no wisdom-team\.json, so Wisdom is in local mode/);
+    await assert.rejects(call(daemon.connection, '/team', { action: 'push' }), /no wisdom-team.yaml, so Wisdom is in local mode/);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -334,7 +335,7 @@ test('a commit whose job died gets its record and guide from wisdom guide <commi
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\ntwo\nthree\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root), model: 'claude-haiku-5-5' } }, null, 2));
+  fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root), model: 'claude-haiku-5-5' } }, null, 2));
   // This policy names its model too, so the guide's label names it: '<model> via <command>'.
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
   const daemon = await startDaemon(alice.data, 0);
@@ -397,7 +398,7 @@ test('work recorded before team mode was turned on is not pushed and gets no gui
     setRef(alice.dir, recordRef(local), commitFiles(alice.dir, { 'record.json': JSON.stringify(localRecord) }, 'test'));
     // Team mode is turned on afterwards.
     const { file: policyFile } = writePolicy(alice.dir);
-    fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
+    fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
     alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'Turn on Wisdom team mode');
     installHooks(alice.dir, alice.data);
     fs.mkdirSync(alice.data, { recursive: true });
@@ -455,7 +456,7 @@ test('a session the project\'s check held back is tried again at each push, with
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  const setCheck = (code: number) => fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')),
+  const setCheck = (code: number) => fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')),
     check: `"${process.execPath}" -e "process.stderr.write('found sk-proj-secretvalue1234567890abcd'); process.exit(${code})"` }, null, 2));
   setCheck(1);
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
@@ -496,7 +497,7 @@ test('a commit\'s job goes by the guide switch and writer as they were at the co
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
+  fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start');
   const daemon = await startDaemon(alice.data, 0);
   try {

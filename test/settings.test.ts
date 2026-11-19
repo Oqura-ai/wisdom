@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { harnessOn, harnessPath, readSettings, setSetting, settingsOrDefaults, settingsTemplate, SETTINGS_FILE, writeSettings } from '../src/core/settings.js';
 import { handoffPrompt } from '../src/sessions/handoff.js';
+import { readPolicy, writePolicy } from '../src/team/gitrefs.js';
 import { startDaemon } from '../src/service/daemon.js';
 import { observeSession, openSession } from './session.js';
 import { call } from '../src/service/client.js';
@@ -171,4 +172,20 @@ test('a session records under wisdom.yaml\'s recording settings, and its manifes
     await daemon.close();
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
+});
+
+test('wisdom-team.yaml: team init writes it with its options commented, each one valid when uncommented', { skip: !hasGit }, () => {
+  const root = folder();
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: root, windowsHide: true });
+    const { file, policy, created } = writePolicy(root);
+    assert.equal(path.basename(file), 'wisdom-team.yaml');
+    assert.equal(created, true);
+    assert.deepEqual(readPolicy(root), { version: 1, repoId: policy.repoId, remote: 'origin', identity: true, requireGuides: true, keepReferenced: true });
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^# ([A-Za-z]+:|  )/gm, '$1'));
+    assert.deepEqual({ ...readPolicy(root) }, { version: 1, repoId: policy.repoId, remote: 'origin', identity: true, requireGuides: true, keepReferenced: true,
+      retentionDays: 30, check: 'node scan.mjs', guides: { model: 'claude-haiku-5-5', command: '' } });
+    fs.writeFileSync(file, 'version: 1\nrepoId: [\n');
+    assert.throws(() => readPolicy(root), /wisdom-team\.yaml is not valid YAML/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -92,7 +92,7 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom glance --commit HEAD` | Which recorded steps made each piece of a commit, with its guide |
 | `wisdom guide on` / `off` | A model writes each commit's guide, or Wisdom's plain one does |
 | `wisdom guide <commit>` | Have a model write one commit's guide now |
-| `wisdom team init` | Turn on team mode: write `wisdom-team.json` to commit |
+| `wisdom team init` | Turn on team mode: write `wisdom-team.yaml` to commit |
 | `wisdom team fetch` / `push` | Read teammates' sessions, or send yours without a `git push` |
 | `wisdom team delete <id>` | Remove a pushed session for everyone |
 | `wisdom check --range A..B` | In CI: each agent commit has a guide and its sessions are pushed |
@@ -137,7 +137,7 @@ Team mode lets teammates read the sessions behind each other's commits. It's opt
 </p>
 
 ```sh
-wisdom team init                  # writes wisdom-team.json; commit and push it
+wisdom team init                  # writes wisdom-team.yaml; commit and push it
 wisdom connect                    # every teammate, after pulling it: installs Wisdom's git hooks
 git commit && git push            # as usual
 wisdom team fetch                 # bring teammates' sessions here, read-only
@@ -147,7 +147,7 @@ wisdom glance --commit <commit>   # any commit, with the steps that made it and 
 - **On commit**, Wisdom adds a `Wisdom-Record:` line to the message, so the record follows the commit through an amend, a rebase or a squash merge. A background job then keeps the record, and for agent work a model writes the guide. Run `wisdom guide off` to get Wisdom's plain guide instead.
 - **On push**, your `git push` waits for any guide still being written, up to five minutes, then sends the sessions and the records, every possible secret redacted. A failure here never stops your push.
 - **In CI**, `wisdom check --range origin/main..HEAD` fails a pull request whose agent commits have no guide, or whose sessions aren't on the remote.
-- **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.json`.
+- **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.yaml`.
 
 Tested with GitHub so far, not yet GitLab, and a pull request from a fork can't push sessions. Details in [team mode](docs/team.md).
 

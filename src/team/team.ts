@@ -26,7 +26,7 @@ interface Deleted { key: string; deletedAt: string; reason: 'deleted' | 'retenti
 
 function policyOrThrow(project: string): Policy {
   const policy = readPolicy(project);
-  if (!policy) throw new Error(`This repository has no wisdom-team.json, so Wisdom is in local mode: nothing is pushed. An admin starts team mode with: wisdom team init`);
+  if (!policy) throw new Error(`This repository has no wisdom-team.yaml, so Wisdom is in local mode: nothing is pushed. An admin starts team mode with: wisdom team init`);
   return policy;
 }
 
@@ -34,7 +34,7 @@ function policyOrThrow(project: string): Policy {
 function remoteRefs(project: string, remote: string, policy: Policy): Map<string, string> {
   let out: string;
   try { out = gitText(project, ['ls-remote', remote, `refs/wisdom/${policy.repoId}/*`]); }
-  catch (error) { throw new Error(`Cannot reach the remote "${remote}": ${gitError(error)}. Name another with --remote, or set "remote" in wisdom-team.json.`); }
+  catch (error) { throw new Error(`Cannot reach the remote "${remote}": ${gitError(error)}. Name another with --remote, or set "remote" in wisdom-team.yaml.`); }
   return new Map(out ? out.split('\n').map(line => { const [sha, ref] = line.split('\t'); return [ref, sha] as [string, string]; }) : []);
 }
 
@@ -283,7 +283,7 @@ export function deleteTeamSession(captures: SessionStore, dataDir: string, name:
 export function prune(captures: SessionStore, remoteName?: string, now = Date.now()): string[] {
   const project = projectOf(captures);
   const policy = policyOrThrow(project);
-  if (!policy.retentionDays) throw new Error('wisdom-team.json sets no retentionDays, so nothing is pruned.');
+  if (!policy.retentionDays) throw new Error('wisdom-team.yaml sets no retentionDays, so nothing is pruned.');
   const remote = remoteName ?? policy.remote ?? 'origin';
   fetchRefs(project, remote, policy);
   const referenced = new Set<string>();

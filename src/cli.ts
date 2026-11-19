@@ -60,8 +60,8 @@ Read a session
   wisdom open <position> --capture <session>
                                   Read one turn, tool call or subagent, whole
 
-Team mode (a repository with wisdom-team.json)
-  wisdom team init                Start team mode: write wisdom-team.json for an admin to commit
+Team mode (a repository with wisdom-team.yaml)
+  wisdom team init                Start team mode: write wisdom-team.yaml for an admin to commit
   wisdom team hooks on|off        Wisdom's git hooks: a link line on each commit, its record and
                                   guide written after it, and both sent with your push (init and
                                   connect turn them on in a team-mode repository)
@@ -670,7 +670,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     if (action === 'on' || action === 'off') {
       setGuides(dataDir, action === 'on');
       if (team) {
-        console.log(action === 'on' ? `A model writes the guides of your commits with agent work, reading their sessions since your previous commit (${guideModel(project)} through your Claude Code, unless wisdom-team.json names another writer).`
+        console.log(action === 'on' ? `A model writes the guides of your commits with agent work, reading their sessions since your previous commit (${guideModel(project)} through your Claude Code, unless wisdom-team.yaml names another writer).`
           : 'No model writes your commit guides: Wisdom writes a plain one from each commit\'s record, citing the steps that made it and quoting what was asked in their turns. It costs nothing and does not explain why beyond those requests.');
         return 0;
       }
