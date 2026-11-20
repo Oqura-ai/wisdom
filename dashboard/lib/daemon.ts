@@ -44,7 +44,7 @@ export function localOnly(request: Request): Response | undefined {
   return undefined;
 }
 
-/** For the routes that change something (delete, repair): besides the localhost check, only JSON
+/** For the routes that change something (delete, name, repair): besides the localhost check, only JSON
  * from this page's own origin. A page on another site cannot send JSON here without a CORS
  * preflight, which this server never answers, and a form post carries its own origin, which is refused.
  */

@@ -85,7 +85,7 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom glance [latest]` | List sessions, or show one session turn by turn |
 | `wisdom open t3 --capture latest` | One turn in full: replies, tool calls with output, diffs |
 | `wisdom dashboard` | Print the address of the local dashboard |
-| `wisdom resume <id>` | Continue a session, still recording |
+| `wisdom resume <id or name>` | Continue a session, still recording |
 | `wisdom handoff codex` | Start another agent that reads the last session first (`--emit`: in the background, reading only) |
 | `wisdom share <id>` / `wisdom import <file>` | Send a session to a teammate, read one you received |
 | `wisdom export <id> --out session.md` | A session as Markdown, for a PR or an issue |

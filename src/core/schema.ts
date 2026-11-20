@@ -89,6 +89,10 @@ export interface Manifest {
   /** Where the native file is read, minus where the copy is written. Non-zero once the
    * harness rewrote its file: copying went on from the file's new end. */
   sourceShift?: number;
+  /** A name a person gave this session in Wisdom (the dashboard). Shown before `harnessName`. */
+  name?: string;
+  /** The name a person gave the session in its harness (`claude -n`, /rename, `pi --name`), read from its file. */
+  harnessName?: string;
   scope: { excludedDirectories: string[]; excludedPaths: string[]; maxFileBytes: number; maxFiles: number; maxTotalBytes: number };
 }
 
@@ -155,6 +159,18 @@ export interface LedgerRecord {
   sourceOffset?: number;
   sourceLength?: number;
 }
+
+/** A session's name as it is kept and shown: one line of at most 100 characters. Line breaks and
+ * control characters become spaces; invisible format characters (a direction override) go, except
+ * the joiners emoji are built with, so a name shows what it says wherever it appears (dashboard,
+ * export, an error). Empty means no name.
+ */
+export function sessionName(value: string): string {
+  return [...value.replace(/(?![‌‍])\p{Cf}/gu, '').replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/\s+/g, ' ').trim()].slice(0, 100).join('').trim();
+}
+
+/** Naming a session in Wisdom: an empty name removes it. */
+export const nameSchema = z.object({ session: z.string().min(1), name: z.string().max(1000) }).strict();
 
 // Human-readable summaries are navigation hints, never replacements for evidence.
 export function preview(value: unknown, limit = 240): string {

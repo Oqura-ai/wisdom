@@ -21,7 +21,7 @@ npm.cmd run wisdom -- daemon start|status|stop|run
 npm.cmd run wisdom -- connect --cwd <project>                  # record plain claude/codex/pi with the own login (disconnect undoes)
 npm.cmd run wisdom -- init --cwd <project>                     # .wisdom/, hooks in each harness home, daemon
 npm.cmd run wisdom -- track pi|claude|codex --cwd <project>   # start a harness with its home in .wisdom
-npm.cmd run wisdom -- resume <full-session-id>                 # continue a recorded session, recording
+npm.cmd run wisdom -- resume <full-session-id|name>            # continue a recorded session, recording (a name only one session has)
 npm.cmd run wisdom -- handoff codex|<session-id> [--from <id>] [--emit]  # continue in a session that reads this one first (--emit: background, read-only)
 npm.cmd run wisdom -- share <session> [--redact|--keep-secrets]  # one file for a teammate, after a secret check
 npm.cmd run wisdom -- import <file>                            # read a teammate's share file, read-only

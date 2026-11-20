@@ -18,7 +18,9 @@ export const SHARE_FORMAT = 1;
 export interface Exported { readVersion: number; manifest: Manifest; records: LedgerRecord[]; dir: string; files: string[]; nativeBytes: number }
 
 /** One piece of text bound for the file, and how to name a place inside it. */
-interface Piece { captureId: string; record?: LedgerRecord; path?: string; encoding: 'utf8' | 'base64'; text: string; place: (index: number) => string }
+interface Piece { captureId: string; record?: LedgerRecord; path?: string;
+  /** The session's names: a person typed them, so they are checked like any other text. */
+  names?: true; encoding: 'utf8' | 'base64'; text: string; place: (index: number) => string }
 
 export interface Finding { kind: string; value: string; shown: string; places: string[] }
 
@@ -69,6 +71,8 @@ function pieces(session: Exported): { pieces: Piece[]; unscanned: number } {
   }
   const transcript = records.filter(record => record.sourceOffset !== undefined);
   const result: Piece[] = records.map(record => ({ captureId, record, encoding: 'utf8', text: JSON.stringify(record), place: () => at(record) }));
+  if (manifest.name || manifest.harnessName) result.push({ captureId, names: true, encoding: 'utf8',
+    text: JSON.stringify({ name: manifest.name, harnessName: manifest.harnessName }), place: () => 'session name' });
   let unscanned = 0;
   for (const file of files) {
     let bytes = fs.readFileSync(path.join(dir, file));
@@ -156,10 +160,12 @@ export function writeShare(draft: ShareDraft, redact: Finding[], out: string): {
   const edited = new Set<string>();
   const body: string[] = [];
   for (const session of draft.sessions) {
-    body.push(JSON.stringify({ kind: 'session', manifest: session.manifest }));
+    const names = draft.pieces.find(piece => piece.names && piece.captureId === session.manifest.captureId);
+    body.push(JSON.stringify({ kind: 'session', manifest: names ? { ...session.manifest, ...JSON.parse(redactSecrets(names.text, values)) } : session.manifest }));
   }
   const transcripts = redactTranscripts(draft.pieces, values);
   for (const piece of draft.pieces) {
+    if (piece.names) continue;
     const text = piece.path === 'native-session.jsonl' && transcripts.has(piece.captureId) ? transcripts.get(piece.captureId)!.text
       : piece.encoding === 'utf8' ? redactSecrets(piece.text, values) : piece.text;
     if (text !== piece.text && piece.path) edited.add(`${piece.captureId}/${piece.path}`);

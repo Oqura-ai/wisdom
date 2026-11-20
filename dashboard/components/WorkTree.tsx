@@ -8,6 +8,7 @@ import { BackButton, Face, HarnessIcon, StatusDot, UserAvatar, cost, harnessLabe
 import { TokenBar } from './TokenBar';
 import { ChatView, toolTargets } from './ChatView';
 import { DeleteDialog } from './DeleteDialog';
+import { SessionName } from './SessionList';
 
 type View = 'chat' | 'dev';
 function useView(): [View, (view: View) => void] {
@@ -21,8 +22,8 @@ function useView(): [View, (view: View) => void] {
  */
 const linkLabel = { continues: 'continues', 'continued-after': 'continued after', 'continued-by': 'continued by', cloned: 'cloned from', 'cloned-by': 'cloned into' } as const;
 
-export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDeleted }: { session: Session; readVersion?: number; titles: Map<string, string>;
-  onBack: () => void; onOpen: (captureId: string) => void; onDeleted: () => void }) {
+export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDeleted, onRenamed }: { session: Session; readVersion?: number; titles: Map<string, string>;
+  onBack: () => void; onOpen: (captureId: string) => void; onDeleted: () => void; onRenamed: () => void }) {
   const [deleting, setDeleting] = useState(false);
   const [data, setData] = useState<{ readVersion: number; events: EventRecord[]; usage: EventRecord[] }>();
   const [error, setError] = useState<string>();
@@ -97,6 +98,7 @@ export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDelet
           title={session.status === 'recording' ? 'It can be deleted once it stops recording' : 'Delete this session'}>Delete</button>}
         {deleting && <DeleteDialog sessions={[session.captureId]} titles={titles} onClose={() => setDeleting(false)} onDeleted={onDeleted} />}
       </div>
+      <SessionName session={session} titles={titles} onRenamed={onRenamed} />
       {session.shared ? (
         <div className="resume-line shared-line">
           <span className="label">shared</span>

@@ -86,6 +86,9 @@ export interface HarnessAdapter {
   nativeCwd(entry: any): string | undefined;
   /** The harness's own version, when a native line states it. */
   nativeVersion(entry: any): string | undefined;
+  /** The name a person gave the session in the harness, when this native line sets it; '' when
+   * it removes it. Names the harness makes up itself (from the first prompt) are not names. */
+  nativeName(entry: any): string | undefined;
   /** The session this native line says it was copied from, when it says so. */
   nativeForkedFrom(entry: any): string | undefined;
   /** Whether prompt text is a notice the harness wrote itself rather than a person's words. */

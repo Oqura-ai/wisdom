@@ -27,6 +27,8 @@ async function change<T>(route: string, body: unknown): Promise<T> {
 /** What deleting these sessions would do; nothing is deleted. A session the daemon cannot find comes back with `error`. */
 export const previewDelete = (sessions: string[]) => change<{ results: (RemovalPlan | { session: string; error: string })[] }>('/api/delete', { sessions, preview: true });
 export const deleteSessions = (sessions: string[], harnessCopy: boolean) => change<{ results: DeleteResult[] }>('/api/delete', { sessions, harnessCopy });
+/** Name one of this project's sessions; an empty name removes it. Comes back as the daemon kept it. */
+export const renameSession = (session: string, name: string) => change<{ session: string; name?: string }>('/api/name', { session, name });
 
 async function get<T>(route: string): Promise<T> {
   const response = await fetch(route, { cache: 'no-store' });
@@ -60,7 +62,8 @@ export interface HarnessTotals { harness: string; captures: number; recording: n
 export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session?: string; deleted?: boolean; harness?: string; turns?: number }
 /** Where a shared copy came from. A shared session is read-only, so it has no resume command. */
 export interface SharedInfo { shareId: string; project: string; sharedAt: string; importedAt: string; redactions: number; patchesEdited: string[] }
-export interface Session { captureId: string; harness: string; harnessVersion?: string; status: string; resume?: { powershell: string; posix: string }; shared?: SharedInfo;
+/** `name`: given in this dashboard. `harnessName`: given in the harness (`claude -n`, /rename, `pi --name`). */
+export interface Session { captureId: string; name?: string; harnessName?: string; harness: string; harnessVersion?: string; status: string; resume?: { powershell: string; posix: string }; shared?: SharedInfo;
   endReason?: string; startedAt: string; endedAt?: string; lastObservedAt: string; requests: number; replies: number; tools: number;
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens; links: SessionLink[]; evidenceMissing?: boolean }
 export interface ProjectStats { readVersion: number; workspaceRoot: string; harnesses: HarnessTotals[]; sessions: Session[];

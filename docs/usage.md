@@ -8,7 +8,7 @@
 | `wisdom disconnect` | Take out exactly what `connect` added. Recordings are kept. |
 | `wisdom init` | Make a folder a Wisdom project for `wisdom track`: `.wisdom/`, hooks and the reading skill in each harness's home there, the daemon. Running it again repairs them. |
 | `wisdom track claude\|codex\|pi` | Start a harness with its home in the project, under its own login there. Harness options go after `--`, such as `-- --continue`. |
-| `wisdom resume <session-id>` | Continue a recorded session in its harness and folder, still recording. Takes the full ID only, so a resume never lands in the wrong session. |
+| `wisdom resume <id or name>` | Continue a recorded session in its harness and folder, still recording. Takes the full ID, or a [name](#naming-a-session) only one session has (any letter case), so a resume never lands in the wrong session. An exact ID always wins; a name two sessions share is refused, with both IDs. |
 | `wisdom handoff <harness\|session-id> [--from <session-id>]` | Continue work in a new session of any harness, or an existing session, that reads another session first. See [handing work on](#handing-work-on). |
 | `wisdom share <session>...` | Write one file to send a teammate, after a check for secrets. See [sharing a session](#sharing-a-session). |
 | `wisdom import <file>` | Read a teammate's shared file in this project, read-only. See [reading a shared session](#reading-a-shared-session). |
@@ -173,6 +173,15 @@ The same check for secrets as `wisdom share` runs first, with the same choices: 
 - **Repair:** when a harness's hooks point to a copy of Wisdom that moved or is another one, or its reading skill is missing or older, **Repair…** rewrites them the way `wisdom init` or `wisdom connect` would. It first copies every file it changes into `.wisdom/backups/<time>/`, and each backup can be restored from the same place. Sessions already running keep the hooks they started with until they restart, and Codex runs changed hooks only after you review them again in `/hooks`. A project settings file that git tracks is never rewritten.
 - **What stays in the terminal:** starting and stopping the daemon. The dashboard is served by the daemon, so it can't start it, and stopping it would close the page.
 - **Storage:** the overview shows the project's disk space: each session's evidence, the database, each harness home in `.wisdom`, and the rest, with the largest sessions. **Clean up…** lists sessions not active for 30 days (change the number), to pick one by one or delete all; the delete dialog below then shows exactly what goes. Nothing is ever deleted on a schedule.
+
+## Naming a session
+
+A session shows as its name, or else its first prompt. There are two ways to name one:
+
+- **In the harness, as you start it or while it runs.** `claude -n "fix login"` or `/rename` in Claude Code; `pi --name "fix login"` or renaming in Pi. With `wisdom track`, pass the flag after `--`: `wisdom track claude -- -n "fix login"`. Wisdom reads the name from the session's file, so it works the same in a tracked or a connected session. Names Claude Code makes up by itself are not used. Codex keeps its names outside the session file, beside the ones it makes up, so for Codex name the session in the dashboard. A session named before Wisdom could read names shows it once the harness writes the name again (a new `/rename`). A clone or fork starts with its original's name.
+- **In the dashboard.** Open the session and press **Rename**. A name given here comes before the harness's, and saving it empty goes back to the harness's name or the first prompt. This works while a session records, too. A session shared with you keeps the name it came with.
+
+A name is one line of at most 100 characters; line breaks and control characters become spaces, and invisible direction marks are removed. Resume a session by its name: `wisdom resume "fix login"` (quoted when it has spaces). It is a label, not evidence: changing it doesn't change the recording or what `glance` and `open` show, and other dashboard tabs show it on their next refresh. `wisdom export` uses it as the document's title. A name leaves your machine with `wisdom share` and team push, after the same secret check as everything else.
 
 ## Deleting a session
 

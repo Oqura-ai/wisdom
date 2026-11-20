@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { backups, repair, repairTargets, restore } from '../setup/repair.js';
 import { Captures } from '../record/captures.js';
 import { SharedLibrary, readLedger, readView } from '../share/shared.js';
-import { hookSchema, viewSchema } from '../core/schema.js';
+import { hookSchema, nameSchema, viewSchema } from '../core/schema.js';
 import { writeJson } from '../storage/ledger.js';
 import { startDashboard } from './dashboard.js';
 import { CommitWatcher } from '../team/watch.js';
@@ -25,7 +25,8 @@ import { deleteTeamSession, fetchTeam, prune, push } from '../team/team.js';
 // 17: /team; commit records.
 // 18: /guide removed: guides are written by the git hooks.
 // 19: /resolve finds the session that took a handoff.
-export const CAPTURE_API = 19;
+// 20: /name, session names in the views, and /resolve by name.
+export const CAPTURE_API = 20;
 
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 
@@ -152,8 +153,11 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
           if (!link) throw new Error(`No recorded session took handoff ${handoff}.`);
           send(200, { captureId: link.captureId }); return;
         }
-        // Resuming starts a harness, so it takes the exact session ID only: never a guess.
-        const { captureId, harness, workspaceRoot, source } = captures.get(String((input as any)?.session ?? '')).manifest;
+        // Resuming starts a harness, so it is never a guess: the exact session ID, or with `byName`
+        // (wisdom resume only) a name only one session has. An exact ID always wins over a name.
+        const ref = String((input as any)?.session ?? '');
+        const id = (input as any)?.byName === true && !captures.ledgers.has(ref) ? captures.named(ref) : ref;
+        const { captureId, harness, workspaceRoot, source } = captures.get(id).manifest;
         send(200, { captureId, harness, workspaceRoot, source }); return;
       }
       if (url.pathname === '/team') {
@@ -166,6 +170,11 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
         throw new Error('Use action push, fetch, delete (with session) or prune.');
       }
       if (url.pathname === '/delete') { send(200, deleteSessions(captures, input)); return; }
+      if (url.pathname === '/name') {
+        const { session, name } = nameSchema.parse(input);
+        if (!captures.ledgers.has(session) && library.owner(session)) throw new Error('A shared copy is read-only; it keeps the name it came with.');
+        send(200, captures.rename(session, name)); return;
+      }
       if (url.pathname === '/storage') { send(200, captures.storage()); return; }
       if (url.pathname === '/doctor') { send(200, await checks((input as any)?.fresh === true)); return; }
       if (url.pathname === '/repair') {

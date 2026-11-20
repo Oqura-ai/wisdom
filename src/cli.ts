@@ -43,7 +43,7 @@ Set up
 
 Run an agent
   wisdom track claude|codex|pi    Start an agent in this project, recording
-  wisdom resume <session-id>      Continue a recorded session (takes the full ID)
+  wisdom resume <id|name>         Continue a recorded session (the full ID, or a name only one session has)
   wisdom handoff <claude|codex|pi|session-id> [--from <session-id>] ["what it should know"]
                                   Continue work in a new or existing session, which reads the
                                   other session first
@@ -210,8 +210,8 @@ async function main(): Promise<void> {
   if (command === 'track') { process.exitCode = await track(first, values, harnessArgs, dataDir, port); return; }
   if (command === 'resume') {
     // The ledger knows the harness, folder and full ID; the harness gets its own resume flag.
-    if (!first) throw new Error('Use: wisdom resume SESSION-ID (the full ID; glance lists them)');
-    const session = await call(await ensureDaemon(dataDir, port), '/resolve', { session: first });
+    if (!first) throw new Error('Use: wisdom resume SESSION-ID or NAME (the full ID, which glance lists, or a name only one session has)');
+    const session = await call(await ensureDaemon(dataDir, port), '/resolve', { session: first, byName: true });
     const [harness, ...args] = adapter(session.harness).resume(session.captureId);
     console.error(`Resuming ${session.harness} session ${session.captureId}`);
     // A session continues in the home it ran in: Wisdom's, or the person's own in a connected project.
@@ -473,7 +473,7 @@ async function share(refs: string[], values: any, dataDir: string, port?: number
   const out = path.resolve(values.out ?? defaultSharePath(dataDir, draft));
   const { file, bytes } = writeShare(draft, redact, out);
   const records = draft.sessions.reduce((n, session) => n + session.records.length, 0);
-  const files = draft.pieces.length - records;
+  const files = draft.pieces.filter(piece => piece.path).length;
   const size = bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   console.log(`\nSaved ${file} (${size}): ${draft.sessions.length === 1 ? '1 session' : `${draft.sessions.length} sessions`}, ${records} records, ${files} files.`);
   if (redact.length) console.log(`Redacted ${redact.length === 1 ? '1 value' : `${redact.length} values`} in this file. Your recording is unchanged.`);

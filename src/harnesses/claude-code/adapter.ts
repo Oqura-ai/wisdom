@@ -70,6 +70,8 @@ export const claudeCode: HarnessAdapter = {
   // projects/<the folder, every character not a letter or digit as ->/<session>.jsonl
   sessionFile: (home, sessionId, cwd) => path.join(home, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`),
   nativeVersion: entry => typeof entry?.version === 'string' ? entry.version : undefined,
+  // `claude -n` and /rename write custom-title. ai-title and agent-name can be made up by Claude Code itself.
+  nativeName: entry => entry?.type === 'custom-title' && typeof entry.customTitle === 'string' ? entry.customTitle : undefined,
   nativeChanges: () => [],
   isScriptStep: () => false,
   nativeForkedFrom: entry => typeof entry?.forkedFrom?.sessionId === 'string' ? entry.forkedFrom.sessionId : undefined,

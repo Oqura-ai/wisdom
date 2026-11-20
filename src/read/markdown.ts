@@ -25,7 +25,7 @@ export function sessionMarkdown(store: SessionStore, ref: string): { readVersion
   const calls = records.filter(r => r.type === 'tool_started').length;
   const failed = records.filter(r => r.type === 'tool_finished' && r.isError === true).length;
   const changes = records.filter(r => r.type === 'file_change').length;
-  const title = firstLine(views[0]?.request.text.text) ?? manifest.captureId;
+  const title = manifest.name ?? manifest.harnessName ?? firstLine(views[0]?.request.text.text) ?? manifest.captureId;
   const out: string[] = [
     `# ${escape(title)} · ${manifest.harness} session ${manifest.captureId.slice(0, 8)}`, '',
     [`${manifest.harness}${manifest.harnessVersion ? ` ${manifest.harnessVersion}` : ''}`, minute(manifest.startedAt), count(turns.length, 'turn'),

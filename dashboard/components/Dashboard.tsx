@@ -21,26 +21,31 @@ function useLive(): Live {
   return live;
 }
 
-/** Each session's first prompt, read once: it never changes after it is recorded.
- * ponytail: one capture read per session; a title field on the project view would be cheaper.
+/** What each session is called: the name given here, else the one given in its harness, else
+ * its first prompt. A first prompt is read once, only for a session with no name: it never
+ * changes after it is recorded. ponytail: one capture read per unnamed session.
  */
 function useSessionTitles(sessions?: Session[]): Map<string, string> {
-  const [titles, setTitles] = useState(new Map<string, string>());
+  const [prompts, setPrompts] = useState(new Map<string, string>());
   const tried = useRef(new Set<string>());
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      for (const { captureId, requests } of sessions ?? []) {
+      for (const { captureId, requests, name, harnessName } of sessions ?? []) {
         if (cancelled) return;
-        if (!requests || tried.current.has(captureId)) continue;
+        if (!requests || name || harnessName || tried.current.has(captureId)) continue;
         tried.current.add(captureId);
         const title = await firstPrompt(captureId).catch(() => undefined);
-        if (title) setTitles(current => new Map(current).set(captureId, title));
+        if (title) setPrompts(current => new Map(current).set(captureId, title));
       }
     })();
     return () => { cancelled = true; };
   }, [sessions]);
-  return titles;
+  return useMemo(() => {
+    const titles = new Map(prompts);
+    for (const { captureId, name, harnessName } of sessions ?? []) if (name ?? harnessName) titles.set(captureId, (name ?? harnessName)!);
+    return titles;
+  }, [prompts, sessions]);
 }
 
 /** URL holds the view state, so a refresh or a shared link reopens the same session. */
@@ -76,8 +81,8 @@ export function Dashboard() {
   const [stats, setStats] = useState<ProjectStats>();
   const [shared, setShared] = useState<Session[]>([]);
   const [error, setError] = useState<string>();
-  // A delete removes rows without moving the version, so it asks for a fresh read itself.
-  const [deletions, setDeletions] = useState(0);
+  // A delete or a rename changes sessions without moving the version, so it asks for a fresh read itself.
+  const [changes, setChanges] = useState(0);
   // The session drawer floats over the page; the main view always keeps the full width.
   const [drawer, setDrawer] = useState(false);
   useEffect(() => {
@@ -92,12 +97,12 @@ export function Dashboard() {
     if (live.status !== 'live') return;
     read<{ projects: Project[] }>({ view: 'projects' }).then(result => { setProjects(result.projects); setError(undefined); }, e => setError(e.message));
     read<{ sessions: Session[] }>({ view: 'shared' }).then(result => setShared(result.sessions), e => setError(e.message));
-  }, [live.status, live.readVersion, deletions]);
+  }, [live.status, live.readVersion, changes]);
   const workspace = view.workspace ?? projects?.[0]?.workspaceRoot;
   useEffect(() => {
     if (live.status !== 'live' || !workspace) return;
     read<ProjectStats>({ view: 'project', workspaceRoot: workspace }).then(setStats, e => setError(e.message));
-  }, [live.status, live.readVersion, workspace, deletions]);
+  }, [live.status, live.readVersion, workspace, changes]);
 
   // Most recently active first, the same order and time everywhere sessions are listed.
   const sessions = useMemo(() => (stats?.sessions ?? []).filter(s => !view.harness || s.harness === view.harness)
@@ -158,9 +163,10 @@ export function Dashboard() {
         <main className="main" ref={main}>
           {selected
             ? <WorkTree key={selected.captureId} session={selected} readVersion={live.readVersion} titles={titles} onBack={() => setView({ capture: undefined })}
-                onOpen={capture => setView({ capture })} onDeleted={() => { setView({ capture: undefined }); setDeletions(n => n + 1); }} />
+                onOpen={capture => setView({ capture })} onDeleted={() => { setView({ capture: undefined }); setChanges(n => n + 1); }}
+                onRenamed={() => setChanges(n => n + 1)} />
             : stats ? <Overview stats={stats} sessions={sessions} titles={titles} harness={view.harness} onOpen={capture => setView({ capture })}
-                onDeleted={() => setDeletions(n => n + 1)} />
+                onDeleted={() => setChanges(n => n + 1)} />
             : <div className="empty">{projects && !projects.length
               ? <>No sessions recorded here yet. Start one with <code>wisdom track pi|claude|codex</code>.
                   {shared.length > 0 && <> {shared.length === 1 ? 'One session' : `${shared.length} sessions`} shared with you {shared.length === 1 ? 'is' : 'are'} under <button className="plain link" onClick={() => setDrawer(true)}>Sessions</button>.</>}</>
