@@ -250,10 +250,10 @@ test('a handoff into a running session starts nothing and prints the prompt to p
     assert.match(running.stdout, /^While you were away, Wisdom session codex-b \(codex\) continued this work\.\n\nFrom the person handing it off: the words\n\n[^\n]* It is still running: the handoff its newest turn is waiting on is this one\.\n/);
 
     const said = async (...args: string[]) => (await run(...args)).stderr.trim();
-    assert.equal(await said('nobody'), 'nobody is neither a harness (claude, codex, pi) nor a recorded session\'s full ID. glance lists sessions.');
-    assert.equal(await said('codex', '--from', 'missing'), 'No recorded session has the ID missing. Use the full session ID; glance lists them.');
+    assert.equal(await said('nobody'), 'nobody is neither a harness (claude, codex, pi) nor a recorded session\'s full ID or name. glance lists sessions.');
+    assert.equal(await said('codex', '--from', 'missing'), 'No recorded session has the ID or name missing. Use the full session ID or a name only one session has; glance lists them.');
     assert.equal(await said('claude-a', '--from', 'claude-a'), 'A session cannot continue itself.');
-    assert.equal(await said(), 'Use: wisdom handoff claude|codex|pi|SESSION-ID [--from SESSION-ID] [--emit] ["what it should know"]');
+    assert.equal(await said(), 'Use: wisdom handoff claude|codex|pi|SESSION [--from SESSION] [--emit] ["what it should know"] (a session: its full ID, or a name only one session has)');
     // Pi can't be held to reading, so it takes no emitted handoff, new or existing.
     assert.match(await said('pi', '--from', 'codex-b', '--emit'), /^Pi cannot take an emitted handoff: it reads a recording only through its shell, which could also change files\. Emit it to claude or codex, or open it without --emit\.$/);
     await send(daemon.connection, root, 'pi', 'pi-c', 'input');

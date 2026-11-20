@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { backups, repair, repairTargets, restore } from '../setup/repair.js';
 import { Captures } from '../record/captures.js';
 import { SharedLibrary, readLedger, readView } from '../share/shared.js';
-import { hookSchema, nameSchema, viewSchema } from '../core/schema.js';
+import { hookSchema, nameSchema, shownName, viewSchema } from '../core/schema.js';
 import { writeJson } from '../storage/ledger.js';
 import { startDashboard } from './dashboard.js';
 import { CommitWatcher } from '../team/watch.js';
@@ -26,7 +26,8 @@ import { deleteTeamSession, fetchTeam, prune, push } from '../team/team.js';
 // 18: /guide removed: guides are written by the git hooks.
 // 19: /resolve finds the session that took a handoff.
 // 20: /name, session names in the views, and /resolve by name.
-export const CAPTURE_API = 20;
+// 21: /resolve byName 'optional' and its name; export, transcript and markdown take a name; team copies say who recorded them.
+export const CAPTURE_API = 21;
 
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 
@@ -154,11 +155,15 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
           send(200, { captureId: link.captureId }); return;
         }
         // Resuming starts a harness, so it is never a guess: the exact session ID, or with `byName`
-        // (wisdom resume only) a name only one session has. An exact ID always wins over a name.
+        // (resume, handoff) a name only one session has. An exact ID always wins over a name.
+        // `byName: 'optional'` answers {} when no session has it, for a caller with other options.
         const ref = String((input as any)?.session ?? '');
-        const id = (input as any)?.byName === true && !captures.ledgers.has(ref) ? captures.named(ref) : ref;
-        const { captureId, harness, workspaceRoot, source } = captures.get(id).manifest;
-        send(200, { captureId, harness, workspaceRoot, source }); return;
+        const byName = (input as any)?.byName;
+        const id = byName !== true && byName !== 'optional' || captures.ledgers.has(ref) ? ref
+          : byName === 'optional' ? captures.named(ref, true) : captures.named(ref);
+        if (!id) { send(200, {}); return; }
+        const { manifest } = captures.get(id);
+        send(200, { captureId: manifest.captureId, harness: manifest.harness, workspaceRoot: manifest.workspaceRoot, source: manifest.source, name: shownName(manifest) }); return;
       }
       if (url.pathname === '/team') {
         const { action, remote, session } = (input ?? {}) as { action?: string; remote?: string; session?: string };

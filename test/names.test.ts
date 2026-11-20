@@ -7,7 +7,8 @@ import { call } from '../src/service/client.js';
 import { startDaemon, type Connection } from '../src/service/daemon.js';
 import { adapter } from '../src/harnesses/index.js';
 import { sessionName } from '../src/core/schema.js';
-import { draftShare, readShare, writeShare } from '../src/share/share.js';
+import { defaultSharePath, draftShare, fileLabel, readShare, writeShare } from '../src/share/share.js';
+import { planHandoff } from '../src/sessions/handoff.js';
 import { harnessHome, marker } from '../src/core/paths.js';
 
 const line = (root: string, entry: object) => JSON.stringify({ sessionId: 'name-me', cwd: root, timestamp: '2026-01-01T10:00:00.000Z', ...entry });
@@ -117,7 +118,7 @@ test('resume finds a session by a name only it has, and never guesses', async ()
     assert.equal(await resolve('Other one'), 'other-one', 'a name given in the harness');
     assert.equal(await resolve('other-one'), 'other-one', 'an ID is an ID');
     await assert.rejects(resolve('Login'), /No recorded session has the ID or name "Login"/, 'a part of a name is not the name');
-    await assert.rejects(resolve('Login fix', false), /No recorded session has the ID Login fix/, 'clone and handoff take IDs only');
+    await assert.rejects(resolve('Login fix', false), /No recorded session has the ID Login fix/, 'without byName, an ID only (clone checks that a new ID is free)');
 
     // A session named like another session's ID: the ID wins.
     await call(c, '/name', { session: 'other-one', name: 'name-me' });
@@ -133,6 +134,54 @@ test('resume finds a session by a name only it has, and never guesses', async ()
     await daemon.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('handoff, clone, share and export take a name too, tried last: an agent word, an ID, a prefix and latest mean what they did', async () => {
+  const { root, data, daemon } = await recorded();
+  try {
+    const c = daemon.connection;
+    const file = path.join(harnessHome(data, 'claude-code'), 'projects', 'p', 'other-one.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ type: 'user', sessionId: 'other-one', cwd: root, uuid: 'u9', timestamp: '2026-01-02T10:00:00.000Z', message: { role: 'user', content: 'hi' } }) + '\n');
+    const quiet = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(file, quiet, quiet);
+    daemon.captures.scan();
+    await call(c, '/name', { session: 'name-me', name: 'claude' });
+    await call(c, '/name', { session: 'other-one', name: 'Fix login' });
+    const plan = (target: string, from?: string) => planHandoff(c, target, from, '', root);
+
+    assert.equal((await plan('claude', 'name-me')).target, undefined, 'claude is the agent, never the session named claude');
+    assert.equal((await plan('fix LOGIN', 'name-me')).target?.captureId, 'other-one', 'a name, in any letter case');
+    assert.equal((await plan('codex', 'Fix login')).from.captureId, 'other-one', '--from takes a name');
+    await assert.rejects(plan('nobody'), /nobody is neither a harness \(claude, codex, pi\) nor a recorded session's full ID or name/);
+
+    const resolved = async (capture: string) => (await call(c, '/view', { view: 'markdown', capture })).captureId;
+    assert.equal(await resolved('Fix login'), 'other-one', 'export takes a name');
+    assert.equal((await call(c, '/view', { view: 'transcript', capture: 'fix login' })).manifest.captureId, 'other-one', 'clone and handoff --from take a name');
+    assert.equal((await call(c, '/view', { view: 'export', capture: 'Fix login' })).manifest.captureId, 'other-one', 'share takes a name');
+    // A name that is also another session's ID prefix: the prefix wins, as it always did.
+    await call(c, '/name', { session: 'name-me', name: 'other-on' });
+    assert.equal(await resolved('other-on'), 'other-one');
+    assert.equal(await resolved('latest'), 'other-one', 'latest is the newest session, whatever the names');
+    await assert.rejects(resolved('Fix'), /No session matches "Fix"/, 'part of a name is not a name');
+
+    await call(c, '/name', { session: 'name-me', name: 'fix login' });
+    await assert.rejects(resolved('Fix login'), /2 sessions are named "Fix login", so none was opened/);
+    await assert.rejects(plan('Fix login'), /2 sessions are named "Fix login"/);
+  } finally {
+    await daemon.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a share or export file starts with the session\'s name, unless the name looks like a secret', () => {
+  assert.equal(fileLabel({ name: 'Fix the Login page!' }), 'fix-the-login-page-');
+  assert.equal(fileLabel({ harnessName: 'Café crème' }), 'cafe-creme-', 'accents become plain letters');
+  assert.equal(fileLabel({ name: '日本語' }), '', 'nothing left to name it by');
+  assert.equal(fileLabel({}), '');
+  assert.equal(fileLabel({ name: 'try sk-proj-abcdefghijklmnopqrstuvwxyz123456' }), '', 'a file name is never redacted, so it holds no possible secret');
+  assert.equal(fileLabel({ name: 'a'.repeat(60) }), `${'a'.repeat(40)}-`);
+  const draft = { sessions: [{ manifest: { captureId: '7e1f2a3b-0000', name: 'Fix login' } }] } as any;
+  assert.equal(path.basename(defaultSharePath('D', draft, new Date('2026-11-20T15:00:00Z'))), 'fix-login-7e1f2a3b-20261120-1500.wisdom-share');
 });
 
 test('a name leaves in a share file only after the secret check, and is redacted with the rest', async () => {

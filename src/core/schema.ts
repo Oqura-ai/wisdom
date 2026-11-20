@@ -169,6 +169,9 @@ export function sessionName(value: string): string {
   return [...value.replace(/(?![‌‍])\p{Cf}/gu, '').replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/\s+/g, ' ').trim()].slice(0, 100).join('').trim();
 }
 
+/** The name a session shows: the one given in Wisdom, else the one given in its harness. */
+export const shownName = (manifest: Pick<Manifest, 'name' | 'harnessName'>): string | undefined => manifest.name ?? manifest.harnessName;
+
 /** Naming a session in Wisdom: an empty name removes it. */
 export const nameSchema = z.object({ session: z.string().min(1), name: z.string().max(1000) }).strict();
 

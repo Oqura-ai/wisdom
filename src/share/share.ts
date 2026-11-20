@@ -6,7 +6,7 @@ import { call } from '../service/client.js';
 import type { Connection } from '../service/daemon.js';
 import { wisdomVersion } from '../setup/doctor.js';
 import { hash } from '../storage/ledger.js';
-import type { LedgerRecord, Manifest } from '../core/schema.js';
+import { shownName, type LedgerRecord, type Manifest } from '../core/schema.js';
 import { maskSecret, redactSecrets, scanSecrets } from './secrets.js';
 
 /** A share file is gzipped JSON lines: a header, each session's manifest and records, its
@@ -253,12 +253,22 @@ export async function chooseRedactions(findings: Finding[], flags: { redact?: bo
   return chosen;
 }
 
+/** A session's name as the start of a file name (`fix-login-`): letters, digits and dashes, at most
+ * 40. Empty without a name, and when the name holds what looks like a secret: a file's name is
+ * never redacted, and it goes wherever the file goes. */
+export function fileLabel(manifest: Pick<Manifest, 'name' | 'harnessName'>): string {
+  const name = shownName(manifest);
+  if (!name || scanSecrets(name).length) return '';
+  const slug = name.normalize('NFKD').replace(/\p{M}+/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '');
+  return slug ? `${slug}-` : '';
+}
+
 /** Where a share is saved by default: inside the data folder, which git ignores and Wisdom
  * never observes, so a file holding a kept secret cannot be committed by accident.
  */
 export function defaultSharePath(dataDir: string, draft: ShareDraft, now = new Date()): string {
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
-  const first = draft.sessions[0]!.manifest.captureId.slice(0, 8);
+  const { manifest } = draft.sessions[0]!;
   const more = draft.sessions.length > 1 ? `-and-${draft.sessions.length - 1}` : '';
-  return path.join(dataDir, 'shared-out', `${first}${more}-${stamp}.wisdom-share`);
+  return path.join(dataDir, 'shared-out', `${fileLabel(manifest)}${manifest.captureId.slice(0, 8)}${more}-${stamp}.wisdom-share`);
 }

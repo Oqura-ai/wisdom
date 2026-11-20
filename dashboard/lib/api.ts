@@ -60,8 +60,10 @@ export interface HarnessTotals { harness: string; captures: number; recording: n
   failures: number; changes: number; gaps: number; subagents: number; tokens: Tokens }
 /** A handoff between two sessions, seen from this one. No `session` when a person deleted the other one. */
 export interface SessionLink { kind: 'continues' | 'continued-after' | 'continued-by' | 'cloned' | 'cloned-by'; session?: string; deleted?: boolean; harness?: string; turns?: number }
-/** Where a shared copy came from. A shared session is read-only, so it has no resume command. */
-export interface SharedInfo { shareId: string; project: string; sharedAt: string; importedAt: string; redactions: number; patchesEdited: string[] }
+/** Where a shared copy came from. A shared session is read-only, so it has no resume command.
+ * `team`: fetched from the team, with who recorded it when the team shares that (git config, unverified). */
+export interface SharedInfo { shareId: string; project: string; sharedAt: string; importedAt: string; redactions: number; patchesEdited: string[];
+  team?: { recordedBy?: { name: string; email: string } } }
 /** `name`: given in this dashboard. `harnessName`: given in the harness (`claude -n`, /rename, `pi --name`). */
 export interface Session { captureId: string; name?: string; harnessName?: string; harness: string; harnessVersion?: string; status: string; resume?: { powershell: string; posix: string }; shared?: SharedInfo;
   endReason?: string; startedAt: string; endedAt?: string; lastObservedAt: string; requests: number; replies: number; tools: number;

@@ -211,6 +211,7 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 .session-link:hover { color: var(--ink); border-color: var(--ink-soft); }
 .session-link .label { font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--faint); }
 .session-link code { font: 11.5px var(--mono); }
+.session-link .link-name { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ghost { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 999px; padding: 4px 12px; color: var(--ink-soft); box-shadow: var(--card-depth); font-size: 11px; }
 .session-metrics { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
 .metric { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; padding: 10px 15px; display: grid; gap: 2px; min-width: 96px; box-shadow: var(--card-depth); }

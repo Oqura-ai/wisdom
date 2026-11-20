@@ -4,7 +4,7 @@ import { createTwoFilesPatch } from 'diff';
 import { Ledger, hash, writeJson } from '../storage/ledger.js';
 import { LedgerDatabase } from '../storage/database.js';
 import { SessionFiles, scope } from './workspace.js';
-import { hookSchema, preview, sessionName, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
+import { hookSchema, preview, sessionName, shownName, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
 import { adapter, harnessNames } from '../harnesses/index.js';
 import type { NativeEntry } from '../harnesses/types.js';
 import { surfaceText } from '../core/content.js';
@@ -654,11 +654,15 @@ export class Captures {
   }
 
   /** The one session of this project with this name, as it is shown (the name given here, else
-   * the harness's), in any letter case. Never a guess: no match, or more than one, is refused. */
-  named(name: string): string {
+   * the harness's), in any letter case. Never a guess: more than one is always refused; no match
+   * is refused too, unless `optional`, which leaves it to the caller. */
+  named(name: string): string;
+  named(name: string, optional: true): string | undefined;
+  named(name: string, optional = false): string | undefined {
     const wanted = sessionName(name).toLowerCase();
-    const matches = wanted ? [...this.ledgers.values()].filter(ledger => (ledger.manifest.name ?? ledger.manifest.harnessName)?.toLowerCase() === wanted) : [];
+    const matches = wanted ? [...this.ledgers.values()].filter(ledger => shownName(ledger.manifest)?.toLowerCase() === wanted) : [];
     if (matches.length === 1) return matches[0]!.manifest.captureId;
+    if (!matches.length && optional) return undefined;
     if (!matches.length) throw new Error(`No recorded session has the ID or name "${name}". wisdom glance lists the IDs; names show in the dashboard.`);
     throw new Error(`${matches.length} sessions are named "${name}", so none was opened: ${matches.map(({ manifest }) =>
       `${manifest.captureId} (${manifest.harness}, started ${manifest.startedAt.slice(0, 16).replace('T', ' ')})`).join(', ')}. Use the ID, or rename one.`);

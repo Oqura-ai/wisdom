@@ -16,7 +16,7 @@ import type { CommitRecord } from './team/commits.js';
 import type { SessionStore } from './storage/store.js';
 import { DEFAULT_MODEL, harnessOn, harnessPath, SETTINGS_FILE, settingsOrDefaults, shownAs, writeSettings, type Settings } from './core/settings.js';
 import { planClone } from './sessions/clone.js';
-import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share/share.js';
+import { chooseRedactions, defaultSharePath, draftShare, fileLabel, findSecrets, formatFindings, homePlaces, writeShare } from './share/share.js';
 import { redactSecrets } from './share/secrets.js';
 import { prCheck } from './team/team.js';
 import { POLICY_FILE, readPolicy, writePolicy } from './team/gitrefs.js';
@@ -25,6 +25,7 @@ import { guidesOn, setGuides } from './team/guides.js';
 import { serveMcp } from './service/mcp.js';
 import { findDataDir, marker, movedFrom } from './core/paths.js';
 import { writeJson } from './storage/ledger.js';
+import { shownName } from './core/schema.js';
 import { installPi, launchPi, piCommand } from './harnesses/pi/launch.js';
 import { installClaudeCode, launchClaudeCode } from './harnesses/claude-code/launch.js';
 import { installCodex, launchCodex } from './harnesses/codex/launch.js';
@@ -44,7 +45,7 @@ Set up
 Run an agent
   wisdom track claude|codex|pi    Start an agent in this project, recording
   wisdom resume <id|name>         Continue a recorded session (the full ID, or a name only one session has)
-  wisdom handoff <claude|codex|pi|session-id> [--from <session-id>] ["what it should know"]
+  wisdom handoff <claude|codex|pi|session> [--from <session>] ["what it should know"]
                                   Continue work in a new or existing session, which reads the
                                   other session first
   wisdom handoff ... --emit       The same in the background, while you keep working: it reads
@@ -100,7 +101,7 @@ Options
   --cwd DIR, --data DIR           Use the project at DIR, or the data folder DIR
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
   --remote NAME, --range A..B     team, check: another remote than the policy's; the PR's commits
-  --from <session-id>             handoff: the session to read (default: the one running it, or the newest other one)
+  --from <session>                handoff: the session to read (default: the one running it, or the newest other one)
   --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
@@ -213,7 +214,7 @@ async function main(): Promise<void> {
     if (!first) throw new Error('Use: wisdom resume SESSION-ID or NAME (the full ID, which glance lists, or a name only one session has)');
     const session = await call(await ensureDaemon(dataDir, port), '/resolve', { session: first, byName: true });
     const [harness, ...args] = adapter(session.harness).resume(session.captureId);
-    console.error(`Resuming ${session.harness} session ${session.captureId}`);
+    console.error(`Resuming ${session.harness} session ${labelled(session.captureId, session.name)}`);
     // A session continues in the home it ran in: Wisdom's, or the person's own in a connected project.
     process.exitCode = await track(harness, { ...values, cwd: session.workspaceRoot }, args, dataDir, port, {}, sessionPlace(dataDir, session.harness, session.source)); return;
   }
@@ -302,6 +303,9 @@ async function init(project: string, values: any, port?: number): Promise<void> 
 }
 
 const names: Record<Connectable, string> = { 'claude-code': 'Claude Code', codex: 'Codex', pi: 'Pi' };
+
+/** A session as a message names it: its ID, then its name in quotes when it has one. */
+const labelled = (id: string, name?: string) => name ? `${id} "${name}"` : id;
 
 /** The handoff prompt as wisdom.yaml shows it: made by the code that makes every handoff's, with
  * example facts, so it can never differ from what is sent. */
@@ -494,7 +498,7 @@ async function clone(ref: string | undefined, values: any, dataDir: string, port
   const project = path.resolve(values.cwd ?? path.dirname(dataDir));
   const plan = await planClone(await ensureDaemon(dataDir, port), dataDir, ref, project);
   const { manifest, turns, sharedFrom } = plan.source;
-  console.error(`Cloned ${manifest.harness} session ${manifest.captureId}${sharedFrom ? ` (shared from ${sharedFrom})` : ''}, ${turns === 1 ? '1 turn' : `${turns} turns`}, into new session ${plan.sessionId}.`);
+  console.error(`Cloned ${manifest.harness} session ${labelled(manifest.captureId, shownName(manifest))}${sharedFrom ? ` (shared from ${sharedFrom})` : ''}, ${turns === 1 ? '1 turn' : `${turns} turns`}, into new session ${plan.sessionId}.`);
   console.error('Wisdom records it from here on. The cloned turns stay readable in the original.');
   if (plan.differing.length) {
     const shown = plan.differing.slice(0, 5).join(', ') + (plan.differing.length > 5 ? `, and ${plan.differing.length - 5} more` : '');
@@ -515,7 +519,7 @@ async function clone(ref: string | undefined, values: any, dataDir: string, port
 async function exportMarkdown(ref: string | undefined, values: any, dataDir: string, port?: number): Promise<number> {
   if (!ref) throw new Error('Use: wisdom export SESSION [--out FILE|-] [--redact | --keep-secrets]');
   if (values.redact && values['keep-secrets']) throw new Error('--redact and --keep-secrets are alternatives; choose one.');
-  const { captureId, markdown } = await call(await ensureDaemon(dataDir, port), '/view', { view: 'markdown', capture: ref });
+  const { captureId, name, markdown } = await call(await ensureDaemon(dataDir, port), '/view', { view: 'markdown', capture: ref });
   // A finding is placed by the turn heading above it.
   const place = (index: number) => [...markdown.slice(0, index).matchAll(/^## (t\d+|Outside any turn)/gm)].at(-1)?.[1] ?? 'header';
   const chosen = settingsOrDefaults(path.dirname(path.resolve(dataDir)));
@@ -528,7 +532,7 @@ async function exportMarkdown(ref: string | undefined, values: any, dataDir: str
   if (!redact) { console.error('Cancelled. Nothing was written.'); return 1; }
   const document = redactSecrets(markdown, new Map(redact.map(finding => [finding.value, finding.kind])));
   if (values.out === '-') { process.stdout.write(document); return 0; }
-  const out = path.resolve(values.out ?? path.join(dataDir, 'shared-out', `${captureId.slice(0, 8)}.md`));
+  const out = path.resolve(values.out ?? path.join(dataDir, 'shared-out', `${fileLabel({ name })}${captureId.slice(0, 8)}.md`));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, document);
   console.error(`Saved ${out}.`);
@@ -550,7 +554,7 @@ async function importShare(file: string | undefined, dataDir: string, port?: num
   const when = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')}Z`;
   const count = result.sessions.length === 1 ? '1 shared session' : `${result.sessions.length} shared sessions`;
   console.log(`${result.added ? 'Imported' : 'Already imported:'} ${count} from ${result.shared.project}, shared ${when(result.shared.sharedAt)}:`);
-  for (const session of result.sessions) console.log(`  ${session.captureId}  ${session.harness}  ${session.turns === 1 ? '1 turn' : `${session.turns} turns`}`);
+  for (const session of result.sessions) console.log(`  ${labelled(session.captureId, session.name)}  ${session.harness}  ${session.turns === 1 ? '1 turn' : `${session.turns} turns`}`);
   if (result.shared.redactions) console.log(`The sender redacted ${result.shared.redactions === 1 ? '1 value' : `${result.shared.redactions} values`}.`);
   for (const id of result.alsoRecordedHere) console.log(`${id} is also recorded in this project, so reads show your own recording.`);
   console.log(`Read-only, as recorded on the sender's machine. Read it with: wisdom glance ${result.sessions[0].captureId.slice(0, 8)}`);
@@ -564,20 +568,22 @@ async function importShare(file: string | undefined, dataDir: string, port?: num
  * the prompt is printed to paste instead.
  */
 async function handoff(target: string | undefined, values: any, words: string, dataDir: string, port?: number): Promise<number> {
-  if (!target) throw new Error('Use: wisdom handoff claude|codex|pi|SESSION-ID [--from SESSION-ID] [--emit] ["what it should know"]');
+  if (!target) throw new Error('Use: wisdom handoff claude|codex|pi|SESSION [--from SESSION] [--emit] ["what it should know"] (a session: its full ID, or a name only one session has)');
   const connection = await ensureDaemon(dataDir, port);
   const emit = Boolean(values.emit);
   const plan = await planHandoff(connection, target, values.from, words, path.dirname(path.resolve(dataDir)), process.env.WISDOM_SESSION, emit);
+  const targetLabel = plan.target && labelled(plan.target.captureId, shownName(plan.target));
+  const fromLabel = labelled(plan.from.captureId, shownName(plan.from));
   if (plan.target?.status === 'recording') {
-    console.error(`Session ${plan.target.captureId} is still running, so Wisdom cannot start it. Paste this into it instead,`
+    console.error(`Session ${targetLabel} is still running, so Wisdom cannot start it. Paste this into it instead,`
       + ` or hand the work to a new session: wisdom handoff ${plan.command} --from ${plan.from.captureId}${emit ? ' --emit' : ''}\n`);
     console.log(plan.prompt);
     return 1;
   }
   if (plan.note) console.error(`Note: ${plan.note}`);
-  const reads = `it reads ${plan.from.harness} session ${plan.from.captureId} first.`;
-  console.error(emit ? `Handing off to ${plan.target ? `${plan.target.harness} session ${plan.target.captureId}` : `a new ${plan.command} session`}, in the background; ${reads}`
-    : plan.target ? `Resuming ${plan.target.harness} session ${plan.target.captureId}; ${reads}` : `Starting a new ${plan.command} session; ${reads}`);
+  const reads = `it reads ${plan.from.harness} session ${fromLabel} first.`;
+  console.error(emit ? `Handing off to ${plan.target ? `${plan.target.harness} session ${targetLabel}` : `a new ${plan.command} session`}, in the background; ${reads}`
+    : plan.target ? `Resuming ${plan.target.harness} session ${targetLabel}; ${reads}` : `Starting a new ${plan.command} session; ${reads}`);
   // A resumed session continues in the home it ran in; a new one runs connected when this project is.
   const place = plan.target ? sessionPlace(dataDir, plan.target.harness, plan.targetSource)
     : hookState(dataDir, harnessByCommand[plan.command] as Connectable, 'project') === 'none' ? 'home' : 'project';
@@ -597,7 +603,7 @@ async function handoff(target: string | undefined, values: any, words: string, d
   const session: string | undefined = plan.target?.captureId
     ?? await call(connection, '/resolve', { handoff: plan.handoffId }).then(found => found.captureId, () => undefined);
   const reply = fs.readFileSync(output.reply, 'utf8').trim();
-  console.log(session ? `Handoff complete: ${plan.target ? `${plan.target.harness} session ${session} continued after` : `new ${plan.command} session ${session} continues`} ${plan.from.captureId}.`
+  console.log(session ? `Handoff complete: ${plan.target ? `${plan.target.harness} session ${targetLabel} continued after` : `new ${plan.command} session ${session} continues`} ${fromLabel}.`
     : `Handoff finished, but Wisdom has no record of it: ${plan.command}'s hooks did not report. Run: wisdom doctor`);
   if (reply) console.log(`\n${reply}`);
   if (session) console.log(`\nRead what it did: wisdom glance ${session}`);
@@ -709,7 +715,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
   const connection = await ensureDaemon(dataDir);
   if (action === 'push') {
     const result = await call(connection, '/team', { action: 'push', remote: values.remote });
-    for (const s of result.sessions) console.log(`session ${s.id}: ${s.state}${s.heldBack ? ' (tried again at each push)' : ''}`);
+    for (const s of result.sessions) console.log(`session ${labelled(s.id, s.name)}: ${s.state}${s.heldBack ? ' (tried again at each push)' : ''}`);
     console.log(`${result.records} commit record${result.records === 1 ? '' : 's'} pushed to ${result.remote}.${result.recordRedactions ? ` ${result.recordRedactions} possible secret${result.recordRedactions === 1 ? '' : 's'} redacted in them first.` : ''}`);
     if (result.missing.length) { console.log(`Not on ${result.remote} yet, so reviewers cannot open them: ${result.missing.join(', ')}`); return 1; }
     console.log('Ready: every session these records name is on the remote.');

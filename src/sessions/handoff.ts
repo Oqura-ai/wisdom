@@ -13,7 +13,7 @@ export const harnessByCommand: Record<string, string> = { claude: 'claude-code',
  * note: a new session starts lighter. */
 const LONG_SESSION_TOKENS = 150_000;
 
-export interface HandoffSession { captureId: string; harness: string; status: string; lastObservedAt: string; tokens: { total: number }; shared?: object }
+export interface HandoffSession { captureId: string; name?: string; harnessName?: string; harness: string; status: string; lastObservedAt: string; tokens: { total: number }; shared?: object }
 
 /** What `wisdom handoff` starts: a harness (by its command), in this terminal or, emitted, in
  * its background mode; its arguments; and the environment that tells Wisdom's hooks which
@@ -125,24 +125,33 @@ async function projectSessions(connection: Connection): Promise<HandoffSession[]
   return [...views.flatMap(view => view.sessions), ...shared.sessions];
 }
 
-/** Work out what to start. `target` is a harness command (a new session, in `project`) or a full
- * session ID (an existing session, resumed). `emit`: in the background, reading only. Nothing is
- * started here.
+/** A session by its full ID, or by a name only one of this project's sessions has (the rule
+ * `wisdom resume` follows: an exact ID wins, and a name two sessions share is refused). */
+async function findSession(connection: Connection, sessions: HandoffSession[], ref: string): Promise<HandoffSession | undefined> {
+  const exact = sessions.find(session => session.captureId === ref);
+  if (exact) return exact;
+  const { captureId } = await call(connection, '/resolve', { session: ref, byName: 'optional' });
+  return captureId ? sessions.find(session => session.captureId === captureId) : undefined;
+}
+
+/** Work out what to start. `target` is a harness command (a new session, in `project`), or a full
+ * session ID or a session's name (an existing session, resumed); a harness command always means
+ * the harness. `emit`: in the background, reading only. Nothing is started here.
  */
 export async function planHandoff(connection: Connection, target: string, from: string | undefined, words: string, project: string, self?: string, emit = false): Promise<HandoffPlan> {
   const sessions = await projectSessions(connection);
   const chosen = settingsOrDefaults(project).handoff ?? {};
   const harness = harnessByCommand[target];
-  const existing = harness ? undefined : sessions.find(session => session.captureId === target);
+  const existing = harness ? undefined : await findSession(connection, sessions, target);
   if (!harness && !existing) {
-    throw new Error(`${target} is neither a harness (claude, codex, pi) nor a recorded session's full ID. glance lists sessions.`);
+    throw new Error(`${target} is neither a harness (claude, codex, pi) nor a recorded session's full ID or name. glance lists sessions.`);
   }
   if (existing?.shared) throw new Error(`A shared session is read-only, so it cannot be resumed. Start a new one that reads it: wisdom handoff claude|codex|pi --from ${existing.captureId}`);
   const { background, resume, readsAllowed = [] } = adapter(existing?.harness ?? harness);
   if (emit && !background) throw new Error(`${existing ? `Session ${existing.captureId} is a Pi session; Pi` : 'Pi'} cannot take an emitted handoff: it reads a recording only through its shell, which could also change files. Emit it to claude or codex, or open it without --emit.`);
   // This project's own sessions are listed before shared copies, so its own recording wins.
-  const source = from ? sessions.find(session => session.captureId === from) : chooseSource(sessions, existing ?? { harness }, self);
-  if (!source) throw new Error(from ? `No recorded session has the ID ${from}. Use the full session ID; glance lists them.`
+  const source = from ? await findSession(connection, sessions, from) : chooseSource(sessions, existing ?? { harness }, self);
+  if (!source) throw new Error(from ? `No recorded session has the ID or name ${from}. Use the full session ID or a name only one session has; glance lists them.`
     : 'There is no other recorded session to hand off from.');
   if (source.captureId === existing?.captureId) throw new Error('A session cannot continue itself.');
 
