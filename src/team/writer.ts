@@ -9,6 +9,7 @@ import { agentWork, type CommitRecord, type RecordGuide } from './commits.js';
 import { checkGuide, guidesOn } from './guides.js';
 import { GUIDE_OPENING, items, plainGuide, turnRequest } from './plain.js';
 import type { Policy } from './gitrefs.js';
+import { DEFAULT_MODEL, harnessPath, settingsOrDefaults } from '../core/settings.js';
 import type { SessionStore } from '../storage/store.js';
 
 /** The guide writer. A commit's guide is written in two filters:
@@ -22,7 +23,7 @@ import type { SessionStore } from '../storage/store.js';
  *      sits in an earlier turn than the edit, which is why it may read the whole window. It
  *      did not do the work, so it has no stake in flattering it.
  *
- * A team's own writer (guides.command in wisdom-team.json) reads a prompt on stdin with the
+ * A team's own writer (guides.command in wisdom-team.yaml) reads a prompt on stdin with the
  * steps already opened, and may not use tools. A person who turns guides off (`wisdom guide
  * off`) gets a plain guide that Wisdom writes from the record, with no model at all.
  *
@@ -30,7 +31,6 @@ import type { SessionStore } from '../storage/store.js';
  * which every Wisdom hook obeys, and outside the project.
  */
 
-export const DEFAULT_MODEL = 'claude-haiku-5-5';
 export const PLAIN_WRITER = 'Wisdom, no model (wisdom guide off)';
 const STEP_CHARS = 6_000;
 const EVIDENCE_CHARS = 60_000;
@@ -70,7 +70,7 @@ function stepEvidence(store: SessionStore, record: CommitRecord, budgetChars: nu
 
 /** The prompt. `explore` tells the writer to read the sessions' windows with the ledger tool;
  * without it, the writer uses only the steps handed to it and no tools. */
-export function guidePrompt(store: SessionStore, record: CommitRecord, explore = false): string {
+export function guidePrompt(store: SessionStore, record: CommitRecord, explore = false, extra = ''): string {
   const list = items(record);
   const { evidence, skipped } = stepEvidence(store, record, explore ? EXPLORE_EVIDENCE_CHARS : EVIDENCE_CHARS);
   const sessions = record.sessions.map(session => `- ${session.id} (${session.harness}) · made ${session.positions.join(', ')}`
@@ -90,6 +90,8 @@ export function guidePrompt(store: SessionStore, record: CommitRecord, explore =
     explore
       ? '- One to three short sentences per item. Output only the guide, nothing before or after it.'
       : '- One to three short sentences per item. Do not use tools. Output only the guide, nothing before or after it.',
+    // The person's own words (wisdom.yaml guides.extra), after Wisdom's rules, never instead of them.
+    ...(extra.trim() ? [`- Also, as the person asks: ${extra.trim()}`] : []),
     ...(explore ? [
       '',
       'How to read the recordings: you have one tool, ledger, which is read-only.',
@@ -144,11 +146,14 @@ export function claudeOutput(stdout: string): Output {
   return { text: parsed.result, costUsd };
 }
 
-/** The command that writes, and how it is named in the record. Undefined when none is there. */
+/** The command that writes, and how it is named in the record. Undefined when none is there.
+ * The model: the team's (wisdom-team.yaml) first, then the person's own (wisdom.yaml). */
 function writerCommand(policy: Policy | undefined, dataDir: string): Writer | undefined {
-  const model = policy?.guides?.model ?? DEFAULT_MODEL;
+  const project = path.dirname(path.resolve(dataDir));
+  const settings = settingsOrDefaults(project);
+  const model = policy?.guides?.model ?? settings.guides?.model ?? DEFAULT_MODEL;
   const env = { ...process.env, WISDOM_GUIDE_WRITER: '1', WISDOM_GUIDE_MODEL: model };
-  const options = { cwd: os.tmpdir(), env, encoding: 'utf8' as const, timeout: 150_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 };
+  const options = { cwd: os.tmpdir(), env, encoding: 'utf8' as const, timeout: (settings.guides?.timeoutSeconds ?? 150) * 1000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 };
   if (policy?.guides?.command) {
     const command = policy.guides.command;
     // The command picks its own model unless the policy names one: say only what Wisdom knows.
@@ -158,8 +163,8 @@ function writerCommand(policy: Policy | undefined, dataDir: string): Writer | un
       return result.status === 0 && String(result.stdout ?? '').trim() ? { text: String(result.stdout) } : { failed: lastLine(result) };
     } };
   }
-  const installed = process.platform === 'win32' ? onPath('claude')
-    : (process.env.PATH ?? '').split(path.delimiter).map(dir => path.join(dir, 'claude')).find(file => fs.existsSync(file));
+  const installed = harnessPath(project, settings, 'claude-code') ?? (process.platform === 'win32' ? onPath('claude')
+    : (process.env.PATH ?? '').split(path.delimiter).map(dir => path.join(dir, 'claude')).find(file => fs.existsSync(file)));
   if (!installed) return undefined;
   let claude: ReturnType<typeof resolveCommand>;
   try { claude = resolveCommand(installed); } catch { return undefined; }
@@ -169,7 +174,7 @@ function writerCommand(policy: Policy | undefined, dataDir: string): Writer | un
   // and its run is not a session of anyone's.
   const config = path.join(os.tmpdir(), `wisdom-guide-mcp-${process.pid}.json`);
   const args = ['-p', '--model', model, '--output-format', 'json', '--no-session-persistence', '--tools', '', '--strict-mcp-config',
-    '--mcp-config', config, '--allowedTools', 'mcp__wisdom__ledger', '--max-turns', String(EXPLORE_TURNS)];
+    '--mcp-config', config, '--allowedTools', 'mcp__wisdom__ledger', '--max-turns', String(settings.guides?.turns ?? EXPLORE_TURNS)];
   return { name: `${model} via Claude Code, reading the sessions' windows`, explore: true, run: prompt => {
     fs.writeFileSync(config, JSON.stringify({ mcpServers: { wisdom: { command: process.execPath, args: [bin, 'mcp', '--data', dataDir] } } }));
     try {
@@ -200,8 +205,8 @@ export function writeGuide(store: SessionStore, record: CommitRecord, dataDir: s
     return { guide: { text, writtenAt: new Date().toISOString(), writer: PLAIN_WRITER, problems: checkGuide(text, record, stores, ids), derived: true } };
   }
   const writer = writerCommand(policy, dataDir);
-  if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.json names no guides.command' };
-  let prompt = guidePrompt(store, record, writer.explore);
+  if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.yaml names no guides.command' };
+  let prompt = guidePrompt(store, record, writer.explore, settingsOrDefaults(path.dirname(path.resolve(dataDir))).guides?.extra);
   let text = '', problems: string[] = [], costUsd: number | undefined;
   const started = Date.now();
   for (let attempt = 0; attempt < 2; attempt++) {

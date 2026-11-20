@@ -20,6 +20,7 @@ test('a person reads plain sentences from init, status and stop, never JSON', ()
     assert.equal(init.status, 0, init.stderr);
     assert.equal(init.stdout, [
       `Wisdom is set up in ${project}`,
+      'Settings: wisdom.yaml, every default shown and commented out.',
       '',
       'Start an agent:',
       '  Claude Code  not installed. Run wisdom init again after installing it.',
@@ -51,6 +52,44 @@ test('a person reads plain sentences from init, status and stop, never JSON', ()
   } finally {
     run(project, 'daemon', 'stop');
     fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('the daemon starts from wisdom.yaml\'s port and leaves the dashboard out when it says so; a broken file means the defaults', () => {
+  const project = temp();
+  const first = 40000 + 2 * Math.floor(Math.random() * 5000);
+  try {
+    assert.equal(run(project, 'init', '--port', '0', ...none).status, 0);
+    run(project, 'daemon', 'stop');
+    fs.writeFileSync(path.join(project, 'wisdom.yaml'), `version: 1\ndaemon:\n  port: ${first}\n  dashboard: false\n`);
+    run(project, 'daemon', 'start');
+    const { url } = JSON.parse(fs.readFileSync(path.join(project, '.wisdom', 'daemon.json'), 'utf8'));
+    const port = Number(new URL(url).port);
+    assert(port >= first && port <= first + 40 && (port - first) % 2 === 0, `${port} is ${first} or a pair after it`);
+    assert.match(run(project, 'daemon', 'status').stdout, /Dashboard {2}not started/);
+    run(project, 'daemon', 'stop');
+
+    fs.writeFileSync(path.join(project, 'wisdom.yaml'), 'version: 1\ndaemon:\n  prot: 1\n');
+    run(project, 'daemon', 'start', '--no-dashboard');
+    assert(fs.existsSync(path.join(project, '.wisdom', 'daemon.json')), 'a typo never keeps the daemon from starting');
+    assert.match(run(project, 'doctor').stdout, /Settings.*prot/);
+  } finally {
+    run(project, 'daemon', 'stop');
+    fs.rmSync(project, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  }
+});
+
+test('init sets up no harness wisdom.yaml turns off', () => {
+  const project = temp();
+  try {
+    fs.writeFileSync(path.join(project, 'wisdom.yaml'), 'version: 1\nharnesses:\n  claude: false\n  codex: false\n');
+    const init = run(project, 'init', '--port', '0', ...none);
+    assert.equal(init.status, 0, init.stderr);
+    assert.match(init.stdout, /\n {2}Claude Code {2}off in wisdom\.yaml, so not set up\.\n {2}Codex {8}off in wisdom\.yaml, so not set up\.\n {2}Pi {11}not installed\./);
+    assert(!fs.existsSync(path.join(project, '.wisdom', 'harnesses', 'claude-code')), 'nothing written for Claude Code');
+  } finally {
+    run(project, 'daemon', 'stop');
+    fs.rmSync(project, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 });
 

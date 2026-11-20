@@ -183,6 +183,13 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 /* Session view */
 .session-view { display: flex; flex-direction: column; gap: 16px; min-width: 0; width: 100%; max-width: 1200px; margin: 0 auto; }
 .session-head { position: sticky; top: -24px; z-index: 5; padding-block: 8px; background: var(--paper); display: flex; align-items: center; gap: 12px; }
+/* The session's name, with Rename beside it; the same row becomes the field that edits it. */
+.session-name { display: flex; align-items: center; gap: 10px; min-width: 0; margin-top: -8px; }
+.session-name h1 { margin: 0; min-width: 0; font: 19px var(--sans); color: var(--ink); letter-spacing: -.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-name h1.muted { color: var(--muted); }
+.session-name input { flex: 1; min-width: 0; max-width: 560px; font: 15px var(--sans); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 5px 10px; }
+.session-name .ghost { flex: none; white-space: nowrap; }
 .session-meta { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The resume command sits on its own line, in a well darker than the page. */
 .resume-line { display: flex; align-items: center; gap: 10px; margin-top: -6px; padding: 7px 8px 7px 12px; min-width: 0;
@@ -204,6 +211,7 @@ h1 { font: 30px/1.15 var(--serif); letter-spacing: -1px; font-weight: 400; margi
 .session-link:hover { color: var(--ink); border-color: var(--ink-soft); }
 .session-link .label { font: 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--faint); }
 .session-link code { font: 11.5px var(--mono); }
+.session-link .link-name { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ghost { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 999px; padding: 4px 12px; color: var(--ink-soft); box-shadow: var(--card-depth); font-size: 11px; }
 .session-metrics { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
 .metric { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; padding: 10px 15px; display: grid; gap: 2px; min-width: 96px; box-shadow: var(--card-depth); }

@@ -29,6 +29,7 @@ Harness adapters (Pi extension, Claude Code/Codex hooks) + native JSONL + worksp
 
 .wisdom/wisdom.json                                           (marks the project; written by wisdom init)
 .wisdom/spool/<harness>/<session>/<event>.json                (events a hook kept while the daemon was down)
+.wisdom/handoffs/<handoff>.txt, .log                          (a background handoff's answer and log)
 .wisdom/harnesses/<harness>/home/                             (the harness's own files: settings with Wisdom's hooks, login, native sessions, the source of truth)
 .wisdom/harnesses/<harness>/<capture>/native-session.jsonl    (native evidence)
 .wisdom/harnesses/<harness>/<capture>/payloads/<sha256>       (hook bodies / patches)
@@ -44,7 +45,7 @@ is the database layout version; record `schemaVersion=1` and the daemon's
 
 | Table | Columns | Purpose |
 | --- | --- | --- |
-| `captures` | `id` PK, `session_id`, `workspace_root`, `manifest`, `recovery_gaps` | Capture lifecycle, workspace/session identity, scope and recorded recovery notes. Manifest and gaps are JSON strings. |
+| `captures` | `id` PK, `session_id`, `workspace_root`, `manifest`, `recovery_gaps` | Capture lifecycle, workspace/session identity, scope and recorded recovery notes. Manifest and gaps are JSON strings. The manifest also holds the session's names: `name` (given in the dashboard, `POST /name`) and `harnessName` (read from the harness's own file through the adapter's `nativeName`). Names are labels, not evidence: they are not versioned and the ledger never shows them. |
 | `records` | `revision` integer PK autoincrement, `id` unique, `capture_id` FK, `seq`, `type`, `parent_id`, `request_id`, `tool_call_id`, `tool_name`, `source_entry_id`, `path`, `role`, `is_error`, `observation_id`, `body` | Immutable evidence metadata and indexed relationship columns; `body` preserves the complete JSON envelope, including optional fields. |
 
 Constraints enforce `(capture_id,seq)` and `(capture_id,observation_id)` uniqueness.
@@ -94,7 +95,7 @@ the others; `record` writes evidence; `read` only reads it; `service` ties them 
 | Folder | Domain | Files |
 | --- | --- | --- |
 | [src/](../src/) | Entry points. Installed hooks and the npm package point here, so these stay put. | [bin.ts](../src/bin.ts) checks the Node version, then loads [cli.ts](../src/cli.ts), every command. |
-| [core/](../src/core/) | Shared types and small helpers. | [schema.ts](../src/core/schema.ts) wire validation and record/manifest types; [paths.ts](../src/core/paths.ts) data folders, harness homes, worktrees; [content.ts](../src/core/content.ts) surface text extraction. |
+| [core/](../src/core/) | Shared types and small helpers. | [schema.ts](../src/core/schema.ts) wire validation and record/manifest types; [paths.ts](../src/core/paths.ts) data folders, harness homes, worktrees; [settings.ts](../src/core/settings.ts) `wisdom.yaml`, its defaults and checks; [content.ts](../src/core/content.ts) surface text extraction. |
 | [storage/](../src/storage/) | Where evidence lives. | [database.ts](../src/storage/database.ts) DDL, indexed lookups, request links; [ledger.ts](../src/storage/ledger.ts) payloads, native byte copying; [store.ts](../src/storage/store.ts) `SessionStore`, what the read layer needs; [evidence.ts](../src/storage/evidence.ts) body cache and the version boundary. |
 | [record/](../src/record/) | Turning hook events into records. | [captures.ts](../src/record/captures.ts) recording lifecycle and hook/file coordination; [workspace.ts](../src/record/workspace.ts) file baselines and patches. |
 | [read/](../src/read/) | What agents and the dashboard read. Changes here follow [policy](policy.md). | [discovery.ts](../src/read/discovery.ts) the ledger (glance, open, commits, positions, the ceiling); [conversation.ts](../src/read/conversation.ts) one turn in recorded order; [views.ts](../src/read/views.ts) the dashboard's `/view`; [stats.ts](../src/read/stats.ts) counts and token usage; [markdown.ts](../src/read/markdown.ts) `wisdom export`; [prices.ts](../src/read/prices.ts) cost estimates. |

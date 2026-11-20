@@ -3,7 +3,7 @@ import { conversation, type Change, type Subagent, type TurnItem } from './conve
 import { resolveCapture } from './discovery.js';
 import { EvidenceReader } from '../storage/evidence.js';
 import { adapter } from '../harnesses/index.js';
-import type { LedgerRecord, Manifest } from '../core/schema.js';
+import { shownName, type LedgerRecord, type Manifest } from '../core/schema.js';
 import type { SessionStore } from '../storage/store.js';
 
 /** One session as a Markdown document anyone can read: every prompt and reply in full, each
@@ -11,7 +11,7 @@ import type { SessionStore } from '../storage/store.js';
  * cut; folding only decides what is open at first. Calls and subagents are numbered as the
  * ledger numbers them, so `t3/c2` here is `t3/c2` in `wisdom open`.
  */
-export function sessionMarkdown(store: SessionStore, ref: string): { readVersion: number; captureId: string; markdown: string } {
+export function sessionMarkdown(store: SessionStore, ref: string): { readVersion: number; captureId: string; name?: string; markdown: string } {
   const readVersion = store.database.revision;
   const manifest = resolveCapture(store, ref, readVersion);
   const records = store.database.records('capture_id=? AND revision<=?', [manifest.captureId, readVersion], 'ORDER BY seq')
@@ -25,7 +25,7 @@ export function sessionMarkdown(store: SessionStore, ref: string): { readVersion
   const calls = records.filter(r => r.type === 'tool_started').length;
   const failed = records.filter(r => r.type === 'tool_finished' && r.isError === true).length;
   const changes = records.filter(r => r.type === 'file_change').length;
-  const title = firstLine(views[0]?.request.text.text) ?? manifest.captureId;
+  const title = shownName(manifest) ?? firstLine(views[0]?.request.text.text) ?? manifest.captureId;
   const out: string[] = [
     `# ${escape(title)} · ${manifest.harness} session ${manifest.captureId.slice(0, 8)}`, '',
     [`${manifest.harness}${manifest.harnessVersion ? ` ${manifest.harnessVersion}` : ''}`, minute(manifest.startedAt), count(turns.length, 'turn'),
@@ -66,7 +66,7 @@ export function sessionMarkdown(store: SessionStore, ref: string): { readVersion
   }
   if (!turns.length) out.push('', '*No turns recorded.*');
   out.push('', '---', '', `Recorded with [Wisdom](https://github.com/Oqura-ai/wisdom).`, '');
-  return { readVersion, captureId: manifest.captureId, markdown: out.join('\n') };
+  return { readVersion, captureId: manifest.captureId, name: shownName(manifest), markdown: out.join('\n') };
 }
 
 class Renderer {

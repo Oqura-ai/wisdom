@@ -4,11 +4,12 @@ import { createTwoFilesPatch } from 'diff';
 import { Ledger, hash, writeJson } from '../storage/ledger.js';
 import { LedgerDatabase } from '../storage/database.js';
 import { SessionFiles, scope } from './workspace.js';
-import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
+import { hookSchema, preview, sessionName, shownName, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
 import { adapter, harnessNames } from '../harnesses/index.js';
 import type { NativeEntry } from '../harnesses/types.js';
 import { surfaceText } from '../core/content.js';
 import { GUIDE_OPENING } from '../team/plain.js';
+import { settingsOrDefaults } from '../core/settings.js';
 import { cloneNote, harnessHome, linkedWorktree, marker, movedFrom, readConnected, spoolDir, worktreeBranch, type Connected } from '../core/paths.js';
 
 interface RunningCapture {
@@ -23,10 +24,12 @@ interface RunningCapture {
   awaiting: Set<string>;
   lastSeen: number;
   lastReconcile: number;
+  /** IDLE_MS, or wisdom.yaml's recording.idleMinutes when the session started being watched. */
+  idleMs: number;
 }
 
-/** A session with no event for this long, and no tool running, stops being watched.
- * Its next event continues it. Hooks have no heartbeat, so silence is the only signal. */
+/** A session with no event for this long, and no tool running, stops being watched (by default:
+ * see idleMs). Its next event continues it. Hooks have no heartbeat, so silence is the only signal. */
 const IDLE_MS = 10 * 60_000;
 /** A session file unchanged this long, with no record, is a session nobody reported. */
 const QUIET_MS = 2 * 60_000;
@@ -197,6 +200,9 @@ export class Captures {
     if (excludedPaths.some(value => value.includes('*') || value.startsWith('/') || value.split('/').includes('..'))) {
       throw new Error('.wisdomignore accepts relative file/directory paths, without globs or ..');
     }
+    // wisdom.yaml's recording settings join .wisdomignore; the manifest keeps what this session used.
+    const recording = settingsOrDefaults(path.dirname(path.resolve(this.dataDir))).recording;
+    excludedPaths.push(...recording?.ignore ?? []);
     // Recorder files must never become evidence of the agent editing its project.
     const dataRelative = path.relative(fs.realpathSync(input.workspaceRoot), this.dataDir).replaceAll('\\', '/');
     if (!dataRelative) throw new Error('The daemon data directory cannot be the tracked workspace root.');
@@ -217,7 +223,7 @@ export class Captures {
       workspaceRoot: fs.realpathSync(input.workspaceRoot), status: found ? 'closed' : 'recording',
       startedAt: lines?.dated.find(([id]) => !id || !copiedIds.has(id))?.[1] ?? (file ? new Date(Math.min(file.birthtimeMs, file.mtimeMs)).toISOString() : now),
       ...(found ? { endedAt: file ? file.mtime.toISOString() : now, endReason: 'found-in-session-file' } : {}),
-      scope: { ...scope, excludedPaths } };
+      scope: { ...scope, ...recording?.maxFileMB ? { maxFileBytes: recording.maxFileMB * 1024 * 1024 } : {}, excludedDirectories: [...new Set([...scope.excludedDirectories, ...recording?.skipFolders ?? []])], excludedPaths } };
     const ledger = new Ledger(this.captureDir(manifest), manifest, this.database, true);
     this.ledgers.set(id, ledger);
     if (found) {
@@ -291,7 +297,8 @@ export class Captures {
 
   private watch(ledger: Ledger, cwd?: string): void {
     this.running.set(ledger.manifest.captureId, { ledger, workspace: new SessionFiles(ledger, cwd), active: new Map(), turns: new Map(),
-      transcriptFinished: new Set(), awaiting: new Set(), lastSeen: Date.now(), lastReconcile: Date.now() });
+      transcriptFinished: new Set(), awaiting: new Set(), lastSeen: Date.now(), lastReconcile: Date.now(),
+      idleMs: (settingsOrDefaults(path.dirname(path.resolve(this.dataDir))).recording?.idleMinutes ?? IDLE_MS / 60_000) * 60_000 });
   }
 
   /** The turns a record already has, so a session continuing after a restart keeps its
@@ -487,7 +494,7 @@ export class Captures {
     this.drainSpool();
     for (const [id, capture] of this.running) {
       try {
-        if (!capture.active.size && Date.now() - capture.lastSeen > IDLE_MS) { this.close(id, 'idle'); continue; }
+        if (!capture.active.size && Date.now() - capture.lastSeen > capture.idleMs) { this.close(id, 'idle'); continue; }
         capture.ledger.syncSource();
         if (!capture.active.size) {
           capture.workspace.flush();
@@ -634,6 +641,31 @@ export class Captures {
       catch (error) { kept.push(`${label}: ${reason(error)}`); }
     }
     return { session: id, removed, kept };
+  }
+
+  /** A person names a session, recording or not; an empty name removes it. Kept in its
+   * manifest, which only the daemon writes, so a session still recording keeps the name.
+   * Only the name changes: no recorded evidence does. */
+  rename(id: string, name: string): { session: string; name?: string } {
+    const ledger = this.get(id);
+    ledger.manifest.name = sessionName(name) || undefined;
+    ledger.saveManifest();
+    return { session: id, name: ledger.manifest.name };
+  }
+
+  /** The one session of this project with this name, as it is shown (the name given here, else
+   * the harness's), in any letter case. Never a guess: more than one is always refused; no match
+   * is refused too, unless `optional`, which leaves it to the caller. */
+  named(name: string): string;
+  named(name: string, optional: true): string | undefined;
+  named(name: string, optional = false): string | undefined {
+    const wanted = sessionName(name).toLowerCase();
+    const matches = wanted ? [...this.ledgers.values()].filter(ledger => shownName(ledger.manifest)?.toLowerCase() === wanted) : [];
+    if (matches.length === 1) return matches[0]!.manifest.captureId;
+    if (!matches.length && optional) return undefined;
+    if (!matches.length) throw new Error(`No recorded session has the ID or name "${name}". wisdom glance lists the IDs; names show in the dashboard.`);
+    throw new Error(`${matches.length} sessions are named "${name}", so none was opened: ${matches.map(({ manifest }) =>
+      `${manifest.captureId} (${manifest.harness}, started ${manifest.startedAt.slice(0, 16).replace('T', ' ')})`).join(', ')}. Use the ID, or rename one.`);
   }
 
   /** Where this project's disk space goes: the database, each session's evidence folder, and each

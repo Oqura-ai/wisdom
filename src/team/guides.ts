@@ -1,9 +1,10 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { ledger } from '../read/discovery.js';
 import { items } from './plain.js';
 import type { CommitRecord } from './commits.js';
 import type { SessionStore } from '../storage/store.js';
+import { setSetting, settingsOrDefaults } from '../core/settings.js';
+import { ignoreSettingsFile } from '../setup/connect.js';
 
 /** Commit guides: a short account of a commit for the people who review it, written after the
  * commit by a cheap model, or by Wisdom without one (see writer.ts, plain.ts), and checked
@@ -62,22 +63,18 @@ export function checkGuide(text: string, record: CommitRecord, stores: (id: stri
 
 // ---------- the person's own switch ----------
 
-const configFile = (dataDir: string) => path.join(dataDir, 'config.json');
-
-/** Whether a model writes this person's guides after each commit. In team mode it is on unless
- * they turned it off (off: Wisdom writes a plain guide from the record, plain.ts). In local mode
- * (`team` false) it is off unless they turned it on with `wisdom guide on`, which also installs
- * the one post-commit hook that starts the writer. */
+/** Whether a model writes this person's guides after each commit (`guides.on` in wisdom.yaml). In
+ * team mode it is on unless they turned it off (off: Wisdom writes a plain guide from the record,
+ * plain.ts). In local mode (`team` false) it is off unless they turned it on with `wisdom guide on`,
+ * which also installs the one post-commit hook that starts the writer. */
 export function guidesOn(dataDir: string, team = true): boolean {
-  try {
-    const value = JSON.parse(fs.readFileSync(configFile(dataDir), 'utf8')).guides;
-    return typeof value === 'boolean' ? value : team;
-  } catch { return team; }
+  return settingsOrDefaults(path.dirname(path.resolve(dataDir))).guides?.on ?? team;
 }
 
+/** The switch goes in wisdom.yaml (`guides.on`), keeping the rest of the file. */
 export function setGuides(dataDir: string, on: boolean): void {
-  let config: Record<string, unknown> = {};
-  try { config = JSON.parse(fs.readFileSync(configFile(dataDir), 'utf8')); } catch { /* a new file */ }
-  config.guides = on;
-  fs.writeFileSync(configFile(dataDir), JSON.stringify(config, null, 2) + '\n');
+  const project = path.dirname(path.resolve(dataDir));
+  // In a project set up before wisdom.yaml existed, this may be the file's first write: git ignores it first.
+  ignoreSettingsFile(project);
+  setSetting(project, ['guides', 'on'], on);
 }

@@ -4,7 +4,7 @@ import type { Captures } from '../record/captures.js';
 import { LedgerDatabase } from '../storage/database.js';
 import { ledger } from '../read/discovery.js';
 import { Ledger, hash, writeJson } from '../storage/ledger.js';
-import type { ViewRequest } from '../core/schema.js';
+import { sessionName, shownName, type ViewRequest } from '../core/schema.js';
 import { readShare, type ShareFile } from './share.js';
 import { stats } from '../read/stats.js';
 import type { SessionStore, SharedInfo, SharedSession } from '../storage/store.js';
@@ -17,7 +17,18 @@ const safeId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHARE_ID = /^[a-f0-9]{16}$/;
 const safeFile =/^(?:payloads\/[a-f0-9]{64}|native-session\.jsonl|subagents\/[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl)$/;
 
-interface StoreInfo { shareId: string; sourceName: string; importedAt: string; header: ShareFile['header'] }
+/** `team`: fetched by `wisdom team fetch` (else imported from a file), with who recorded it when
+ * the team shares that. */
+interface StoreInfo { shareId: string; sourceName: string; importedAt: string; header: ShareFile['header']; team?: SharedInfo['team'] }
+
+/** A teammate's git name and email as their push wrote them: one short line each, or nothing.
+ * Git does not verify them, and the dashboard says so. */
+function recorder(value: unknown): { name: string; email: string } | undefined {
+  const { name, email } = (value ?? {}) as { name?: unknown; email?: unknown };
+  const line = (text: unknown) => typeof text === 'string' ? sessionName(text) : '';
+  const found = { name: line(name), email: line(email) };
+  return found.name || found.email ? found : undefined;
+}
 
 /** One imported share file: its own database, built from the file's records, and its
  * sessions' evidence folders. Read-only: nothing records into it, and its versions are its own.
@@ -32,7 +43,8 @@ export class SharedStore implements SessionStore {
     this.database = new LedgerDatabase(path.join(dataDir, 'ledger.sqlite'));
     for (const manifest of this.database.manifests()) this.ledgers.set(manifest.captureId, new Ledger(path.join(dataDir, manifest.captureId), manifest, this.database));
     this.shared = { shareId: info.shareId, project: info.header.sessions[0]?.project ?? 'unknown', sharedAt: info.header.createdAt,
-      importedAt: info.importedAt, redactions: info.header.redactions.length, patchesEdited: info.header.patchesEdited.map(p => p.path ?? '').filter(Boolean) };
+      importedAt: info.importedAt, redactions: info.header.redactions.length, patchesEdited: info.header.patchesEdited.map(p => p.path ?? '').filter(Boolean),
+      ...(info.team ? { team: info.team } : {}) };
   }
 
   get(id: string): Ledger {
@@ -80,13 +92,14 @@ export class SharedLibrary {
 
   sessions(): SharedSession[] {
     return this.all.flatMap(store => store.database.manifests().map(manifest => ({
-      captureId: manifest.captureId, harness: manifest.harness, startedAt: manifest.startedAt, project: store.shared.project, sharedAt: store.shared.sharedAt,
+      captureId: manifest.captureId, ...(shownName(manifest) ? { name: shownName(manifest) } : {}), harness: manifest.harness, startedAt: manifest.startedAt, project: store.shared.project, sharedAt: store.shared.sharedAt,
       turns: Number(store.database.sql.prepare(`SELECT count(*) AS n FROM records WHERE capture_id=? AND type='input' AND json_extract(body,'$.agentId') IS NULL`).get(manifest.captureId)!.n),
     })));
   }
 
-  /** Build a read-only store from a share file. The same file imported twice is one store. */
-  import(file: string): { store: SharedStore; added: boolean } {
+  /** Build a read-only store from a share file. The same file imported twice is one store.
+   * `team`: it came through `wisdom team fetch`, with who recorded it when the push said so. */
+  import(file: string, team?: { recordedBy?: unknown }): { store: SharedStore; added: boolean } {
     const bytes = fs.readFileSync(file);
     const shareId = hash(bytes).slice(0, 16);
     const existing = this.stores.get(shareId);
@@ -116,7 +129,9 @@ export class SharedLibrary {
       fs.mkdirSync(path.dirname(out), { recursive: true });
       fs.writeFileSync(out, encoding === 'utf8' ? content : Buffer.from(content, 'base64'));
     }
-    writeJson(path.join(building, 'info.json'), { shareId, sourceName: path.basename(file), importedAt: new Date().toISOString(), header: share.header } satisfies StoreInfo);
+    const recordedBy = team && recorder(team.recordedBy);
+    writeJson(path.join(building, 'info.json'), { shareId, sourceName: path.basename(file), importedAt: new Date().toISOString(), header: share.header,
+      ...(team ? { team: recordedBy ? { recordedBy } : {} } : {}) } satisfies StoreInfo);
     fs.renameSync(building, target);
     const store = new SharedStore(target);
     this.stores.set(shareId, store);
@@ -216,11 +231,18 @@ export function readLedger(captures: Captures, library: SharedLibrary, input: un
   return store ? ledger(store, input) : ledger(captures, input, library.sessions(), stores);
 }
 
-/** A dashboard read, routed the same way. Exports stay with this project's own sessions. */
+/** A dashboard read, routed the same way. Exports stay with this project's own sessions.
+ * The reads people name a session in (export, transcript, markdown: `wisdom share`, `export`,
+ * `clone`, `handoff --from`) also take a name only one of this project's sessions has, tried
+ * last: an ID, a prefix, `latest` or a shared copy always resolve as they did. */
 export function readView(captures: Captures, library: SharedLibrary, request: ViewRequest): unknown {
   if (request.view === 'shared') return { sessions: library.all.flatMap(sharedSessions) };
   const ref = 'captureId' in request ? request.captureId : request.view === 'transcript' || request.view === 'markdown' ? request.capture : undefined;
   const store = ref && !holds(captures, ref) ? library.owner(ref) : undefined;
+  if ('capture' in request && request.capture !== 'latest' && !store && !holds(captures, request.capture)) {
+    const named = captures.named(request.capture, true);
+    if (named) return view(captures, { ...request, capture: named });
+  }
   return view(store ?? captures, request);
 }
 

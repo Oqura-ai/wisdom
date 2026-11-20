@@ -4,7 +4,7 @@ Wisdom works on one machine by default (local mode). Team mode lets a team read 
 other's sessions from a commit, through the team's own git remote. Nothing goes to
 Wisdom: sessions and records are hidden git refs in your own repository.
 
-A repository is in team mode when it has a committed `wisdom-team.json` at its top.
+A repository is in team mode when it has a committed `wisdom-team.yaml` at its top.
 Without that file, Wisdom changes no commit message and pushes nothing, and by default
 installs no git hooks and calls no model, so you can use Wisdom in any project, including open
 source ones whose owners don't. See [Guides in local mode](#guides-in-local-mode).
@@ -72,11 +72,14 @@ as it would in any Claude Code session.
    originals here. It never sends the `.wisdom/` folder or any login. A failure there never
    stops your push; it says so.
    Only commits made in team mode travel: a commit whose tree already holds
-   `wisdom-team.json`. Work you recorded before team mode was turned on (local-mode records,
+   `wisdom-team.yaml`. Work you recorded before team mode was turned on (local-mode records,
    their sessions, their guides) stays on your machine, and no guide is written for it at push.
 5. **Review.** A reviewer runs `wisdom team fetch`, then `wisdom glance --commit <commit>`.
    Each piece points to the step that made it, checked against the fetched session, with
-   the guide below. They open steps with `wisdom open t3/c2 --capture <session>`.
+   the guide below. They open steps with `wisdom open t3/c2 --capture <session>`. In the
+   dashboard, a teammate's session shows under **Shared with you** with its
+   [name](usage.md#naming-a-session) and who recorded it (their git name and email, labelled
+   "git config, not verified"; nothing when the policy sets `identity: false`).
 6. **CI.** `wisdom check --range <base>..<head>` checks the pull request: every commit with
    agent work has a guide that passed its check, and every session its record names is on
    the remote. This is the one check nobody can skip on their own machine.
@@ -92,7 +95,7 @@ the model back on.
 
 | Command | What it does |
 | --- | --- |
-| `wisdom team init` | Writes `wisdom-team.json` with a new repo ID. An admin commits it. |
+| `wisdom team init` | Writes `wisdom-team.yaml` with a new repo ID. An admin commits it. |
 | `wisdom init`, `wisdom connect` | In a team-mode repository, also install the git hooks. |
 | `wisdom team hooks on\|off` | Installs or removes the three git hooks. |
 | `wisdom guide on\|off` | Team mode: who writes your guides, a model reading the sessions (on, the default) or Wisdom from the record with no model (off). Local mode: whether a model writes one after each commit (off by default; on installs only `post-commit`). Each commit's job goes by the switch, and by the policy's `guides` writer, as they were at that commit. |
@@ -130,19 +133,20 @@ are installed, the daemon's own commit watcher stands aside.
 
 ## The policy file
 
-```json
-{
-  "version": 1,
-  "repoId": "5d0c3c1e-8a5b-4b8e-9d0e-2f1c7a3b9e11",
-  "remote": "origin",
-  "identity": true,
-  "requireGuides": true,
-  "keepReferenced": true,
-  "retentionDays": 90,
-  "check": "node scripts/scan-session.mjs",
-  "guides": { "model": "claude-haiku-5-5" }
-}
+```yaml
+version: 1
+repoId: 5d0c3c1e-8a5b-4b8e-9d0e-2f1c7a3b9e11
+remote: origin
+identity: true
+requireGuides: true
+keepReferenced: true
+retentionDays: 90
+check: node scripts/scan-session.mjs
+guides:
+  model: claude-haiku-5-5
 ```
+
+`wisdom team init` writes the file with these defaults and the optional ones commented out.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -153,7 +157,7 @@ are installed, the daemon's own commit watcher stands aside.
 | `retentionDays` | none | `wisdom team prune` removes pushed sessions older than this. |
 | `keepReferenced` | `true` | Prune keeps sessions a pushed record still names. |
 | `check` | none | Your own command, run on each session file before it is pushed, with the file's path last. It may change the file; a non-zero exit stops that session's upload. Wisdom's own filter is basic. Add your rules here. A session held back this way is tried again at each push, which says so in one line with a short cause (refused, could not run here, timed out), never the command's own output. |
-| `guides.model` | `claude-haiku-5-5` | The model that writes guides. |
+| `guides.model` | `claude-haiku-5-5` | The model that writes guides. Unset here, each person's own `guides.model` in [`wisdom.yaml`](usage.md#settings) is used. |
 | `guides.command` | Claude Code (`claude -p --model <model>`, with only Wisdom's ledger tool) | Any other writer: it reads the prompt on stdin, prints the guide, and finds the model in `WISDOM_GUIDE_MODEL`. Use it for Codex, Pi, an API key, or a local model. It gets the cited steps already opened (up to 6,000 characters each, 60,000 in all) and may not use tools, so it does not read the rest of the window. The guide names its writer as the command followed by `(model not named)`, since the command picks its own model; set `guides.model` as well and it reads `<model> via <command>`. |
 
 ## What a guide costs
@@ -178,7 +182,7 @@ is Wisdom's own.
 | Locally | On the remote | Holds |
 | --- | --- | --- |
 | `refs/wisdom/records/<commit>` | `refs/wisdom/<repo-id>/records/<commit>` | `record.json`: each piece, its steps, each step's file and patch hashes, the guide and its check. |
-| `refs/wisdom/sessions/<recorder>/<session>` | `refs/wisdom/<repo-id>/sessions/<recorder>/<session>` | `session.wisdom-share` (the redacted export) and `meta.json`. Each push adds a version on top of the last. |
+| `refs/wisdom/sessions/<recorder>/<session>` | `refs/wisdom/<repo-id>/sessions/<recorder>/<session>` | `session.wisdom-share` (the redacted export, its name included) and `meta.json` (a hash of that name, never the name). Each push adds a version on top of the last: when a commit's record names the session and it gained records, or when the session is already on the remote and was renamed since. A rename never sends a session the remote does not have. |
 | `refs/wisdom/deleted` | `refs/wisdom/<repo-id>/deleted` | The deletion list. |
 
 `<recorder>` is a random ID made once per data folder, so two machines never clash. These

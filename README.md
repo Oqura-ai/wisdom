@@ -61,6 +61,8 @@ wisdom dashboard
 
 The first time in a project, Codex asks you to trust it and to approve Wisdom's hooks in `/hooks`, and Pi asks you to trust it. On Windows PowerShell with scripts blocked, use `wisdom.cmd` and `npm.cmd`.
 
+Your settings for the project are in `wisdom.yaml`, which `wisdom connect` writes with every default shown: the guide model, the dashboard port and what to leave out of recordings. Git ignores it. See [settings](docs/usage.md#settings).
+
 ## Supported agents
 
 | Agent | Tested with | Records through | Notes |
@@ -83,14 +85,14 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom glance [latest]` | List sessions, or show one session turn by turn |
 | `wisdom open t3 --capture latest` | One turn in full: replies, tool calls with output, diffs |
 | `wisdom dashboard` | Print the address of the local dashboard |
-| `wisdom resume <id>` | Continue a session, still recording |
-| `wisdom handoff codex` | Start another agent that reads the last session first |
+| `wisdom resume <id or name>` | Continue a session, still recording |
+| `wisdom handoff codex` | Start another agent that reads the last session first (`--emit`: in the background, reading only) |
 | `wisdom share <id>` / `wisdom import <file>` | Send a session to a teammate, read one you received |
 | `wisdom export <id> --out session.md` | A session as Markdown, for a PR or an issue |
 | `wisdom glance --commit HEAD` | Which recorded steps made each piece of a commit, with its guide |
 | `wisdom guide on` / `off` | A model writes each commit's guide, or Wisdom's plain one does |
 | `wisdom guide <commit>` | Have a model write one commit's guide now |
-| `wisdom team init` | Turn on team mode: write `wisdom-team.json` to commit |
+| `wisdom team init` | Turn on team mode: write `wisdom-team.yaml` to commit |
 | `wisdom team fetch` / `push` | Read teammates' sessions, or send yours without a `git push` |
 | `wisdom team delete <id>` | Remove a pushed session for everyone |
 | `wisdom check --range A..B` | In CI: each agent commit has a guide and its sessions are pushed |
@@ -135,7 +137,7 @@ Team mode lets teammates read the sessions behind each other's commits. It's opt
 </p>
 
 ```sh
-wisdom team init                  # writes wisdom-team.json; commit and push it
+wisdom team init                  # writes wisdom-team.yaml; commit and push it
 wisdom connect                    # every teammate, after pulling it: installs Wisdom's git hooks
 git commit && git push            # as usual
 wisdom team fetch                 # bring teammates' sessions here, read-only
@@ -145,7 +147,7 @@ wisdom glance --commit <commit>   # any commit, with the steps that made it and 
 - **On commit**, Wisdom adds a `Wisdom-Record:` line to the message, so the record follows the commit through an amend, a rebase or a squash merge. A background job then keeps the record, and for agent work a model writes the guide. Run `wisdom guide off` to get Wisdom's plain guide instead.
 - **On push**, your `git push` waits for any guide still being written, up to five minutes, then sends the sessions and the records, every possible secret redacted. A failure here never stops your push.
 - **In CI**, `wisdom check --range origin/main..HEAD` fails a pull request whose agent commits have no guide, or whose sessions aren't on the remote.
-- **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.json`.
+- **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.yaml`.
 
 Tested with GitHub so far, not yet GitLab, and a pull request from a fork can't push sessions. Details in [team mode](docs/team.md).
 

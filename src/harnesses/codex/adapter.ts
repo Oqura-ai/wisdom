@@ -79,6 +79,8 @@ export const codex: HarnessAdapter = {
   homeEnv: 'CODEX_HOME',
   defaultHome: ['.codex'],
   resume: sessionId => ['codex', 'resume', sessionId],
+  // `exec` never asks; the read-only sandbox refuses every change.
+  background: (prompt, sessionId) => ['codex', '--sandbox', 'read-only', 'exec', ...(sessionId ? ['resume', sessionId] : []), prompt],
   // apply_patch can change several files; shell and MCP calls can write anywhere.
   toolTarget: () => undefined,
   isDirectFileTool: () => false,
@@ -97,6 +99,8 @@ export const codex: HarnessAdapter = {
   // A fork points to its parent and copies no lines, so no line of it needs tracing.
   nativeForkedFrom: () => undefined,
   isNotice: () => false,
+  // Codex keeps a thread's name in its home's session_index.jsonl, not in the session file.
+  nativeName: () => undefined,
   nativeVersion: entry => entry?.type === 'session_meta' && typeof entry.payload?.cli_version === 'string' ? entry.payload.cli_version : undefined,
   // Codex adds its own user-role messages (AGENTS.md, <environment_context>); they are not typed.
   nativePrompt: entry => {

@@ -43,11 +43,21 @@ function usage(entry: any): NeutralUsage[] {
   return [];
 }
 
+/** Wisdom's `ledger` tool, and only its two reading commands in the shell (a chained or
+ * redirected command does not match, verified on 2.1.328). */
+const readsAllowed = ['--allowedTools=mcp__wisdom__ledger,Bash(wisdom glance *),Bash(wisdom open *)'];
+
 export const claudeCode: HarnessAdapter = {
   name: 'claude-code',
   homeEnv: 'CLAUDE_CONFIG_DIR',
   defaultHome: ['.claude'],
   resume: sessionId => ['claude', '--resume', sessionId],
+  // No editing tools; the shell runs only Wisdom's reads, and dontAsk refuses anything else
+  // (verified on 2.1.328). `--tools` and `--allowedTools` take several values: written apart,
+  // they would also take the prompt.
+  background: (prompt, sessionId) => ['claude', '-p', '--permission-mode', 'dontAsk', '--tools=Read,Glob,Grep,Bash',
+    ...readsAllowed, ...(sessionId ? ['--resume', sessionId] : []), prompt],
+  readsAllowed,
   toolTarget: (_toolName, input) => typeof input?.file_path === 'string' ? input.file_path
     : typeof input?.notebook_path === 'string' ? input.notebook_path : undefined,
   isDirectFileTool: toolName => direct.has(toolName),
@@ -60,6 +70,8 @@ export const claudeCode: HarnessAdapter = {
   // projects/<the folder, every character not a letter or digit as ->/<session>.jsonl
   sessionFile: (home, sessionId, cwd) => path.join(home, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`),
   nativeVersion: entry => typeof entry?.version === 'string' ? entry.version : undefined,
+  // `claude -n` and /rename write custom-title. ai-title and agent-name can be made up by Claude Code itself.
+  nativeName: entry => entry?.type === 'custom-title' && typeof entry.customTitle === 'string' ? entry.customTitle : undefined,
   nativeChanges: () => [],
   isScriptStep: () => false,
   nativeForkedFrom: entry => typeof entry?.forkedFrom?.sessionId === 'string' ? entry.forkedFrom.sessionId : undefined,

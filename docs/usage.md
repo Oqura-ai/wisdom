@@ -8,8 +8,8 @@
 | `wisdom disconnect` | Take out exactly what `connect` added. Recordings are kept. |
 | `wisdom init` | Make a folder a Wisdom project for `wisdom track`: `.wisdom/`, hooks and the reading skill in each harness's home there, the daemon. Running it again repairs them. |
 | `wisdom track claude\|codex\|pi` | Start a harness with its home in the project, under its own login there. Harness options go after `--`, such as `-- --continue`. |
-| `wisdom resume <session-id>` | Continue a recorded session in its harness and folder, still recording. Takes the full ID only, so a resume never lands in the wrong session. |
-| `wisdom handoff <harness\|session-id> [--from <session-id>]` | Continue work in a new session of any harness, or an existing session, that reads another session first. See [handing work on](#handing-work-on). |
+| `wisdom resume <id or name>` | Continue a recorded session in its harness and folder, still recording. Takes the full ID, or a [name](#naming-a-session) only one session has, so a resume never lands in the wrong session. |
+| `wisdom handoff <harness\|session> [--from <session>]` | Continue work in a new session of any harness, or an existing session, that reads another session first. See [handing work on](#handing-work-on). |
 | `wisdom share <session>...` | Write one file to send a teammate, after a check for secrets. See [sharing a session](#sharing-a-session). |
 | `wisdom import <file>` | Read a teammate's shared file in this project, read-only. See [reading a shared session](#reading-a-shared-session). |
 | `wisdom clone <session>` | Carry a session on as a new session of the same harness, its history copied. See [cloning a session](#cloning-a-session). |
@@ -52,7 +52,7 @@ Your harness keeps its sessions in its own home (`~/.claude`, `~/.codex`, `~/.pi
 
 ### Either way
 
-**Wisdom never stops the harness.** Each hook sends its event to the daemon. If the daemon is down or refuses, the hook keeps the event in `.wisdom/spool/`, starts the daemon, and shows a warning. The daemon records kept events in order when it is back, marked `delivered-late`. File changes made while it was down are not observed, and the glance says so.
+**Wisdom never stops the harness.** Each hook sends its event to the daemon. If the daemon is down or refuses, the hook keeps the event in `.wisdom/spool/` and starts the daemon. It shows a warning only when that is not enough: the daemon refused the event, answered too slowly, or could not be started. The daemon records kept events in order when it is back, marked `delivered-late`. File changes made while it was down are not observed, and the glance says so.
 
 **Nothing in the home goes unnoticed.** Every 10 seconds the daemon looks at the session files in the harness homes, and, for a connected harness, at this project's session files in your own home changed since you connected. A session file with no record, unchanged for two minutes (hooks untrusted or disabled, for example), becomes a record read from that file. Its typed prompts appear as `in (from session file)`, its replies, calls and results as the harness wrote them, with a `not-recorded-live` gap (no hook events, no observed file changes). Lines a session gained while nothing recorded are read the same way.
 
@@ -62,20 +62,27 @@ Your harness keeps its sessions in its own home (`~/.claude`, `~/.codex`, `~/.pi
 
 ## Handing work on
 
-When an agent runs out mid-task, or you want another harness to carry on, hand the work on:
+When an agent runs out mid-task, you want another harness to carry on, or a session finds a problem that belongs to another session's work, hand the work on. The other session opens in your terminal and reads that session first; you carry on there.
 
 ```sh
-wisdom handoff codex                          # a new Codex session reads the newest session from another harness
+wisdom handoff codex                          # a new Codex session reads the newest session from another harness, else Codex's own
 wisdom handoff pi --from 0f3c8a1e-…           # name the session to read, by its full ID
 wisdom handoff 0f3c8a1e-… --from 01a1aca0-…   # resume an existing session, which reads what happened since
-wisdom handoff codex -- also run the tests    # add your own words to its first prompt
+wisdom handoff codex "the tests fail on CI"   # add what it should know to its first prompt
+wisdom handoff 0f3c8a1e-… --emit "…"          # in the background, reading only, while you keep working
 ```
 
-The new or resumed session starts with a first prompt that names the other session's full ID and tells the agent to read it with `wisdom glance` and `wisdom open` before changing anything. Nothing is summarized: the agent reads the record itself, through the skill in its home.
+The words can also follow `--` (`wisdom handoff codex -- the tests fail on CI`), but PowerShell drops a `--` it is given, so quoting them works in every shell.
+
+The new or resumed session starts with a first prompt Wisdom writes from facts, never a summary. It starts with your words, then names the other session's full ID and tells the agent to read it with `wisdom glance` and `wisdom open`, before changing anything, and to check its claims against its own evidence. It says how many turns the session has (start with the newest), which files it changed, the branch, commit and number of files not committed, and, for an existing session, which of its own files are different on disk since it last worked, so it does not trust a stale memory. Nothing is summarized: the agent reads the record itself, through the skill in its home. Claude Code may run Wisdom's two reading commands and its `ledger` tool without asking you; everything else asks as usual. The words are labelled as the sending session's own when the handoff runs from inside it, and as yours when you type it in a terminal. An agent that hands off writes, in the quoted words, the goal, what it found (with positions such as `t3/c2`), what it tried and ruled out, and what it wants back.
+
+**Emitting** (`--emit`) hands the work on without opening anything: the other session reads it in the background and changes nothing, so you, or the agent that ran the command, keep working. The work goes on in that session later, when you open it with `wisdom resume`. It replies in four parts: what happened, what is still open, conflicts with its own earlier work (or, for a new session, its questions), and what it would do next. The harness runs in its own background mode, held to reading by the harness itself, not only by the prompt. Claude Code runs `claude -p` with no editing tools and `dontAsk`, so its shell runs only `wisdom glance` and `wisdom open`, and it may also use Wisdom's `ledger` tool and read the project's files. Codex runs `codex exec` in its `read-only` sandbox. Pi can't take an emitted handoff: it reads a recording only through its shell, which could also change files; it can still be the session that hands off. The command waits, then prints `Handoff complete: …` with the session that took it and its reply, or `Handoff failed: …` with its log. Ctrl+C stops the waiting, not the handoff. Replies and logs are kept in `.wisdom/handoffs/`.
+
+Run from inside a Claude Code session, the handoff reads that session by default: Wisdom's SessionStart hook gives the session's shell its ID as `WISDOM_SESSION`. From Codex or Pi, name it with `--from`. An agent emits (it can't open a session in its own terminal), as a background command if its harness can, so it keeps working while it waits.
 
 Each session says how it is linked. The glance shows `continues <id> (<harness>)` for a new session, or `continued after <id> (<harness>) · at t5` for an existing one, and the dashboard shows the link from both ends. One handoff links one session: a `/clear` or `/new` later in the same process is not a continuation.
 
-A session that is still running can't take outside input, so a handoff into one starts nothing and prints the prompt for you to paste. A very long existing session gets a note suggesting a new session instead, because its old context plus the reading can fill the window quickly. Codex needs its hooks trusted, as for `wisdom track codex`.
+A session that is still running can't take outside input, so a handoff into one starts nothing and prints the prompt for you to paste, and the command for a new session instead. A very long existing session gets a note suggesting a new session instead, because its old context plus the reading can fill the window quickly. Codex needs its hooks trusted, as for `wisdom track codex`.
 
 ## Sharing a session
 
@@ -167,6 +174,21 @@ The same check for secrets as `wisdom share` runs first, with the same choices: 
 - **What stays in the terminal:** starting and stopping the daemon. The dashboard is served by the daemon, so it can't start it, and stopping it would close the page.
 - **Storage:** the overview shows the project's disk space: each session's evidence, the database, each harness home in `.wisdom`, and the rest, with the largest sessions. **Clean up…** lists sessions not active for 30 days (change the number), to pick one by one or delete all; the delete dialog below then shows exactly what goes. Nothing is ever deleted on a schedule.
 
+## Naming a session
+
+A session shows as its name, or else its first prompt. There are two ways to name one:
+
+- **In the harness, as you start it or while it runs.** `claude -n "fix login"` or `/rename` in Claude Code; `pi --name "fix login"` or renaming in Pi. With `wisdom track`, pass the flag after `--`: `wisdom track claude -- -n "fix login"`. Wisdom reads the name from the session's file, so it works the same in a tracked or a connected session. Names Claude Code makes up by itself are not used. Codex keeps its names outside the session file, beside the ones it makes up, so for Codex name the session in the dashboard. A session named before Wisdom could read names shows it once the harness writes the name again (a new `/rename`). A clone or fork starts with its original's name.
+- **In the dashboard.** Open the session and press **Rename**. A name given here comes before the harness's, and saving it empty goes back to the harness's name or the first prompt. This works while a session records, too. A session shared with you keeps the name it came with.
+
+A name is one line of at most 100 characters; line breaks and control characters become spaces, and invisible direction marks are removed. It is a label, not evidence: changing it doesn't change the recording or what `glance` and `open` show, and other dashboard tabs show it on their next refresh.
+
+**Using a name in commands.** `resume`, `handoff` (as the session to continue, and with `--from`), `clone`, `share` and `export` take a name where they take a session, quoted when it has spaces: `wisdom resume "fix login"`, `wisdom handoff "fix login"`, `wisdom export "fix login"`. A name is tried last, so what worked before works the same: `claude`, `codex` and `pi` always mean the agent, and an exact ID, an ID's first 8 characters and `latest` always mean that session. Only an exact name counts (any letter case), and a name two sessions share is refused, with both IDs. `glance`, `open` and `team delete` take IDs only. Unnamed sessions, and people who use IDs, see no difference.
+
+**Where names show.** Everywhere the dashboard lists a session, and its links ("continues", "cloned from"); next to the ID in the messages of `resume`, `handoff`, `clone`, `import` and `team push`; as the title of `wisdom export`; and at the start of a share or export file's name (`fix-login-7e1f2a3b-….wisdom-share`), except when the name looks like a secret, since a file name is never redacted.
+
+**Leaving your machine.** A name goes with `wisdom share` and team push, after the same secret check as everything else. In team mode, renaming a session the team already has sends it again at your next push, so teammates see the new name after `wisdom team fetch`; a session the team never got is never sent by a rename. See [team mode](team.md).
+
 ## Deleting a session
 
 Open a session in the dashboard and press **Delete**. Nothing is deleted until you have read what goes and confirmed:
@@ -234,19 +256,52 @@ src/util.ts · modify · +1 −0 · not recorded
 
 A session is linked only when it produced the committed file's exact contents: Wisdom follows the recorded changes, by a hash of the whole file, from the parent's file to the committed one. `not recorded` means nothing recorded explains that piece. Linked worktrees are matched the same way, by contents.
 
-When the daemon sees you make a commit, it keeps that answer as a record in your own `.git` (`refs/wisdom/records/<commit>`, never on a branch), so the link outlives the sessions it points to. Any other commit is worked out when asked. In a repository with `wisdom-team.json`, records and sessions can travel to your team: see [Team mode](team.md).
+When the daemon sees you make a commit, it keeps that answer as a record in your own `.git` (`refs/wisdom/records/<commit>`, never on a branch), so the link outlives the sessions it points to. Any other commit is worked out when asked. In a repository with `wisdom-team.yaml`, records and sessions can travel to your team: see [Team mode](team.md).
 
 A kept record with agent work also shows a **guide** at the end, `guide · plain, built from the record now, no model`: each piece's step and the request of its turn, quoted. It is built each time you read it and never stored. For an account of what the change does and why, `wisdom guide <commit>` has a model (Claude Haiku 5.5, through your Claude Code) read the commit's sessions since your previous commit and write one, kept in that commit's record on this machine. `wisdom guide on` has one written after every commit, through a single `post-commit` hook that changes no commit message and pushes nothing; it is off by default. See [Guides in local mode](team.md#guides-in-local-mode). A normal `git push` never sends `refs/wisdom/*`; `git push --mirror` does.
 
 ## The background service
 
-The daemon listens on `127.0.0.1:7434` by default. When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
+The daemon listens on `127.0.0.1:7434` by default, or from `daemon.port` in [`wisdom.yaml`](#settings). When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
 
 A recording capture becomes interrupted when the daemon restarts. It does not silently resume with a missing file baseline. The session's next event continues it, with a gap for the time in between. A turn that had not settled stays open, so its calls and reply stay in it.
+
+## Settings
+
+`wisdom init` and `wisdom connect` write `wisdom.yaml` at the project's top, with every default shown and commented out. Remove the `#` (and the space after it) in front of a line to change that setting. In a git repository it goes in the clone's own `.git/info/exclude`, so it stays yours and no shared file changes.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `harnesses.claude`, `.codex`, `.pi` | `true` | `false`: `init` and `connect` set that harness up no more. An earlier connection is left as it was; `wisdom disconnect` removes all of Wisdom's. |
+| `paths.claude`, `.codex`, `.pi` | the installed one | Another installation, as `--claude-bin`, `--codex-bin` and `--pi-entry` do, for setup, `track`, `doctor` and the guide writer. A name is looked up on PATH; a path is taken from the project's folder. Pi's is its CLI's `.js` file. |
+| `skill` | `true` | `false`: Wisdom's reading skill is taken out of each place it went, and no command puts it back. |
+| `mcp` | `true` | `false`: tracked Claude Code and Codex sessions start without the read-only `ledger` tool. Connected sessions never get it. |
+| `daemon.port` | `7434` | The first port the daemon tries; when another project holds it, the next free pair. `--port` still asks for one port exactly. |
+| `daemon.dashboard` | `true` | `false` starts the daemon without the dashboard, as `--no-dashboard` does. |
+| `recording.idleMinutes` | `10` | A session with no event this long, and no tool running, is closed; its next event continues it. Read when a session starts being watched. |
+| `recording.maxFileMB` | `1` | A file bigger than this, 1 to 16, has its change recorded as a gap, without its contents. |
+| `recording.ignore` | none | Files or folders, from the project's top, never recorded: as `.wisdomignore` (still read too) takes them, with no `*` or `..`. |
+| `recording.skipFolders` | none | Folder names skipped anywhere, besides the built-in ones ([limitations](limitations.md#files)), such as `target`, `vendor` or `coverage`. A session's manifest keeps what it was recorded with. |
+| `guides.on` | on in team mode, off in local | Whether a model writes your commit guides. `wisdom guide on\|off` writes it, keeping the rest of the file. |
+| `guides.model` | `claude-haiku-5-5` | The model your commit guides are written with, through your Claude Code. In team mode, `guides.model` in `wisdom-team.yaml` wins. |
+| `guides.timeoutSeconds` | `150` | How long one guide may take to write, 30 to 300. |
+| `guides.turns` | `30` | How many steps the Claude Code writer may take reading the sessions, 5 to 60. Fewer is cheaper; too few can leave a guide unwritten. |
+| `guides.extra` | none | Your own words, added after the writer's rules. Wisdom's check of the guide is the same. |
+| `handoff.longSessionTokens` | `150000` | A session that has used more tokens than this gets a note: a new session starts lighter. |
+| `handoff.extra` | none | Your own words, added to every handoff prompt as `This project also asks: …`, before its last part. That part always stands: with `--emit`, change nothing, even if asked above. |
+| `share.secrets` | `ask` | What `share` and `export` do with what the check finds when no flag says: `ask`, `redact` or `keep`, said in a line when the file chose. |
+| `prices.<model>` | the built-in table | Codex cost estimates, `{ input, cached, output }` in US dollars per million tokens. Read when the daemon starts. |
+
+`wisdom init` also shows Wisdom's handoff prompt and the commit guide prompt in the file, as comments, made by the same code that makes every real one, with example facts.
+
+- **A flag wins** over the file, and the file over the default. Without the file, or with only comments, everything is the default.
+- **A mistake is named, never half-read.** With a setting Wisdom does not know (a typo such as `dashbord`), a wrong value or broken YAML, every setting is its default until it is fixed, so recording never stops. Each command that reads the file says why, `init` and `connect` say so too, and `wisdom doctor` reports it as a problem. Hooks never read the file.
+- **Running `init` or `connect` again** refreshes a file that still holds only defaults, so a newer Wisdom's defaults show. A file with a setting of your own is never rewritten.
 
 ## Files
 
 ```text
+wisdom.yaml                    # Your settings for this project (see Settings); git ignores it
 .wisdom/
   wisdom.json                  # Marks the project; written by wisdom init
   daemon.json                  # Local connection details; do not commit
@@ -256,6 +311,7 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
   ledger.sqlite-wal            # SQLite may keep sidecar files while running
   ledger.sqlite-shm
   spool/<harness>/<session>/   # Events a hook kept while the daemon was down
+  handoffs/<id>.txt, <id>.log  # A background handoff's answer and log
   deleted.json                 # Hashes of deleted sessions' IDs, never recorded again
   backups/<time>/              # Files a dashboard repair changed, as they were before
   harnesses/<harness>/home/    # The harness's own folder: settings with Wisdom's hooks,
@@ -273,5 +329,4 @@ To exclude files from observation, add `.wisdomignore` to the project: relative 
 ## Privacy
 
 All generated data stays local. Native transcripts and hook payloads are preserved without redaction and may contain sensitive content. `.wisdom/` also holds each harness's login (such as `.wisdom/harnesses/claude-code/home/.credentials.json`).
-
 `wisdom init` and `wisdom connect` list `.wisdom/` in `.git/info/exclude`, your clone's own ignore file, so no file the project shares changes (outside a git repository, in `.gitignore`). That only keeps it out of git. Leave it out of zips, copies, shared drives and synced folders. A copy of `.wisdom/` is a copy of your login.
