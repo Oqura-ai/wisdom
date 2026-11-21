@@ -490,53 +490,6 @@ test('a session the project\'s check held back is tried again at each push, with
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
-test('a rename reaches teammates at the next push, only for sessions the team already has, and a teammate sees who recorded it', { skip: !hasGit }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-renamed-')));
-  const origin = path.join(root, 'origin.git');
-  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { windowsHide: true });
-  const alice = person(root, 'alice', origin, false);
-  fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\n');
-  writePolicy(alice.dir);
-  alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
-  const daemon = await startDaemon(alice.data, 0);
-  let bobs: Awaited<ReturnType<typeof startDaemon>> | undefined;
-  try {
-    setGuides(alice.data, false);
-    const c = daemon.connection;
-    const { captureId: id } = await openSession(c, { harness: 'pi', sessionId: 'pushed-one', workspaceRoot: alice.dir, source: null });
-    const send = (o: unknown) => observeSession(c, id, o);
-    await send(obs('input', { data: { text: 'Shout.' } }));
-    await send(obs('tool_started', { toolCallId: 'e1', toolName: 'edit', data: { input: { path: 'a.ts' } } }));
-    fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'ONE\n');
-    await send(obs('tool_finished', { toolCallId: 'e1', toolName: 'edit', isError: false, data: { content: 'ok' } }));
-    alice.git('commit', '-q', '-am', 'shout');
-    // No git hooks here: the daemon's own commit watcher keeps the record when push asks it to.
-    const pushOnce = () => call(c, '/team', { action: 'push' });
-    const one = await pushOnce();
-    assert.deepEqual(one.sessions.map((s: any) => [s.id, s.state]), [['pushed-one', 'new version']]);
-
-    // A second session the team never got, and both renamed.
-    await openSession(c, { harness: 'pi', sessionId: 'never-pushed', workspaceRoot: alice.dir, source: null });
-    await call(c, '/name', { session: 'never-pushed', name: 'Private notes' });
-    assert.deepEqual((await pushOnce()).sessions, [], 'nothing new, nothing renamed: nothing sent');
-    await call(c, '/name', { session: 'pushed-one', name: 'Fix the shouting' });
-    const renamed = await pushOnce();
-    assert.deepEqual(renamed.sessions.map((s: any) => [s.id, s.name, s.state]), [['pushed-one', 'Fix the shouting', 'new version']],
-      'the renamed session goes again; the one never pushed stays here');
-    assert.deepEqual((await pushOnce()).sessions, [], 'the same name again sends nothing');
-
-    const bob = person(root, 'bob', origin, true);
-    bobs = await startDaemon(bob.data, 0);
-    await call(bobs.connection, '/team', { action: 'fetch' });
-    const { sessions } = await call(bobs.connection, '/view', { view: 'shared' });
-    assert.deepEqual(sessions.map((s: any) => [s.captureId, s.name, s.shared.team]),
-      [['pushed-one', 'Fix the shouting', { recordedBy: { name: 'alice', email: 'alice@example.com' } }]]);
-  } finally {
-    await daemon.close(); await bobs?.close();
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
-  }
-});
-
 test('a commit\'s job goes by the guide switch and writer as they were at the commit (live tests 4.9, 6.3)', { skip: !hasGit }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-snapshot-')));
   const origin = path.join(root, 'origin.git');

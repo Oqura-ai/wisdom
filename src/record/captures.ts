@@ -4,7 +4,7 @@ import { createTwoFilesPatch } from 'diff';
 import { Ledger, hash, writeJson } from '../storage/ledger.js';
 import { LedgerDatabase } from '../storage/database.js';
 import { SessionFiles, scope } from './workspace.js';
-import { hookSchema, preview, sessionName, shownName, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
+import { hookSchema, preview, type CloneNote, type Handoff, type HookEvent, type Observation, type Manifest, type LedgerRecord } from '../core/schema.js';
 import { adapter, harnessNames } from '../harnesses/index.js';
 import type { NativeEntry } from '../harnesses/types.js';
 import { surfaceText } from '../core/content.js';
@@ -641,31 +641,6 @@ export class Captures {
       catch (error) { kept.push(`${label}: ${reason(error)}`); }
     }
     return { session: id, removed, kept };
-  }
-
-  /** A person names a session, recording or not; an empty name removes it. Kept in its
-   * manifest, which only the daemon writes, so a session still recording keeps the name.
-   * Only the name changes: no recorded evidence does. */
-  rename(id: string, name: string): { session: string; name?: string } {
-    const ledger = this.get(id);
-    ledger.manifest.name = sessionName(name) || undefined;
-    ledger.saveManifest();
-    return { session: id, name: ledger.manifest.name };
-  }
-
-  /** The one session of this project with this name, as it is shown (the name given here, else
-   * the harness's), in any letter case. Never a guess: more than one is always refused; no match
-   * is refused too, unless `optional`, which leaves it to the caller. */
-  named(name: string): string;
-  named(name: string, optional: true): string | undefined;
-  named(name: string, optional = false): string | undefined {
-    const wanted = sessionName(name).toLowerCase();
-    const matches = wanted ? [...this.ledgers.values()].filter(ledger => shownName(ledger.manifest)?.toLowerCase() === wanted) : [];
-    if (matches.length === 1) return matches[0]!.manifest.captureId;
-    if (!matches.length && optional) return undefined;
-    if (!matches.length) throw new Error(`No recorded session has the ID or name "${name}". wisdom glance lists the IDs; names show in the dashboard.`);
-    throw new Error(`${matches.length} sessions are named "${name}", so none was opened: ${matches.map(({ manifest }) =>
-      `${manifest.captureId} (${manifest.harness}, started ${manifest.startedAt.slice(0, 16).replace('T', ' ')})`).join(', ')}. Use the ID, or rename one.`);
   }
 
   /** Where this project's disk space goes: the database, each session's evidence folder, and each

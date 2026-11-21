@@ -99,8 +99,6 @@ export const codex: HarnessAdapter = {
   // A fork points to its parent and copies no lines, so no line of it needs tracing.
   nativeForkedFrom: () => undefined,
   isNotice: () => false,
-  // Codex keeps a thread's name in its home's session_index.jsonl, not in the session file.
-  nativeName: () => undefined,
   nativeVersion: entry => entry?.type === 'session_meta' && typeof entry.payload?.cli_version === 'string' ? entry.payload.cli_version : undefined,
   // Codex adds its own user-role messages (AGENTS.md, <environment_context>); they are not typed.
   nativePrompt: entry => {

@@ -7,8 +7,7 @@ import { view } from '../read/views.js';
 import { agentWork, projectOf, type CommitRecord } from './commits.js';
 import { commitFiles, deleteRef, git, gitError, gitIdentity, gitText, listRefs, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, teamCommit,
   refSafe, remoteRef, resolve, sessionRef, setRef, type Policy } from './gitrefs.js';
-import { hash, writeJson } from '../storage/ledger.js';
-import { shownName, type Manifest } from '../core/schema.js';
+import { writeJson } from '../storage/ledger.js';
 import { redactSecrets, scanSecrets } from '../share/secrets.js';
 import type { SessionStore } from '../storage/store.js';
 import type { SharedLibrary } from '../share/shared.js';
@@ -87,30 +86,14 @@ function pushedRecords(project: string, policy: Policy, refs: Map<string, string
   });
 }
 
-/** The session's shown name as its share file holds it (secrets redacted), hashed: kept in
- * meta.json, so a rename is noticed without the name itself, or anything the share file does
- * not already say, sitting beside it. */
-function nameKey(manifest: Manifest): string | undefined {
-  const shown = shownName(manifest);
-  return shown === undefined ? undefined : hash(redactSecrets(shown, new Map(scanSecrets(shown).map(match => [match.value, match.kind]))));
-}
-
-/** The meta.json of a pushed version of a session (this clone's, or a fetched teammate's), if any. */
-function pushedMeta(project: string, ref: string): { lastSeq?: number; named?: string; identity?: unknown } | undefined {
-  const bytes = readFile(project, ref, 'meta.json');
-  try { return bytes ? JSON.parse(bytes.toString('utf8')) : undefined; } catch { return undefined; }
-}
-
-/** A new version of one session on its ref: the redacted share file, and who recorded it. A
- * session with no new records and the same name keeps its version. */
+/** A new version of one session on its ref: the redacted share file, and who recorded it. */
 function sessionVersion(captures: SessionStore, project: string, dataDir: string, policy: Policy, id: string): { ref: string; sha: string; changed: boolean; note?: string } {
   const me = recorderId(dataDir);
   const ref = sessionRef(sessionKey(me, id));
   const parent = resolve(project, ref);
   const lastSeq = captures.database.lastSeq(id);
-  const named = nameKey(captures.get(id).manifest);
-  const previous = parent ? pushedMeta(project, parent) : undefined;
-  if (previous && previous.lastSeq === lastSeq && previous.named === named) return { ref, sha: parent!, changed: false };
+  const previous = parent ? readFile(project, parent, 'meta.json') : undefined;
+  if (previous && JSON.parse(previous.toString('utf8')).lastSeq === lastSeq) return { ref, sha: parent!, changed: false };
   const exported = view(captures, { view: 'export', capture: id }) as Exported;
   const draft = draftFrom([exported]);
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-push-'));
@@ -123,7 +106,7 @@ function sessionVersion(captures: SessionStore, project: string, dataDir: string
       catch (error) { return { ref, sha: parent ?? '', changed: false, note: checkFailure(error) }; }
     }
     const manifest = exported.manifest;
-    const meta = { sessionId: id, harness: manifest.harness, recorder: me, startedAt: manifest.startedAt, lastSeq, ...(named ? { named } : {}),
+    const meta = { sessionId: id, harness: manifest.harness, recorder: me, startedAt: manifest.startedAt, lastSeq,
       pushedAt: new Date().toISOString(), redactions: draft.findings.length,
       ...(policy.identity !== false ? { identity: gitIdentity(project) } : {}) };
     const sha = commitFiles(project, { 'session.wisdom-share': fs.readFileSync(file), 'meta.json': JSON.stringify(meta, null, 2) + '\n' },
@@ -168,7 +151,7 @@ function redactRecord(project: string, ref: string, remoteSha: string | undefine
 
 export interface PushResult { remote: string;
   /** `heldBack`: the short cause, when the session was not pushed and Wisdom retries it at the next push. */
-  sessions: { id: string; name?: string; state: string; heldBack?: string }[]; records: number; missing: string[];
+  sessions: { id: string; state: string; heldBack?: string }[]; records: number; missing: string[];
   /** Values the secret scan redacted in the commit records pushed. */
   recordRedactions: number }
 
@@ -189,21 +172,16 @@ export function push(captures: SessionStore, dataDir: string, remoteName?: strin
   // tries it again, until it goes or the team deletes it.
   const onRemote = (id: string) => refs.has(remoteRef(policy.repoId, sessionRef(sessionKey(me, id))));
   const heldBack = new Set(pushedRecords(project, policy, refs).flatMap(mine).filter(id => !onRemote(id) && !deleted.has(sessionKey(me, id))));
-  // A session the team already has, renamed since its last version: it goes again, so teammates see
-  // the new name. Only sessions already on the remote: a rename never sends a new one.
-  const renamed = [...own].filter(id => onRemote(id) && !deleted.has(sessionKey(me, id))
-    && pushedMeta(project, sessionRef(sessionKey(me, id)))?.named !== nameKey(captures.get(id).manifest));
-  const wanted = [...new Set([...records.flatMap(({ record }) => mine(record)), ...heldBack, ...renamed])];
+  const wanted = [...new Set([...records.flatMap(({ record }) => mine(record)), ...heldBack])];
   const sessions: PushResult['sessions'] = [];
   const specs: string[] = [];
   for (const id of wanted) {
-    const name = shownName(captures.get(id).manifest);
-    if (deleted.has(sessionKey(me, id))) { sessions.push({ id, name, state: 'deleted by the team, not pushed' }); continue; }
+    if (deleted.has(sessionKey(me, id))) { sessions.push({ id, state: 'deleted by the team, not pushed' }); continue; }
     const version = sessionVersion(captures, project, dataDir, policy, id);
-    if (!version.sha) { sessions.push({ id, name, state: `not pushed: ${version.note}`, heldBack: version.note }); continue; }
+    if (!version.sha) { sessions.push({ id, state: `not pushed: ${version.note}`, heldBack: version.note }); continue; }
     const target = remoteRef(policy.repoId, version.ref);
     if (refs.get(target) !== version.sha) specs.push(`${version.ref}:${target}`);
-    sessions.push({ id, name, state: [version.changed ? 'new version' : 'unchanged', version.note].filter(Boolean).join(', ') });
+    sessions.push({ id, state: [version.changed ? 'new version' : 'unchanged', version.note].filter(Boolean).join(', ') });
   }
   if (specs.length) {
     try { git(project, ['push', '--quiet', '--no-verify', remote, ...specs]); }
@@ -247,7 +225,7 @@ export function fetchTeam(captures: SessionStore, library: SharedLibrary, dataDi
     try {
       const file = path.join(temp, `${refSafe(key)}.wisdom-share`);
       fs.writeFileSync(file, bytes);
-      const { store } = library.import(file, { recordedBy: pushedMeta(project, sha)?.identity });
+      const { store } = library.import(file);
       if (imports[key] && imports[key].shareId !== store.shared.shareId) library.remove(imports[key].shareId);
       imports[key] = { commit: sha, shareId: store.shared.shareId };
       imported.push(key);

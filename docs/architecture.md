@@ -45,7 +45,7 @@ is the database layout version; record `schemaVersion=1` and the daemon's
 
 | Table | Columns | Purpose |
 | --- | --- | --- |
-| `captures` | `id` PK, `session_id`, `workspace_root`, `manifest`, `recovery_gaps` | Capture lifecycle, workspace/session identity, scope and recorded recovery notes. Manifest and gaps are JSON strings. The manifest also holds the session's names: `name` (given in the dashboard, `POST /name`) and `harnessName` (read from the harness's own file through the adapter's `nativeName`). Names are labels, not evidence: they are not versioned and the ledger never shows them. |
+| `captures` | `id` PK, `session_id`, `workspace_root`, `manifest`, `recovery_gaps` | Capture lifecycle, workspace/session identity, scope and recorded recovery notes. Manifest and gaps are JSON strings. |
 | `records` | `revision` integer PK autoincrement, `id` unique, `capture_id` FK, `seq`, `type`, `parent_id`, `request_id`, `tool_call_id`, `tool_name`, `source_entry_id`, `path`, `role`, `is_error`, `observation_id`, `body` | Immutable evidence metadata and indexed relationship columns; `body` preserves the complete JSON envelope, including optional fields. |
 
 Constraints enforce `(capture_id,seq)` and `(capture_id,observation_id)` uniqueness.

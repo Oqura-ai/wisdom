@@ -131,7 +131,7 @@ export function stats(captures: SessionStore, request: { workspaceRoot?: string 
   const links = sessionLinks(captures, key);
   const sessions = inScope.map(manifest => {
     const row: any = counts.get(manifest.captureId) ?? {};
-    return { captureId: manifest.captureId, name: manifest.name, harnessName: manifest.harnessName, harness: manifest.harness,
+    return { captureId: manifest.captureId, harness: manifest.harness,
       harnessVersion: manifest.harnessVersion, status: manifest.status, endReason: manifest.endReason,
       // A shared copy is someone else's recording: it is read, never resumed.
       ...(captures.shared ? { shared: captures.shared } : { resume: resumeCommands(captures.dataDir, manifest.harness, manifest.captureId, manifest.workspaceRoot, manifest.source) }),

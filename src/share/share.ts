@@ -6,7 +6,7 @@ import { call } from '../service/client.js';
 import type { Connection } from '../service/daemon.js';
 import { wisdomVersion } from '../setup/doctor.js';
 import { hash } from '../storage/ledger.js';
-import { shownName, type LedgerRecord, type Manifest } from '../core/schema.js';
+import type { LedgerRecord, Manifest } from '../core/schema.js';
 import { maskSecret, redactSecrets, scanSecrets } from './secrets.js';
 
 /** A share file is gzipped JSON lines: a header, each session's manifest and records, its
@@ -18,9 +18,7 @@ export const SHARE_FORMAT = 1;
 export interface Exported { readVersion: number; manifest: Manifest; records: LedgerRecord[]; dir: string; files: string[]; nativeBytes: number }
 
 /** One piece of text bound for the file, and how to name a place inside it. */
-interface Piece { captureId: string; record?: LedgerRecord; path?: string;
-  /** The session's names: a person typed them, so they are checked like any other text. */
-  names?: true; encoding: 'utf8' | 'base64'; text: string; place: (index: number) => string }
+interface Piece { captureId: string; record?: LedgerRecord; path?: string; encoding: 'utf8' | 'base64'; text: string; place: (index: number) => string }
 
 export interface Finding { kind: string; value: string; shown: string; places: string[] }
 
@@ -71,8 +69,6 @@ function pieces(session: Exported): { pieces: Piece[]; unscanned: number } {
   }
   const transcript = records.filter(record => record.sourceOffset !== undefined);
   const result: Piece[] = records.map(record => ({ captureId, record, encoding: 'utf8', text: JSON.stringify(record), place: () => at(record) }));
-  if (manifest.name || manifest.harnessName) result.push({ captureId, names: true, encoding: 'utf8',
-    text: JSON.stringify({ name: manifest.name, harnessName: manifest.harnessName }), place: () => 'session name' });
   let unscanned = 0;
   for (const file of files) {
     let bytes = fs.readFileSync(path.join(dir, file));
@@ -160,12 +156,10 @@ export function writeShare(draft: ShareDraft, redact: Finding[], out: string): {
   const edited = new Set<string>();
   const body: string[] = [];
   for (const session of draft.sessions) {
-    const names = draft.pieces.find(piece => piece.names && piece.captureId === session.manifest.captureId);
-    body.push(JSON.stringify({ kind: 'session', manifest: names ? { ...session.manifest, ...JSON.parse(redactSecrets(names.text, values)) } : session.manifest }));
+    body.push(JSON.stringify({ kind: 'session', manifest: session.manifest }));
   }
   const transcripts = redactTranscripts(draft.pieces, values);
   for (const piece of draft.pieces) {
-    if (piece.names) continue;
     const text = piece.path === 'native-session.jsonl' && transcripts.has(piece.captureId) ? transcripts.get(piece.captureId)!.text
       : piece.encoding === 'utf8' ? redactSecrets(piece.text, values) : piece.text;
     if (text !== piece.text && piece.path) edited.add(`${piece.captureId}/${piece.path}`);
@@ -253,22 +247,12 @@ export async function chooseRedactions(findings: Finding[], flags: { redact?: bo
   return chosen;
 }
 
-/** A session's name as the start of a file name (`fix-login-`): letters, digits and dashes, at most
- * 40. Empty without a name, and when the name holds what looks like a secret: a file's name is
- * never redacted, and it goes wherever the file goes. */
-export function fileLabel(manifest: Pick<Manifest, 'name' | 'harnessName'>): string {
-  const name = shownName(manifest);
-  if (!name || scanSecrets(name).length) return '';
-  const slug = name.normalize('NFKD').replace(/\p{M}+/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '');
-  return slug ? `${slug}-` : '';
-}
-
 /** Where a share is saved by default: inside the data folder, which git ignores and Wisdom
  * never observes, so a file holding a kept secret cannot be committed by accident.
  */
 export function defaultSharePath(dataDir: string, draft: ShareDraft, now = new Date()): string {
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
-  const { manifest } = draft.sessions[0]!;
+  const first = draft.sessions[0]!.manifest.captureId.slice(0, 8);
   const more = draft.sessions.length > 1 ? `-and-${draft.sessions.length - 1}` : '';
-  return path.join(dataDir, 'shared-out', `${fileLabel(manifest)}${manifest.captureId.slice(0, 8)}${more}-${stamp}.wisdom-share`);
+  return path.join(dataDir, 'shared-out', `${first}${more}-${stamp}.wisdom-share`);
 }

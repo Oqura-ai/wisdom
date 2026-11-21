@@ -31,8 +31,6 @@ export const pi: HarnessAdapter = {
   isNotice: () => false,
   // The header's `version` is its file format. The extension reports Pi's own version.
   nativeVersion: () => undefined,
-  // `pi --name` and renaming in Pi write session_info; the newest wins, and one with no name removes it.
-  nativeName: entry => entry?.type === 'session_info' ? typeof entry.name === 'string' ? entry.name : '' : undefined,
   nativePrompt: entry => entry?.type === 'message' && entry.message?.role === 'user'
     ? contentText(entry.message.content)?.trim() || undefined : undefined,
   // sessions/<folder>/<time>_<session>.jsonl

@@ -76,10 +76,7 @@ as it would in any Claude Code session.
    their sessions, their guides) stays on your machine, and no guide is written for it at push.
 5. **Review.** A reviewer runs `wisdom team fetch`, then `wisdom glance --commit <commit>`.
    Each piece points to the step that made it, checked against the fetched session, with
-   the guide below. They open steps with `wisdom open t3/c2 --capture <session>`. In the
-   dashboard, a teammate's session shows under **Shared with you** with its
-   [name](usage.md#naming-a-session) and who recorded it (their git name and email, labelled
-   "git config, not verified"; nothing when the policy sets `identity: false`).
+   the guide below. They open steps with `wisdom open t3/c2 --capture <session>`.
 6. **CI.** `wisdom check --range <base>..<head>` checks the pull request: every commit with
    agent work has a guide that passed its check, and every session its record names is on
    the remote. This is the one check nobody can skip on their own machine.
@@ -182,7 +179,7 @@ is Wisdom's own.
 | Locally | On the remote | Holds |
 | --- | --- | --- |
 | `refs/wisdom/records/<commit>` | `refs/wisdom/<repo-id>/records/<commit>` | `record.json`: each piece, its steps, each step's file and patch hashes, the guide and its check. |
-| `refs/wisdom/sessions/<recorder>/<session>` | `refs/wisdom/<repo-id>/sessions/<recorder>/<session>` | `session.wisdom-share` (the redacted export, its name included) and `meta.json` (a hash of that name, never the name). Each push adds a version on top of the last: when a commit's record names the session and it gained records, or when the session is already on the remote and was renamed since. A rename never sends a session the remote does not have. |
+| `refs/wisdom/sessions/<recorder>/<session>` | `refs/wisdom/<repo-id>/sessions/<recorder>/<session>` | `session.wisdom-share` (the redacted export) and `meta.json`. Each push adds a version on top of the last. |
 | `refs/wisdom/deleted` | `refs/wisdom/<repo-id>/deleted` | The deletion list. |
 
 `<recorder>` is a random ID made once per data folder, so two machines never clash. These

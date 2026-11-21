@@ -11,13 +11,10 @@ export interface SharedInfo {
   /** How many values the sender redacted, and the patches those redactions edited. */
   redactions: number;
   patchesEdited: string[];
-  /** Fetched from the team (`wisdom team fetch`), not imported from a file, with who recorded it
-   * when the team shares that: their git name and email, which git does not verify. */
-  team?: { recordedBy?: { name: string; email: string } };
 }
 
 /** One session in a shared copy, as the session list shows it. */
-export interface SharedSession { captureId: string; name?: string; harness: string; startedAt: string; turns: number; project: string; sharedAt: string }
+export interface SharedSession { captureId: string; harness: string; startedAt: string; turns: number; project: string; sharedAt: string }
 
 /** What reading needs from a place sessions are kept: this project's own recordings, or a
  * shared copy imported read-only. The ledger, views and stats read through this alone.

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { LedgerRecord, Manifest } from '../core/schema.js';
-import { preview, sessionName } from '../core/schema.js';
+import { preview } from '../core/schema.js';
 import { LedgerDatabase } from './database.js';
 import { adapter } from '../harnesses/index.js';
 import type { NativeEntry } from '../harnesses/types.js';
@@ -223,11 +223,6 @@ export class Ledger {
       if (entry.model) this.sourceModel = entry.model;
       const version = harness.nativeVersion(raw);
       if (version && version !== this.manifest.harnessVersion) { this.manifest.harnessVersion = version; this.saveManifest(); }
-      const named = harness.nativeName(raw);
-      if (named !== undefined) {
-        const name = sessionName(named) || undefined;
-        if (name !== this.manifest.harnessName) { this.manifest.harnessName = name; this.saveManifest(); }
-      }
       const source = { sourceEntryId: entry.id ?? `byte:${offset}:${hash(line)}`, sourceParentId: entry.parentId, sourceTimestamp: entry.timestamp,
         turnId: this.sourceTurnId, sourceOffset: offset, sourceLength: line.length };
       // The prompt opens a turn before its own line is recorded, so that line belongs to it.
