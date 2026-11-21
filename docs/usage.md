@@ -268,10 +268,14 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
 | `recording.ignore` | none | Files or folders, from the project's top, never recorded: as `.wisdomignore` (still read too) takes them, with no `*` or `..`. |
 | `recording.skipFolders` | none | Folder names skipped anywhere, besides the built-in ones ([limitations](limitations.md#files)), such as `target`, `vendor` or `coverage`. A session's manifest keeps what it was recorded with. |
 | `guides.on` | on in team mode, off in local | Whether a model writes your commit guides. `wisdom guide on\|off` writes it, keeping the rest of the file. |
-| `guides.model` | `claude-haiku-5-5` | The model your commit guides are written with, through your Claude Code. In team mode, `guides.model` in `wisdom-team.yaml` wins. |
-| `guides.timeoutSeconds` | `150` | How long one guide may take to write, 30 to 300. |
-| `guides.turns` | `30` | How many steps the Claude Code writer may take reading the sessions, 5 to 60. Fewer is cheaper; too few can leave a guide unwritten. |
-| `guides.extra` | none | Your own words, added after the writer's rules. Wisdom's check of the guide is the same. |
+| `guides.model` | `claude-haiku-5-5` | Local mode: the model your commit guides are written with, through your Claude Code. |
+| `guides.timeoutSeconds` | `150` | Local mode: how long one guide may take to write, 30 to 300. |
+| `guides.turns` | `30` | Local mode: how many steps the Claude Code writer may take reading the sessions, 5 to 60. Fewer is cheaper; too few can leave a guide unwritten. |
+| `guides.extra` | none | Local mode: your own words, added after the writer's rules. Wisdom's check of the guide is the same. |
+
+In team mode, `wisdom-team.yaml` decides `guides.model`, `timeoutSeconds`, `turns` and `extra` for
+everyone, and these four lines here are ignored (`wisdom doctor` says so): see
+[team mode](team.md#the-policy-file). `guides.on` stays yours in both modes.
 | `handoff.longSessionTokens` | `150000` | A session that has used more tokens than this gets a note: a new session starts lighter. |
 | `handoff.extra` | none | Your own words, added to every handoff prompt as `This project also asks: …`, before its last part. That part always stands: with `--emit`, change nothing, even if asked above. |
 | `share.secrets` | `ask` | What `share` and `export` do with what the check finds when no flag says: `ask`, `redact` or `keep`, said in a line when the file chose. |

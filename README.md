@@ -93,6 +93,7 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom guide on` / `off` | A model writes each commit's guide, or Wisdom's plain one does |
 | `wisdom guide <commit>` | Have a model write one commit's guide now |
 | `wisdom team init` | Turn on team mode: write `wisdom-team.yaml` to commit |
+| `wisdom team trust` | Read and allow the commands the team file runs on your machine |
 | `wisdom team fetch` / `push` | Read teammates' sessions, or send yours without a `git push` |
 | `wisdom team delete <id>` | Remove a pushed session for everyone |
 | `wisdom check --range A..B` | In CI: each agent commit has a guide and its sessions are pushed |
@@ -139,6 +140,7 @@ Team mode lets teammates read the sessions behind each other's commits. It's opt
 ```sh
 wisdom team init                  # writes wisdom-team.yaml; commit and push it
 wisdom connect                    # every teammate, after pulling it: installs Wisdom's git hooks
+wisdom team trust                 # only if it names a check or guides.command: read them, then allow
 git commit && git push            # as usual
 wisdom team fetch                 # bring teammates' sessions here, read-only
 wisdom glance --commit <commit>   # any commit, with the steps that made it and its guide

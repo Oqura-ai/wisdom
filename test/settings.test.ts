@@ -184,7 +184,7 @@ test('wisdom-team.yaml: team init writes it with its options commented, each one
     assert.deepEqual(readPolicy(root), { version: 1, repoId: policy.repoId, remote: 'origin', identity: true, requireGuides: true, keepReferenced: true });
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^# ([A-Za-z]+:|  )/gm, '$1'));
     assert.deepEqual({ ...readPolicy(root) }, { version: 1, repoId: policy.repoId, remote: 'origin', identity: true, requireGuides: true, keepReferenced: true,
-      retentionDays: 30, check: 'node scan.mjs', guides: { model: 'claude-haiku-5-5', command: '' } });
+      retentionDays: 30, check: 'node scan.mjs', guides: { model: 'claude-haiku-5-5', turns: 30, timeoutSeconds: 150, extra: '', command: '' } });
     fs.writeFileSync(file, 'version: 1\nrepoId: [\n');
     assert.throws(() => readPolicy(root), /wisdom-team\.yaml is not valid YAML/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

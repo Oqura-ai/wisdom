@@ -5,8 +5,8 @@ import { execSync } from 'node:child_process';
 import { draftFrom, writeShare, type Exported } from '../share/share.js';
 import { view } from '../read/views.js';
 import { agentWork, projectOf, type CommitRecord } from './commits.js';
-import { commitFiles, deleteRef, git, gitError, gitIdentity, gitText, listRefs, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, teamCommit,
-  refSafe, remoteRef, resolve, sessionRef, setRef, type Policy } from './gitrefs.js';
+import { commitFiles, deleteRef, git, gitError, gitIdentity, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, teamCommit,
+  refSafe, remoteRef, resolve, sessionRef, setRef, trusted, type Policy } from './gitrefs.js';
 import { writeJson } from '../storage/ledger.js';
 import { redactSecrets, scanSecrets } from '../share/secrets.js';
 import type { SessionStore } from '../storage/store.js';
@@ -26,7 +26,8 @@ interface Deleted { key: string; deletedAt: string; reason: 'deleted' | 'retenti
 
 function policyOrThrow(project: string): Policy {
   const policy = readPolicy(project);
-  if (!policy) throw new Error(`This repository has no wisdom-team.yaml, so Wisdom is in local mode: nothing is pushed. An admin starts team mode with: wisdom team init`);
+  if (!policy) throw new Error(oldPolicyNote(project)
+    ?? 'This repository has no wisdom-team.yaml, so Wisdom is in local mode: nothing is pushed. An admin starts team mode with: wisdom team init');
   return policy;
 }
 
@@ -102,6 +103,9 @@ function sessionVersion(captures: SessionStore, project: string, dataDir: string
     // Pushing is unattended, so every finding is redacted, in this file only.
     writeShare(draft, draft.findings, file);
     if (policy.check) {
+      // An untrusted check is never skipped: the session waits, so nothing goes out unchecked,
+      // and is tried again at each push once the person has run wisdom team trust.
+      if (!trusted(dataDir, policy.check)) return { ref, sha: parent ?? '', changed: false, note: 'the project\'s check is not trusted on this machine yet (wisdom team trust)' };
       try { execSync(`${policy.check} "${file}"`, { cwd: project, stdio: 'pipe', windowsHide: true, timeout: 120_000 }); }
       catch (error) { return { ref, sha: parent ?? '', changed: false, note: checkFailure(error) }; }
     }

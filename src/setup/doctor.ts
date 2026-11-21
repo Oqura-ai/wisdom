@@ -8,6 +8,7 @@ import { harnessPath, readSettings, SETTINGS_FILE, settingsOrDefaults } from '..
 import { hookCommand, hookState, resolveCommand, skillState, type Command, type Place } from '../harnesses/launch.js';
 import { hookEvents, inspectHooks, requireTrustedHooks } from '../harnesses/codex/launch.js';
 import { piCommand } from '../harnesses/pi/launch.js';
+import { oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trusted, type Policy } from '../team/gitrefs.js';
 
 export type Level = 'ok' | 'note' | 'problem';
 export interface Check { level: Level; name: string; detail: string; fix?: string }
@@ -77,6 +78,27 @@ export async function diagnose(dataDir: string, bins: { claude?: string; codex?:
     try { readSettings(project); checks.push({ level: 'ok', name: 'Settings', detail: `${SETTINGS_FILE} reads correctly` }); }
     catch (error) { checks.push({ level: 'problem', name: 'Settings', detail: `${error instanceof Error ? error.message : error}. Until it is fixed, Wisdom uses its defaults.`, fix: `edit ${SETTINGS_FILE}` }); }
   }
+  checks.push(...teamChecks(project, dataDir, settings));
+  return checks;
+}
+
+/** Team mode: the old team file nobody reads, commands not trusted here, and guide settings in
+ * the person's own file that team mode ignores. Nothing at all in a local repository. */
+function teamChecks(project: string, dataDir: string, settings: ReturnType<typeof settingsOrDefaults>): Check[] {
+  let policy: Policy | undefined;
+  try { policy = readPolicy(project); }
+  catch (error) { return [{ level: 'problem', name: 'Team', detail: `${error instanceof Error ? error.message : error}. Until it is fixed, team commands stop here.`, fix: `edit ${POLICY_FILE}` }]; }
+  if (!policy) {
+    const old = oldPolicyNote(project);
+    return old ? [{ level: 'problem', name: 'Team', detail: old, fix: `convert it to ${POLICY_FILE}` }] : [];
+  }
+  const checks: Check[] = [];
+  const waiting = policyCommands(policy).filter(command => !trusted(dataDir, command));
+  checks.push(waiting.length
+    ? { level: 'problem', name: 'Team', detail: `${POLICY_FILE} runs ${waiting.map(command => `\`${command}\``).join(' and ')} here, not trusted yet, so ${policy.check && waiting.includes(policy.check) ? 'your sessions are not pushed' : 'your guides are not written'} until you read and trust ${waiting.length === 1 ? 'it' : 'them'}`, fix: 'wisdom team trust' }
+    : { level: 'ok', name: 'Team', detail: `team mode, ${POLICY_FILE} reads correctly${policyCommands(policy).length ? ', its commands are trusted here' : ''}` });
+  const ignored = (['model', 'turns', 'timeoutSeconds', 'extra'] as const).filter(key => settings.guides?.[key] !== undefined);
+  if (ignored.length) checks.push({ level: 'note', name: 'Team', detail: `team mode: guides.${ignored.join(', guides.')} in ${SETTINGS_FILE} ${ignored.length === 1 ? 'is' : 'are'} ignored; guides are written as ${POLICY_FILE} says, the same for everyone` });
   return checks;
 }
 

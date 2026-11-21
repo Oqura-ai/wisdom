@@ -11,7 +11,7 @@ import { diagnose, formatChecks, wisdomVersion } from './setup/doctor.js';
 import { handoffPrompt, harnessByCommand, planHandoff } from './sessions/handoff.js';
 import { connect, disconnect, ignoreDataFolder, ignoreSettingsFile, type Connectable } from './setup/connect.js';
 import { usePrices } from './read/prices.js';
-import { guidePrompt } from './team/writer.js';
+import { guidePrompt, guideSettings } from './team/writer.js';
 import type { CommitRecord } from './team/commits.js';
 import type { SessionStore } from './storage/store.js';
 import { DEFAULT_MODEL, harnessOn, harnessPath, SETTINGS_FILE, settingsOrDefaults, shownAs, writeSettings, type Settings } from './core/settings.js';
@@ -19,7 +19,7 @@ import { planClone } from './sessions/clone.js';
 import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share/share.js';
 import { redactSecrets } from './share/secrets.js';
 import { prCheck } from './team/team.js';
-import { POLICY_FILE, readPolicy, writePolicy } from './team/gitrefs.js';
+import { oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trustCommands, trusted, writePolicy } from './team/gitrefs.js';
 import { guideCommit, installHooks, LOCAL_HOOKS, removeHooks, runGitHook } from './team/githooks.js';
 import { guidesOn, setGuides } from './team/guides.js';
 import { serveMcp } from './service/mcp.js';
@@ -65,9 +65,11 @@ Team mode (a repository with wisdom-team.yaml)
   wisdom team hooks on|off        Wisdom's git hooks: a link line on each commit, its record and
                                   guide written after it, and both sent with your push (init and
                                   connect turn them on in a team-mode repository)
-  wisdom guide on|off             Whether a model (Haiku 5.5, or guides.model in wisdom.yaml)
-                                  writes a guide after each commit, reading its sessions since
-                                  your last commit. Team mode: on by
+  wisdom team trust               Read the commands wisdom-team.yaml runs on this machine (check,
+                                  guides.command) and let them run; asked again if one changes
+  wisdom guide on|off             Whether a model (Haiku 5.5, or guides.model: wisdom-team.yaml's
+                                  in team mode, wisdom.yaml's in local mode) writes a guide after
+                                  each commit, reading its sessions since your last commit. Team mode: on by
                                   default; off, Wisdom writes a plain guide from the record.
                                   Local mode: off by default; on installs one post-commit hook,
                                   changes no commit message and pushes nothing
@@ -347,7 +349,10 @@ function makeProject(project: string): { dataDir: string; fresh: boolean; settin
  * and only when the person turned guides on (wisdom guide on). Run again, it repairs them. */
 function teamHooks(project: string, dataDir: string): void {
   try {
-    if (!readPolicy(project)) {
+    const policy = readPolicy(project);
+    if (!policy) {
+      const old = oldPolicyNote(project);
+      if (old) console.log(old);
       if (!guidesOn(dataDir, false)) return;
       const { dir } = installHooks(project, dataDir, LOCAL_HOOKS);
       console.log(`Guides after each commit are on (wisdom guide on): Wisdom's post-commit hook is in ${dir}. Turn it off with: wisdom guide off`);
@@ -355,6 +360,9 @@ function teamHooks(project: string, dataDir: string): void {
     }
     const { dir, chained } = installHooks(project, dataDir);
     console.log(`Team mode: Wisdom's git hooks are in ${dir}${chained.length ? ` (your own ${chained.join(', ')} still ${chained.length === 1 ? 'runs' : 'run'} first)` : ''}. Turn them off with: wisdom team hooks off`);
+    const waiting = policyCommands(policy).filter(command => !trusted(dataDir, command));
+    if (waiting.length) console.log(`${POLICY_FILE} asks to run ${waiting.map(command => `\`${command}\``).join(' and ')} on this machine. `
+      + 'Nothing runs until you read it and trust it: wisdom team trust');
   } catch (error) { console.log(`Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
 }
 
@@ -653,10 +661,35 @@ function errorText(error: any): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The model a guide of this person's is written with: the team's, else wisdom.yaml's, else Haiku. */
+/** The model a guide of this person's is written with: the team file's in team mode, else
+ * wisdom.yaml's, else Haiku. */
 function guideModel(project: string): string {
-  const model = readPolicy(project)?.guides?.model ?? settingsOrDefaults(project).guides?.model ?? DEFAULT_MODEL;
+  const { model } = guideSettings(readPolicy(project), project);
   return model === DEFAULT_MODEL ? 'Claude Haiku 5.5' : model;
+}
+
+/** `wisdom team trust`: show the commands the team file runs on this machine, and trust them
+ * only on a yes. With no terminal to ask in, nothing is trusted. */
+async function trustTeamCommands(project: string, dataDir: string): Promise<number> {
+  const policy = readPolicy(project);
+  if (!policy) throw new Error(oldPolicyNote(project) ?? `This repository has no ${POLICY_FILE}, so it is in local mode and runs no team command.`);
+  const commands = policyCommands(policy);
+  if (!commands.length) { console.log(`${POLICY_FILE} runs no command on this machine, so there is nothing to trust.`); return 0; }
+  const fresh = commands.filter(command => !trusted(dataDir, command));
+  if (!fresh.length) { console.log(`Every command ${POLICY_FILE} runs here is trusted already:\n${commands.map(command => `  ${command}`).join('\n')}`); return 0; }
+  console.log(`${POLICY_FILE} asks to run these on this machine, as you, through your shell:`);
+  if (policy.check && fresh.includes(policy.check)) console.log(`  check (on each session before your push sends it):\n    ${policy.check}`);
+  if (policy.guides?.command && fresh.includes(policy.guides.command)) console.log(`  guides.command (writes each commit's guide):\n    ${policy.guides.command}`);
+  console.log('Anyone who can change that file can change these, so read them first. A script a command runs is not checked, only the command\'s text.');
+  if (!process.stdin.isTTY) { console.log('Nothing trusted: run wisdom team trust in a terminal, where it can ask you.'); return 1; }
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  let answer: string;
+  try { answer = (await prompt.question('Trust them? [y/N] ')).trim().toLowerCase(); }
+  finally { prompt.close(); }
+  if (answer !== 'y' && answer !== 'yes') { console.log('Nothing trusted. They do not run here until you trust them.'); return 1; }
+  trustCommands(dataDir, fresh);
+  console.log('Trusted, by their exact text, on this machine only. If one changes, it stops running until you run wisdom team trust again.');
+  return 0;
 }
 
 /** guide, check and team. Settings change files here; sharing asks the daemon, which holds
@@ -698,6 +731,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     return 0;
   }
   if (command === 'check') throw new Error('Use: wisdom check --range <base>..<head>, in CI. A commit\'s guide is written and checked by itself after the commit.');
+  if (action === 'trust') return trustTeamCommands(project, dataDir);
   if (action === 'hooks') {
     if (session === 'off') { const removed = removeHooks(project); console.log(removed.length ? `Removed Wisdom's ${removed.join(', ')} hooks.` : 'Wisdom\'s git hooks were not installed.'); return 0; }
     if (session !== 'on') throw new Error('Use: wisdom team hooks on|off');
@@ -732,5 +766,5 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     console.log(result.removed.length ? `Removed ${result.removed.length} pushed sessions older than the policy keeps them.` : 'Nothing is older than the policy keeps.');
     return 0;
   }
-  throw new Error('Use: wisdom team init|push|fetch|delete <session>|prune');
+  throw new Error('Use: wisdom team init|trust|hooks on|off|push|fetch|delete <session>|prune');
 }

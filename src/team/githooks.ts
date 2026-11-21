@@ -6,7 +6,7 @@ import { buildRecord } from '../read/discovery.js';
 import { ReadStore } from '../storage/readstore.js';
 import { startDetached } from '../service/client.js';
 import { agentWork, readCommit, type CommitRecord } from './commits.js';
-import { commitFiles, git, gitText, listRefs, readFile, readPolicy, recordIds, recordRef, recorderId, resolve, setRef, teamCommit, type Policy } from './gitrefs.js';
+import { commitFiles, git, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, resolve, setRef, teamCommit, type Policy } from './gitrefs.js';
 import { writeGuide } from './writer.js';
 import { guidesOn } from './guides.js';
 import { push } from './team.js';
@@ -294,6 +294,9 @@ export function runGitHook(name: string, args: string[], dataDir: string, log: (
     const snapshot = name === 'record' && args[0] ? readJob(dataDir, args[0])?.settings : undefined;
     if (!readPolicy(project) && !((name === 'post-commit' && guidesOn(dataDir, false)) || (name === 'record' && (snapshot?.guides ?? guidesOn(dataDir, false))))) {
       if (name === 'record' && args[0]) dropJob(dataDir, args[0]);
+      // Hooks a 0.6.0-beta.0 team setup installed still run: say once per push why nothing goes.
+      const old = name === 'pre-push' ? oldPolicyNote(project) : undefined;
+      if (old) log(`Wisdom: ${old}`);
       return;
     }
     if (name === 'prepare-commit-msg') {

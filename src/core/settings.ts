@@ -121,6 +121,7 @@ version: 1
 #                           #   then: ask you, redact them all, or keep them
 
 # guides:               # the note a model writes for each commit (on/off: wisdom guide on|off)
+#                       #   in team mode, wisdom-team.yaml decides these four, the same for everyone
 #   model: ${DEFAULT_MODEL}
 #   timeoutSeconds: 150 # give up on one guide after this long
 #   turns: 30           # how much of the sessions it may read; fewer is cheaper
