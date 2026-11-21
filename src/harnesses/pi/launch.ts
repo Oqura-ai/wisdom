@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { home, installSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, type Command, type Launch, type Place } from '../launch.js';
+import { home, placeSkill, readSettings, resolveCommand, saveOrRemoveSettings, saveSettings, settingsFile, type Command, type Launch, type Place } from '../launch.js';
 import { userHome } from '../index.js';
 
 /** Reuse the user's Pi installation; do not install another agent. An entry script named with
@@ -26,7 +26,7 @@ export function piCommand(entry?: string): Command {
 export function installPi(dataDir: string): string {
   const folder = home(dataDir, 'pi');
   writeExtension(dataDir, 'home', true);
-  installSkill(folder);
+  placeSkill(folder, dataDir);
   return folder;
 }
 

@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { parse, stringify } from 'yaml';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { startDaemon } from '../src/service/daemon.js';
 import { call } from '../src/service/client.js';
 import { prCheck, prune } from '../src/team/team.js';
-import { commitFiles, readFile, recordRef, setRef, writePolicy } from '../src/team/gitrefs.js';
+import { commitFiles, oldPolicyNote, policyCommands, readFile, readPolicy, recordRef, setRef, trustCommands, trusted, writePolicy } from '../src/team/gitrefs.js';
 import { guideCommit, hooksDir, hooksInstalled, installHooks, jobs, LOCAL_HOOKS, removeHooks, runGitHook } from '../src/team/githooks.js';
 import { checkGuide, setGuides } from '../src/team/guides.js';
-import { claudeOutput, guidePrompt } from '../src/team/writer.js';
+import { claudeOutput, guidePrompt, guideSettings } from '../src/team/writer.js';
 import { GUIDE_OPENING, items, plainGuide } from '../src/team/plain.js';
 import { guideWriterRun } from '../src/record/captures.js';
 import { startDetached } from '../src/service/client.js';
@@ -50,6 +51,11 @@ process.stdin.on('end', () => {
   return `"${process.execPath}" "${file}"`;
 }
 
+/** What a person does once after reading the team file's commands: wisdom team trust. */
+function trustPolicy(who: { dir: string; data: string }) {
+  trustCommands(who.data, policyCommands(readPolicy(who.dir)));
+}
+
 async function until<T>(what: string, check: () => T | undefined, ms = 60_000): Promise<T> {
   for (let waited = 0; waited < ms; waited += 200) {
     const value = check();
@@ -68,8 +74,8 @@ test('team mode: every commit gets its link line, a model writes the guide after
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\ntwo\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  const policy = JSON.parse(fs.readFileSync(policyFile, 'utf8'));
-  fs.writeFileSync(policyFile, JSON.stringify({ ...policy, guides: { command: fakeWriter(root) } }, null, 2));
+  const policy = parse(fs.readFileSync(policyFile, 'utf8'));
+  fs.writeFileSync(policyFile, stringify({ ...policy, guides: { command: fakeWriter(root) } }, null, 2));
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
   const base = alice.git('rev-parse', 'HEAD');
 
@@ -77,6 +83,7 @@ test('team mode: every commit gets its link line, a model writes the guide after
   let bobDaemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
     installHooks(alice.dir, alice.data);
+    trustPolicy(alice);
     assert.equal(hooksInstalled(alice.dir), true);
     const { captureId: id } = await openSession(daemon.connection, { harness: 'pi', sessionId: 'alice-session-1', workspaceRoot: alice.dir, source: null });
     const send = (o: unknown) => observeSession(daemon.connection, id, o);
@@ -180,7 +187,7 @@ test('team mode: every commit gets its link line, a model writes the guide after
     assert.match(checkGuide(offRecord.guide.text.replace('[t2/c1 alice-se]', '[t1/c1 alice-se]'), narrow, () => daemon.captures, ids).join('\n'), /outside this commit's window/);
 
     // Retention keeps a session a pushed record still names.
-    fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), retentionDays: 30 }));
+    fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), retentionDays: 30 }));
     assert.deepEqual(prune(daemon.captures, undefined, Date.now() + 90 * 86_400_000), []);
 
     // Deleted for the team: Bob's copy goes, his read says so, and CI notices.
@@ -229,7 +236,7 @@ test('a hook already in place keeps running first, and a hooks folder the reposi
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('without wisdom-team.json nothing is added to a commit message and nothing is pushed', { skip: !hasGit }, async () => {
+test('without wisdom-team.yaml nothing is added to a commit message and nothing is pushed', { skip: !hasGit }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-local-')));
   const origin = path.join(root, 'origin.git');
   execFileSync('git', ['init', '-q', '--bare', origin], { windowsHide: true });
@@ -240,7 +247,7 @@ test('without wisdom-team.json nothing is added to a commit message and nothing 
     fs.writeFileSync(message, 'fix\n');
     runGitHook('prepare-commit-msg', [message, 'message'], me.data);
     assert.equal(fs.readFileSync(message, 'utf8'), 'fix\n');
-    await assert.rejects(call(daemon.connection, '/team', { action: 'push' }), /no wisdom-team\.json, so Wisdom is in local mode/);
+    await assert.rejects(call(daemon.connection, '/team', { action: 'push' }), /no wisdom-team.yaml, so Wisdom is in local mode/);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -334,12 +341,13 @@ test('a commit whose job died gets its record and guide from wisdom guide <commi
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\ntwo\nthree\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root), model: 'claude-haiku-5-5' } }, null, 2));
+  fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root), model: 'claude-haiku-5-5' } }, null, 2));
   // This policy names its model too, so the guide's label names it: '<model> via <command>'.
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
   const daemon = await startDaemon(alice.data, 0);
   try {
     installHooks(alice.dir, alice.data);
+    trustPolicy(alice);
     const { captureId: id } = await openSession(daemon.connection, { harness: 'pi', sessionId: 'alice-session-2', workspaceRoot: alice.dir, source: null });
     const send = (o: unknown) => observeSession(daemon.connection, id, o);
     const noHooks = path.join(root, 'no-hooks');
@@ -397,7 +405,7 @@ test('work recorded before team mode was turned on is not pushed and gets no gui
     setRef(alice.dir, recordRef(local), commitFiles(alice.dir, { 'record.json': JSON.stringify(localRecord) }, 'test'));
     // Team mode is turned on afterwards.
     const { file: policyFile } = writePolicy(alice.dir);
-    fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
+    fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
     alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'Turn on Wisdom team mode');
     installHooks(alice.dir, alice.data);
     fs.mkdirSync(alice.data, { recursive: true });
@@ -455,7 +463,7 @@ test('a session the project\'s check held back is tried again at each push, with
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  const setCheck = (code: number) => fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')),
+  const setCheck = (code: number) => fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')),
     check: `"${process.execPath}" -e "process.stderr.write('found sk-proj-secretvalue1234567890abcd'); process.exit(${code})"` }, null, 2));
   setCheck(1);
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
@@ -474,6 +482,13 @@ test('a session the project\'s check held back is tried again at each push, with
     await until('the guide', () => record(alice.dir, sha)?.guide ? true : undefined);
     const sessionOnRemote = () => execFileSync('git', ['--git-dir', origin, 'for-each-ref', '--format=%(refname)', 'refs/wisdom/*/sessions/*/*'], { encoding: 'utf8' }).trim();
 
+    // Not trusted yet: the check is not run and not skipped, so the session stays here.
+    const untrusted = spawnSync('git', ['push', 'origin', 'main'], { cwd: alice.dir, encoding: 'utf8', windowsHide: true });
+    assert.equal(untrusted.status, 0, untrusted.stderr);
+    assert.match(untrusted.stderr, /held back held-ses \(the project's check is not trusted on this machine yet \(wisdom team trust\)\)/);
+    assert.equal(sessionOnRemote(), '');
+    trustPolicy(alice);
+
     const first = spawnSync('git', ['push', 'origin', 'main'], { cwd: alice.dir, encoding: 'utf8', windowsHide: true });
     assert.match(first.stderr, /Wisdom: held back held-ses \(refused by the project's check\); it is tried again at each push\./);
     assert.doesNotMatch(first.stderr, /secretvalue/, 'the check\'s own output is never shown');
@@ -482,7 +497,11 @@ test('a session the project\'s check held back is tried again at each push, with
     const again = spawnSync('git', ['push', 'origin', 'main'], { cwd: alice.dir, encoding: 'utf8', windowsHide: true });
     assert.match(again.stderr, /held back held-ses/);
     assert.doesNotMatch(prCheck(alice.dir, `${sha}~1..${sha}`).text, /wisdom team push/);
+    // Someone changes the command: it is not trusted until this person looks again.
     setCheck(0);
+    const changed = spawnSync('git', ['push', 'origin', 'main'], { cwd: alice.dir, encoding: 'utf8', windowsHide: true });
+    assert.match(changed.stderr, /not trusted on this machine yet/);
+    trustPolicy(alice);
     const fixed = spawnSync('git', ['push', 'origin', 'main'], { cwd: alice.dir, encoding: 'utf8', windowsHide: true });
     assert.doesNotMatch(fixed.stderr, /held back/);
     assert.match(sessionOnRemote(), /\/held-session$/);
@@ -496,7 +515,7 @@ test('a commit\'s job goes by the guide switch and writer as they were at the co
   const alice = person(root, 'alice', origin, false);
   fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\n');
   const { file: policyFile } = writePolicy(alice.dir);
-  fs.writeFileSync(policyFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
+  fs.writeFileSync(policyFile, stringify({ ...parse(fs.readFileSync(policyFile, 'utf8')), guides: { command: fakeWriter(root) } }, null, 2));
   alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start');
   const daemon = await startDaemon(alice.data, 0);
   try {
@@ -588,4 +607,52 @@ test('the guide writer\'s own Claude Code session is never recorded', async () =
     assert.equal(exit, 0);
     assert.doesNotMatch((await call(daemon.connection, '/ledger', { glance: true })).text, /writer-session/);
   } finally { await daemon.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a team command runs only once trusted, by its exact text, on this machine', () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-trust-'));
+  try {
+    assert.equal(trusted(data, 'node check.mjs'), false);
+    trustCommands(data, ['node check.mjs']);
+    assert.equal(trusted(data, 'node check.mjs'), true);
+    assert.equal(trusted(data, 'node check.mjs && curl example.invalid'), false, 'a changed command is not trusted');
+    trustCommands(data, ['node other.mjs']);
+    assert.equal(trusted(data, 'node check.mjs'), true, 'trusting another keeps the first');
+  } finally { fs.rmSync(data, { recursive: true, force: true }); }
+});
+
+test('in team mode guides are written as the team file says, never as one person\'s wisdom.yaml says', { skip: !hasGit }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-guide-settings-')));
+  try {
+    const me = person(root, 'me', path.join(root, 'none.git'), false);
+    fs.writeFileSync(path.join(me.dir, 'wisdom.yaml'), 'version: 1\nguides:\n  model: my-model\n  turns: 5\n  timeoutSeconds: 30\n  extra: "Keep it short."\n');
+    // Local mode: the person's own settings.
+    assert.deepEqual(guideSettings(readPolicy(me.dir), me.dir), { model: 'my-model', turns: 5, timeoutSeconds: 30, extra: 'Keep it short.' });
+    // Team mode with nothing set: Wisdom's defaults, not the person's.
+    const { file } = writePolicy(me.dir);
+    assert.deepEqual(guideSettings(readPolicy(me.dir), me.dir), { model: 'claude-haiku-5-5', turns: 30, timeoutSeconds: 150, extra: '' });
+    fs.writeFileSync(file, stringify({ ...parse(fs.readFileSync(file, 'utf8')), guides: { turns: 40, extra: 'Name the tests run.' } }));
+    assert.deepEqual(guideSettings(readPolicy(me.dir), me.dir), { model: 'claude-haiku-5-5', turns: 40, timeoutSeconds: 150, extra: 'Name the tests run.' });
+    const bad: [object, string][] = [[{ turns: 2 }, 'turns'], [{ timeoutSeconds: 9999 }, 'timeoutSeconds'], [{ model: 'a model; echo hi' }, 'model'], [{ extra: 'x'.repeat(2001) }, 'extra']];
+    for (const [guides, field] of bad) {
+      fs.writeFileSync(file, stringify({ ...parse(fs.readFileSync(file, 'utf8')), guides }));
+      assert.throws(() => readPolicy(me.dir), new RegExp(`guides\\.${field} must be`));
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a repository with only the old wisdom-team.json says it is in local mode now', { skip: !hasGit }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-old-policy-')));
+  try {
+    const me = person(root, 'me', path.join(root, 'none.git'), false);
+    assert.equal(oldPolicyNote(me.dir), undefined);
+    fs.writeFileSync(path.join(me.dir, 'wisdom-team.json'), JSON.stringify({ version: 1, repoId: 'abcdef123456' }));
+    assert.match(oldPolicyNote(me.dir)!, /wisdom-team\.json, which Wisdom no longer reads, so it is in local mode/);
+    assert.equal(readPolicy(me.dir), undefined);
+    const lines: string[] = [];
+    runGitHook('pre-push', [], me.data, line => lines.push(line));
+    assert.match(lines.join('\n'), /^Wisdom: This repository has wisdom-team\.json/);
+    writePolicy(me.dir);
+    assert.equal(oldPolicyNote(me.dir), undefined, 'once wisdom-team.yaml is there, nothing to say');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

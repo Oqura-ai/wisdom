@@ -24,7 +24,8 @@ import { deleteTeamSession, fetchTeam, prune, push } from '../team/team.js';
 // 16: glance with commit.
 // 17: /team; commit records.
 // 18: /guide removed: guides are written by the git hooks.
-export const CAPTURE_API = 18;
+// 19: /resolve finds the session that took a handoff.
+export const CAPTURE_API = 19;
 
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 
@@ -144,6 +145,13 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
         send(200, { recorded: !!record, id: record?.id, captureId: record?.captureId }); return;
       }
       if (url.pathname === '/resolve') {
+        // A handoff names its session only once the harness's hooks have reported it.
+        const handoff = (input as any)?.handoff;
+        if (typeof handoff === 'string') {
+          const link = captures.database.records("type='session_link'").find(record => record.link?.handoffId === handoff);
+          if (!link) throw new Error(`No recorded session took handoff ${handoff}.`);
+          send(200, { captureId: link.captureId }); return;
+        }
         // Resuming starts a harness, so it takes the exact session ID only: never a guess.
         const { captureId, harness, workspaceRoot, source } = captures.get(String((input as any)?.session ?? '')).manifest;
         send(200, { captureId, harness, workspaceRoot, source }); return;

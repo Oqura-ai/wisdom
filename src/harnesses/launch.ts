@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { harnessHome } from '../core/paths.js';
+import { settingsOrDefaults } from '../core/settings.js';
 import { writeJson } from '../storage/ledger.js';
 
 /** What `wisdom track <harness>` runs: the harness with its home set to Wisdom's folder.
@@ -110,6 +111,16 @@ export function installSkill(folder: string): void {
   fs.rmSync(target, { recursive: true, force: true });
   fs.cpSync(shippedSkill, target, { recursive: true });
 }
+
+/** Wisdom's skill in this folder, or out of it when `skill: false` in the project's wisdom.yaml.
+ * Every place Wisdom puts the skill goes through here, so none puts it back unasked. */
+export function placeSkill(folder: string, dataDir: string): void {
+  if (settingsOrDefaults(path.dirname(path.resolve(dataDir))).skill === false) removeSkill(folder);
+  else installSkill(folder);
+}
+
+/** Whether a session Wisdom starts gets the read-only `ledger` MCP tool (`mcp: false` in wisdom.yaml: no). */
+export const mcpOn = (dataDir: string) => settingsOrDefaults(path.dirname(path.resolve(dataDir))).mcp !== false;
 
 /** Take Wisdom's skill out of a folder's `skills`, leaving any other skill as it is. */
 export function removeSkill(folder: string): void {

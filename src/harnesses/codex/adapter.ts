@@ -79,6 +79,8 @@ export const codex: HarnessAdapter = {
   homeEnv: 'CODEX_HOME',
   defaultHome: ['.codex'],
   resume: sessionId => ['codex', 'resume', sessionId],
+  // `exec` never asks; the read-only sandbox refuses every change.
+  background: (prompt, sessionId) => ['codex', '--sandbox', 'read-only', 'exec', ...(sessionId ? ['resume', sessionId] : []), prompt],
   // apply_patch can change several files; shell and MCP calls can write anywhere.
   toolTarget: () => undefined,
   isDirectFileTool: () => false,

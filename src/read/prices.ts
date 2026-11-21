@@ -28,11 +28,18 @@ const perMillion: Record<string, [input: number, cached: number, output: number]
   'gpt-5-nano': [0.05, 0.005, 0.4],
 };
 
+let own = new Map<string, [input: number, cached: number, output: number]>();
+
+/** The person's own prices (wisdom.yaml `prices`), over the table above, until the daemon stops. */
+export function usePrices(prices: Record<string, { input: number; cached: number; output: number }> = {}): void {
+  own = new Map(Object.entries(prices).map(([model, price]) => [model, [price.input, price.cached, price.output]]));
+}
+
 /** Dollars for one call's tokens, or undefined when the model's price is not known. OpenAI
  * charges no separate cache write, so those tokens are priced as input. Reasoning is part of output.
  */
 export function estimateCost(model: string | undefined, usage: { input: number; cacheRead: number; cacheWrite: number; output: number }): number | undefined {
-  const price = model ? perMillion[model] : undefined;
+  const price = model ? own.get(model) ?? perMillion[model] : undefined;
   if (!price) return undefined;
   const [input, cached, output] = price;
   return ((usage.input + usage.cacheWrite) * input + usage.cacheRead * cached + usage.output * output) / 1_000_000;

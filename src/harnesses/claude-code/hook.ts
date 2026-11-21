@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { deliver, handoffFromEnv } from '../../service/client.js';
 import { hookDataDir, wisdomHomeData } from '../../core/paths.js';
@@ -28,6 +29,16 @@ export function observation(event: any): Record<string, unknown> | undefined {
   }
 }
 
+/** Give the session's shell its session ID as WISDOM_SESSION, so a `wisdom handoff` run there
+ * reads this session. Claude Code runs what a SessionStart hook writes to CLAUDE_ENV_FILE before
+ * each shell command (verified on 2.1.328); only a plain ID is written. Recording never depends on it.
+ */
+function tellShell(sessionId: unknown): void {
+  const file = process.env.CLAUDE_ENV_FILE;
+  if (!file || typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return;
+  try { fs.appendFileSync(file, `export WISDOM_SESSION=${sessionId}\n`); } catch { /* the shell goes without it */ }
+}
+
 /** Runs for every hook of every Claude Code process that uses Wisdom's home, however it
  * was started. It never stops Claude Code: an event the daemon cannot take is kept in
  * the spool, and exit code 1 shows the warning without blocking.
@@ -40,6 +51,7 @@ export async function main(named = process.argv[2], place = process.argv[3]): Pr
   // Wisdom's own guide writer runs Claude Code; its session is not the person's work.
   if (process.env.WISDOM_GUIDE_WRITER) return;
   const event = JSON.parse(input);
+  if (event.hook_event_name === 'SessionStart') tellShell(event.session_id);
   const mapped = observation(event);
   if (!mapped) return;
   try {

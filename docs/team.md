@@ -4,7 +4,7 @@ Wisdom works on one machine by default (local mode). Team mode lets a team read 
 other's sessions from a commit, through the team's own git remote. Nothing goes to
 Wisdom: sessions and records are hidden git refs in your own repository.
 
-A repository is in team mode when it has a committed `wisdom-team.json` at its top.
+A repository is in team mode when it has a committed `wisdom-team.yaml` at its top.
 Without that file, Wisdom changes no commit message and pushes nothing, and by default
 installs no git hooks and calls no model, so you can use Wisdom in any project, including open
 source ones whose owners don't. See [Guides in local mode](#guides-in-local-mode).
@@ -72,7 +72,7 @@ as it would in any Claude Code session.
    originals here. It never sends the `.wisdom/` folder or any login. A failure there never
    stops your push; it says so.
    Only commits made in team mode travel: a commit whose tree already holds
-   `wisdom-team.json`. Work you recorded before team mode was turned on (local-mode records,
+   `wisdom-team.yaml`. Work you recorded before team mode was turned on (local-mode records,
    their sessions, their guides) stays on your machine, and no guide is written for it at push.
 5. **Review.** A reviewer runs `wisdom team fetch`, then `wisdom glance --commit <commit>`.
    Each piece points to the step that made it, checked against the fetched session, with
@@ -92,8 +92,9 @@ the model back on.
 
 | Command | What it does |
 | --- | --- |
-| `wisdom team init` | Writes `wisdom-team.json` with a new repo ID. An admin commits it. |
-| `wisdom init`, `wisdom connect` | In a team-mode repository, also install the git hooks. |
+| `wisdom team init` | Writes `wisdom-team.yaml` with a new repo ID. An admin commits it. |
+| `wisdom init`, `wisdom connect` | In a team-mode repository, also install the git hooks, and name any team command not trusted here yet. |
+| `wisdom team trust` | Shows the commands `wisdom-team.yaml` runs on this machine (`check`, `guides.command`) and, on a yes, lets them run. See [Trusting the team's commands](#trusting-the-teams-commands). |
 | `wisdom team hooks on\|off` | Installs or removes the three git hooks. |
 | `wisdom guide on\|off` | Team mode: who writes your guides, a model reading the sessions (on, the default) or Wisdom from the record with no model (off). Local mode: whether a model writes one after each commit (off by default; on installs only `post-commit`). Each commit's job goes by the switch, and by the policy's `guides` writer, as they were at that commit. |
 | `wisdom guide <commit>` | A model writes that commit's guide now, in either mode, from its record's window. In team mode it goes with your next push; in local mode it stays on this machine. |
@@ -130,19 +131,20 @@ are installed, the daemon's own commit watcher stands aside.
 
 ## The policy file
 
-```json
-{
-  "version": 1,
-  "repoId": "5d0c3c1e-8a5b-4b8e-9d0e-2f1c7a3b9e11",
-  "remote": "origin",
-  "identity": true,
-  "requireGuides": true,
-  "keepReferenced": true,
-  "retentionDays": 90,
-  "check": "node scripts/scan-session.mjs",
-  "guides": { "model": "claude-haiku-5-5" }
-}
+```yaml
+version: 1
+repoId: 5d0c3c1e-8a5b-4b8e-9d0e-2f1c7a3b9e11
+remote: origin
+identity: true
+requireGuides: true
+keepReferenced: true
+retentionDays: 90
+check: node scripts/scan-session.mjs
+guides:
+  model: claude-haiku-5-5
 ```
+
+`wisdom team init` writes the file with these defaults and the optional ones commented out.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -154,7 +156,39 @@ are installed, the daemon's own commit watcher stands aside.
 | `keepReferenced` | `true` | Prune keeps sessions a pushed record still names. |
 | `check` | none | Your own command, run on each session file before it is pushed, with the file's path last. It may change the file; a non-zero exit stops that session's upload. Wisdom's own filter is basic. Add your rules here. A session held back this way is tried again at each push, which says so in one line with a short cause (refused, could not run here, timed out), never the command's own output. |
 | `guides.model` | `claude-haiku-5-5` | The model that writes guides. |
+| `guides.turns` | `30` | How many steps the Claude Code writer may take reading the sessions, 5 to 60. |
+| `guides.timeoutSeconds` | `150` | How long one guide may take to write, 30 to 300. |
+| `guides.extra` | none | The team's own words, added after the writer's rules, such as "Name the tests run." Wisdom's check of the guide is the same. |
 | `guides.command` | Claude Code (`claude -p --model <model>`, with only Wisdom's ledger tool) | Any other writer: it reads the prompt on stdin, prints the guide, and finds the model in `WISDOM_GUIDE_MODEL`. Use it for Codex, Pi, an API key, or a local model. It gets the cited steps already opened (up to 6,000 characters each, 60,000 in all) and may not use tools, so it does not read the rest of the window. The guide names its writer as the command followed by `(model not named)`, since the command picks its own model; set `guides.model` as well and it reads `<model> via <command>`. |
+
+**Guides are written the same way for everyone.** In team mode the `guides` settings come from
+this file only. What it leaves out is Wisdom's default, never a person's own value: the
+`guides.model`, `turns`, `timeoutSeconds` and `extra` in someone's [`wisdom.yaml`](usage.md#settings)
+are ignored, and `wisdom doctor` says so. Teammates read each other's guides, so one person
+cannot make theirs shorter or steer them. Each person still decides with `wisdom guide off`
+whether a model writes their own guides.
+
+A repository that still has only `wisdom-team.json` (Wisdom 0.6.0-beta.0) is in local mode,
+since that file is no longer read. `wisdom doctor`, `wisdom init`, team commands and `git push`
+say so. To keep team mode, convert it to `wisdom-team.yaml`, with the same fields, and commit it.
+
+## Trusting the team's commands
+
+`check` and `guides.command` are commands Wisdom runs on every teammate's machine, as them,
+through their shell. Anyone who can change `wisdom-team.yaml`, including a pull request you
+check out to review, can change them. So each person trusts them once:
+
+1. `wisdom init` and `wisdom connect` name any command not trusted here yet.
+2. `wisdom team trust` shows each command and what it is for, and asks. On a yes, it keeps a
+   sha256 of each command's exact text in `.wisdom/trusted-commands.json`, on this machine only.
+   With no terminal to ask in, it trusts nothing.
+3. A command whose text changes is untrusted again until you run `wisdom team trust` again.
+
+Until then nothing is skipped: an untrusted `check` holds the session back (tried again at each
+push, with the short cause "not trusted on this machine yet"), and an untrusted `guides.command`
+writes no guide, so CI flags the commit. Only the command's text is compared, not a script it
+runs: if `check` is `node scripts/scan.mjs`, a change to `scan.mjs` alone is not noticed, so
+review changes to such scripts as you would the team file.
 
 ## What a guide costs
 

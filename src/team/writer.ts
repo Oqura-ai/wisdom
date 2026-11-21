@@ -8,7 +8,8 @@ import { onPath, resolveCommand } from '../harnesses/launch.js';
 import { agentWork, type CommitRecord, type RecordGuide } from './commits.js';
 import { checkGuide, guidesOn } from './guides.js';
 import { GUIDE_OPENING, items, plainGuide, turnRequest } from './plain.js';
-import type { Policy } from './gitrefs.js';
+import { trusted, untrustedNote, type Policy } from './gitrefs.js';
+import { DEFAULT_MODEL, harnessPath, settingsOrDefaults } from '../core/settings.js';
 import type { SessionStore } from '../storage/store.js';
 
 /** The guide writer. A commit's guide is written in two filters:
@@ -22,7 +23,7 @@ import type { SessionStore } from '../storage/store.js';
  *      sits in an earlier turn than the edit, which is why it may read the whole window. It
  *      did not do the work, so it has no stake in flattering it.
  *
- * A team's own writer (guides.command in wisdom-team.json) reads a prompt on stdin with the
+ * A team's own writer (guides.command in wisdom-team.yaml) reads a prompt on stdin with the
  * steps already opened, and may not use tools. A person who turns guides off (`wisdom guide
  * off`) gets a plain guide that Wisdom writes from the record, with no model at all.
  *
@@ -30,14 +31,23 @@ import type { SessionStore } from '../storage/store.js';
  * which every Wisdom hook obeys, and outside the project.
  */
 
-export const DEFAULT_MODEL = 'claude-haiku-5-5';
 export const PLAIN_WRITER = 'Wisdom, no model (wisdom guide off)';
 const STEP_CHARS = 6_000;
 const EVIDENCE_CHARS = 60_000;
 /** Exploring reads turns itself, so the steps handed to it up front are fewer. */
 const EXPLORE_EVIDENCE_CHARS = 20_000;
 const EXPLORE_TURNS = 30;
+const TIMEOUT_SECONDS = 150;
 const bin = fileURLToPath(new URL('../bin.js', import.meta.url));
+
+/** How guides are written. In team mode only the team file (wisdom-team.yaml) decides, and what
+ * it leaves out is Wisdom's default, never a person's own value: teammates' guides are read by
+ * everyone, so they are written the same way. In local mode, the person's wisdom.yaml. */
+export function guideSettings(policy: Policy | undefined, project: string): { model: string; turns: number; timeoutSeconds: number; extra: string } {
+  const chosen = policy ? policy.guides : settingsOrDefaults(project).guides;
+  return { model: chosen?.model ?? DEFAULT_MODEL, turns: chosen?.turns ?? EXPLORE_TURNS,
+    timeoutSeconds: chosen?.timeoutSeconds ?? TIMEOUT_SECONDS, extra: chosen?.extra ?? '' };
+}
 
 const cut = (text: string, limit: number) => text.length <= limit ? text : `${text.slice(0, limit)}\n[cut here for this guide: ${text.length - limit} more characters; open the step to read all of it]`;
 const short = (id: string) => id.slice(0, 8);
@@ -70,7 +80,7 @@ function stepEvidence(store: SessionStore, record: CommitRecord, budgetChars: nu
 
 /** The prompt. `explore` tells the writer to read the sessions' windows with the ledger tool;
  * without it, the writer uses only the steps handed to it and no tools. */
-export function guidePrompt(store: SessionStore, record: CommitRecord, explore = false): string {
+export function guidePrompt(store: SessionStore, record: CommitRecord, explore = false, extra = ''): string {
   const list = items(record);
   const { evidence, skipped } = stepEvidence(store, record, explore ? EXPLORE_EVIDENCE_CHARS : EVIDENCE_CHARS);
   const sessions = record.sessions.map(session => `- ${session.id} (${session.harness}) · made ${session.positions.join(', ')}`
@@ -90,6 +100,8 @@ export function guidePrompt(store: SessionStore, record: CommitRecord, explore =
     explore
       ? '- One to three short sentences per item. Output only the guide, nothing before or after it.'
       : '- One to three short sentences per item. Do not use tools. Output only the guide, nothing before or after it.',
+    // The person's own words (wisdom.yaml guides.extra), after Wisdom's rules, never instead of them.
+    ...(extra.trim() ? [`- Also, as the person asks: ${extra.trim()}`] : []),
     ...(explore ? [
       '',
       'How to read the recordings: you have one tool, ledger, which is read-only.',
@@ -144,11 +156,14 @@ export function claudeOutput(stdout: string): Output {
   return { text: parsed.result, costUsd };
 }
 
-/** The command that writes, and how it is named in the record. Undefined when none is there. */
+/** The command that writes, and how it is named in the record. Undefined when none is there.
+ * How it writes (model, turns, time) is guideSettings: the team file's in team mode. */
 function writerCommand(policy: Policy | undefined, dataDir: string): Writer | undefined {
-  const model = policy?.guides?.model ?? DEFAULT_MODEL;
+  const project = path.dirname(path.resolve(dataDir));
+  const settings = settingsOrDefaults(project);
+  const { model, turns, timeoutSeconds } = guideSettings(policy, project);
   const env = { ...process.env, WISDOM_GUIDE_WRITER: '1', WISDOM_GUIDE_MODEL: model };
-  const options = { cwd: os.tmpdir(), env, encoding: 'utf8' as const, timeout: 150_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 };
+  const options = { cwd: os.tmpdir(), env, encoding: 'utf8' as const, timeout: timeoutSeconds * 1000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 };
   if (policy?.guides?.command) {
     const command = policy.guides.command;
     // The command picks its own model unless the policy names one: say only what Wisdom knows.
@@ -158,8 +173,8 @@ function writerCommand(policy: Policy | undefined, dataDir: string): Writer | un
       return result.status === 0 && String(result.stdout ?? '').trim() ? { text: String(result.stdout) } : { failed: lastLine(result) };
     } };
   }
-  const installed = process.platform === 'win32' ? onPath('claude')
-    : (process.env.PATH ?? '').split(path.delimiter).map(dir => path.join(dir, 'claude')).find(file => fs.existsSync(file));
+  const installed = harnessPath(project, settings, 'claude-code') ?? (process.platform === 'win32' ? onPath('claude')
+    : (process.env.PATH ?? '').split(path.delimiter).map(dir => path.join(dir, 'claude')).find(file => fs.existsSync(file)));
   if (!installed) return undefined;
   let claude: ReturnType<typeof resolveCommand>;
   try { claude = resolveCommand(installed); } catch { return undefined; }
@@ -169,7 +184,7 @@ function writerCommand(policy: Policy | undefined, dataDir: string): Writer | un
   // and its run is not a session of anyone's.
   const config = path.join(os.tmpdir(), `wisdom-guide-mcp-${process.pid}.json`);
   const args = ['-p', '--model', model, '--output-format', 'json', '--no-session-persistence', '--tools', '', '--strict-mcp-config',
-    '--mcp-config', config, '--allowedTools', 'mcp__wisdom__ledger', '--max-turns', String(EXPLORE_TURNS)];
+    '--mcp-config', config, '--allowedTools', 'mcp__wisdom__ledger', '--max-turns', String(turns)];
   return { name: `${model} via Claude Code, reading the sessions' windows`, explore: true, run: prompt => {
     fs.writeFileSync(config, JSON.stringify({ mcpServers: { wisdom: { command: process.execPath, args: [bin, 'mcp', '--data', dataDir] } } }));
     try {
@@ -199,9 +214,11 @@ export function writeGuide(store: SessionStore, record: CommitRecord, dataDir: s
     const text = plainGuide(record, stores);
     return { guide: { text, writtenAt: new Date().toISOString(), writer: PLAIN_WRITER, problems: checkGuide(text, record, stores, ids), derived: true } };
   }
+  // A team's own writer runs only once this person trusted its exact text (wisdom team trust).
+  if (policy?.guides?.command && !trusted(dataDir, policy.guides.command)) return { missing: untrustedNote(policy.guides.command) };
   const writer = writerCommand(policy, dataDir);
-  if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.json names no guides.command' };
-  let prompt = guidePrompt(store, record, writer.explore);
+  if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.yaml names no guides.command' };
+  let prompt = guidePrompt(store, record, writer.explore, guideSettings(policy, path.dirname(path.resolve(dataDir))).extra);
   let text = '', problems: string[] = [], costUsd: number | undefined;
   const started = Date.now();
   for (let attempt = 0; attempt < 2; attempt++) {

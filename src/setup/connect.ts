@@ -3,8 +3,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { writeJson } from '../storage/ledger.js';
 import { connectedFile, readConnected, type Connected } from '../core/paths.js';
+import { SETTINGS_FILE } from '../core/settings.js';
 import { userHome } from '../harnesses/index.js';
-import { hookState, installSkill, removeSkill, settingsFile, settingsFiles } from '../harnesses/launch.js';
+import { hookState, placeSkill, removeSkill, settingsFile, settingsFiles } from '../harnesses/launch.js';
 import { connectClaudeCode, disconnectClaudeCode } from '../harnesses/claude-code/launch.js';
 import { connectCodex, disconnectCodex } from '../harnesses/codex/launch.js';
 import { connectPi, disconnectPi } from '../harnesses/pi/launch.js';
@@ -20,6 +21,8 @@ const BEGIN = '# wisdom connect: local settings naming this machine (wisdom disc
 const END = '# end wisdom connect';
 const DATA_BEGIN = '# wisdom: this project\'s recordings and logins, never committed';
 const DATA_END = '# end wisdom data folder';
+const SETTINGS_BEGIN = '# wisdom: your own settings for this project';
+const SETTINGS_END = '# end wisdom settings';
 
 /** Record these harnesses with the person's own login: Wisdom's hook or extension in the
  * project's own settings, and the reading skill beside them. Nothing reaches git: the files
@@ -31,8 +34,9 @@ export function connect(dataDir: string, harnesses: Connectable[], now = new Dat
   const connected = harnesses.filter(harness => !tracked.includes(settingsFile(dataDir, harness, 'project')));
   const files = connected.map(harness => connectors[harness].connect(dataDir));
   for (const folder of new Set(connected.map(harness => settingsFiles.project[harness].skills))) {
-    installSkill(path.join(project, folder));
-    files.push(path.join(project, folder, 'skills', 'wisdom-ledger'));
+    placeSkill(path.join(project, folder), dataDir);
+    const skill = path.join(project, folder, 'skills', 'wisdom-ledger');
+    if (fs.existsSync(skill)) files.push(skill);
   }
   const before = readConnected(dataDir);
   // A harness not found this time (off PATH, say) that an earlier connect set up keeps its files,
@@ -102,6 +106,13 @@ export function ignoreDataFolder(project: string): void {
   const lines = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8').split(/\r?\n/) : [];
   const ignored = lines.some(line => ['.wisdom', '.wisdom/', '/.wisdom', '/.wisdom/'].includes(line.trim()));
   if (!ignored) fs.appendFileSync(ignore, (lines.length && lines.at(-1) !== '' ? '\n' : '') + '.wisdom/\n');
+}
+
+/** Keep wisdom.yaml, one person's settings, out of git in its own block, which `wisdom disconnect`
+ * leaves in place. Committed anyway (`git add -f`), it is read like any other copy. False outside
+ * a repository, where there is nothing to keep it out of. */
+export function ignoreSettingsFile(project: string): boolean {
+  return setExcluded(project, [SETTINGS_FILE], SETTINGS_BEGIN, SETTINGS_END);
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

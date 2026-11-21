@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { yaml } from '../core/settings.js';
 
 // Hooks import this module (through the commit gate), so it stays free of the database.
 function writeJson(file: string, value: unknown): void {
@@ -141,7 +142,7 @@ export const remoteRef = (repoId: string, local: string) => local.replace(/^refs
 
 // ---------- policy and recorder ----------
 
-/** `wisdom-team.json`, committed at the repository's top: its presence is team mode. Without
+/** `wisdom-team.yaml`, committed at the repository's top: its presence is team mode. Without
  * it Wisdom is in local mode, and nothing is pushed, gated or checked. */
 export interface Policy {
   version: 1;
@@ -160,10 +161,13 @@ export interface Policy {
   /** A command run on each session file before it is pushed, with the file's path as its
    * last argument. It may change the file; a non-zero exit stops that session's upload. */
   check?: string;
-  /** Who writes commit guides. `model` defaults to Claude Haiku 5.5 through Claude Code;
+  /** Who writes commit guides, and how. `model` defaults to Claude Haiku 5.5 through Claude Code;
    * `command` names any other writer: it reads the prompt on stdin, prints the guide, and
-   * finds the model in WISDOM_GUIDE_MODEL. A person turns guides off with `wisdom guide off`. */
-  guides?: { model?: string; command?: string };
+   * finds the model in WISDOM_GUIDE_MODEL. `turns`, `timeoutSeconds` and `extra` are as in
+   * wisdom.yaml. In team mode these come from this file only: a person's own wisdom.yaml guide
+   * settings are ignored, so every teammate's guides are written the same way. A person still
+   * turns the model off for their own commits with `wisdom guide off`. */
+  guides?: { model?: string; command?: string; turns?: number; timeoutSeconds?: number; extra?: string };
 }
 
 /** Every `Wisdom-Record:` line in a commit's message, last first: a squash or a revert can
@@ -189,7 +193,19 @@ export function recordsWithIds(cwd: string, ids: string[]): { commit: string; te
   return found.sort((a, b) => ids.indexOf(/"recordId":\s*"([^"]+)"/.exec(a.text)![1]) - ids.indexOf(/"recordId":\s*"([^"]+)"/.exec(b.text)![1]));
 }
 
-export const POLICY_FILE = 'wisdom-team.json';
+export const POLICY_FILE = 'wisdom-team.yaml';
+/** The team file of 0.6.0-beta.0. It is no longer read; `oldPolicyNote` says so. */
+export const OLD_POLICY_FILE = 'wisdom-team.json';
+
+/** A line for a repository that has only the old team file, which Wisdom no longer reads:
+ * such a repository is in local mode, and without this nothing would say so. */
+export function oldPolicyNote(cwd: string): string | undefined {
+  let top: string;
+  try { top = topLevel(cwd); } catch { return undefined; }
+  if (!fs.existsSync(path.join(top, OLD_POLICY_FILE)) || fs.existsSync(path.join(top, POLICY_FILE))) return undefined;
+  return `This repository has ${OLD_POLICY_FILE}, which Wisdom no longer reads, so it is in local mode: no link line on commits, nothing pushed. `
+    + `To keep team mode, an admin converts it to ${POLICY_FILE} (the same fields, in YAML) and commits that.`;
+}
 
 /** Whether a commit was made in team mode: its tree holds the policy file. Work committed
  * before team mode was turned on (local mode) stays private: its records are never pushed and
@@ -203,18 +219,67 @@ export function readPolicy(cwd: string): Policy | undefined {
   try { top = topLevel(cwd); } catch { return undefined; }
   const file = path.join(top, POLICY_FILE);
   if (!fs.existsSync(file)) return undefined;
-  const policy = JSON.parse(fs.readFileSync(file, 'utf8')) as Policy;
-  if (policy.version !== 1 || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._-]{8,}$/.test(policy.repoId)) {
+  let policy: Policy;
+  try { policy = yaml().parse(fs.readFileSync(file, 'utf8')) as Policy; }
+  catch (error) { throw new Error(`${file} is not valid YAML: ${error instanceof Error ? error.message.split('\n')[0] : error}`); }
+  if (policy?.version !== 1 || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._-]{8,}$/.test(policy.repoId)) {
     throw new Error(`${file} is not a Wisdom team policy this version reads (version 1, a repoId of 8+ letters, digits, . _ -).`);
   }
+  // The same rules as wisdom.yaml's guides section (core/settings.ts).
+  const guides = policy.guides;
+  const wrong = (field: string, rule: string) => new Error(`${file}: guides.${field} must be ${rule}.`);
+  if (guides?.model !== undefined && (typeof guides.model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:[\]-]*$/.test(guides.model))) throw wrong('model', 'a model name such as claude-haiku-5-5');
+  if (guides?.turns !== undefined && !(Number.isInteger(guides.turns) && guides.turns >= 5 && guides.turns <= 60)) throw wrong('turns', 'a whole number from 5 to 60');
+  if (guides?.timeoutSeconds !== undefined && !(Number.isInteger(guides.timeoutSeconds) && guides.timeoutSeconds >= 30 && guides.timeoutSeconds <= 300)) throw wrong('timeoutSeconds', 'a whole number from 30 to 300');
+  if (guides?.extra !== undefined && (typeof guides.extra !== 'string' || guides.extra.length > 2000)) throw wrong('extra', 'text of at most 2,000 characters');
   return policy;
 }
+
+/** The commands a policy runs on this machine: a check before each push, and a guide writer. */
+export const policyCommands = (policy: Policy | undefined) => [policy?.check, policy?.guides?.command].filter((command): command is string => !!command);
+
+/** Anyone who can change wisdom-team.yaml can change these commands, so each person trusts them
+ * once (`wisdom team trust`), by their exact text, on their own machine: a changed command is
+ * not trusted until they look again. Only the text is compared, not a script the command runs. */
+const trustFile = (dataDir: string) => path.join(dataDir, 'trusted-commands.json');
+const fingerprint = (command: string) => createHash('sha256').update(command).digest('hex');
+
+export function trusted(dataDir: string, command: string): boolean {
+  try { return (JSON.parse(fs.readFileSync(trustFile(dataDir), 'utf8')) as string[]).includes(fingerprint(command)); }
+  catch { return false; }
+}
+
+export function trustCommands(dataDir: string, commands: string[]): void {
+  let known: string[] = [];
+  try { known = JSON.parse(fs.readFileSync(trustFile(dataDir), 'utf8')); } catch { /* a new file */ }
+  writeJson(trustFile(dataDir), [...new Set([...known, ...commands.map(fingerprint)])]);
+}
+
+export const untrustedNote = (command: string) =>
+  `${POLICY_FILE} asks to run \`${command}\` on this machine, and you have not trusted it yet. Read it, then run: wisdom team trust`;
 
 export function writePolicy(cwd: string): { file: string; policy: Policy; created: boolean } {
   const file = path.join(topLevel(cwd), POLICY_FILE);
   if (fs.existsSync(file)) return { file, policy: readPolicy(cwd)!, created: false };
   const policy: Policy = { version: 1, repoId: randomUUID(), remote: 'origin', identity: true, requireGuides: true, keepReferenced: true };
-  fs.writeFileSync(file, JSON.stringify(policy, null, 2) + '\n');
+  fs.writeFileSync(file, `# Wisdom team mode: committed, it turns team mode on for everyone; removed, Wisdom is in local mode.
+# A line starting with # is an option: remove the "# " to use it. See docs/team.md.
+version: 1
+repoId: ${policy.repoId}
+remote: origin              # where sessions and commit records are pushed
+identity: true              # each pushed session names its recorder's git name and email
+requireGuides: true         # an agent commit needs a guide that passed its check
+keepReferenced: true        # prune keeps sessions a commit record still points to
+# retentionDays: 30         # wisdom team prune removes pushed sessions older than this
+# check: node scan.mjs      # run on each session file before it is pushed; a non-zero exit holds it back
+#                           #   (each person runs it only after: wisdom team trust)
+# guides:                   # how every teammate's guides are written; each person's wisdom.yaml guide settings are ignored
+#   model: claude-haiku-5-5   # the model that writes guides
+#   turns: 30               # how much of the sessions it may read; fewer is cheaper
+#   timeoutSeconds: 150     # give up on one guide after this long
+#   extra: ""               # the team's own instruction, e.g. "Name the tests run."
+#   command: ""             # another writer: reads the prompt on stdin and prints the guide (needs wisdom team trust)
+`);
   return { file, policy, created: true };
 }
 

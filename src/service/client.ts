@@ -48,13 +48,20 @@ export function handoffFromEnv(env: NodeJS.ProcessEnv = process.env): { handoff:
 /** How every hook reports. Live when the daemon answers; otherwise the event is kept in
  * the spool and the daemon is started, so nothing waits on Wisdom and nothing is lost.
  * A spooled event that was in fact recorded is recognized by its observation ID.
+ * `spooled` is the reason, for the hook to warn. A daemon that was only down and is now
+ * started needs nothing from the person, so then there is none; the record still marks the
+ * event delivered late. A daemon that refused the event, was too slow, or could not be
+ * started still warns.
  */
 export async function deliver(dataDir: string, event: HookEvent, timeoutMs = 10000): Promise<{ spooled?: string }> {
   try { await call(connectionAt(dataDir), '/observe', event, timeoutMs); return {}; }
   catch (error) {
     spool(dataDir, event);
-    await ensureDaemon(dataDir).catch(() => { /* The spool waits for the next start. */ });
-    return { spooled: error instanceof Error ? error.message : String(error) };
+    const reason = error instanceof Error ? error.message : String(error);
+    const down = /daemon is not (answering|running)/.test(reason);
+    // Not started: the spool waits for the next start.
+    const started = await ensureDaemon(dataDir).then(() => true, () => false);
+    return down && started ? {} : { spooled: reason };
   }
 }
 
