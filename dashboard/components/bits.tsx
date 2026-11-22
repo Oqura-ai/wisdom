@@ -48,8 +48,25 @@ export function UserAvatar({ size }: { size?: 'small' | 'large' }) {
   );
 }
 
+/** Line icons for the kinds of steps a session records, drawn in the text colour. */
+const icons = {
+  tool: 'M10.5 2.5a3 3 0 0 0-3.8 3.8L2.5 10.5l3 3 4.2-4.2a3 3 0 0 0 3.8-3.8l-1.9 1.9-1.6-.4-.4-1.6z',
+  reply: 'M2.5 3.5h11v7.5H7.5l-3 2.5V11h-2z',
+  thought: 'M4 8h.01M8 8h.01M12 8h.01',
+  gap: 'M8 2.5 14 13.5H2zM8 7v3M8 12h.01',
+} as const;
+export function Icon({ name, className }: { name: keyof typeof icons; className?: string }) {
+  return <svg className={`ico ico-${name} ${className ?? ''}`} viewBox="0 0 16 16" aria-hidden><path d={icons[name]} /></svg>;
+}
+
+/** A recorded body that is JSON, laid out for reading: indented, and line breaks inside its
+ * strings shown as line breaks. Display only; the stored body is unchanged. */
+export function readableJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(/(?<!\\)(\\r)?\\n/g, '\n');
+}
+
 export function BackButton({ onClick, label }: { onClick: () => void; label: string }) {
-  return <button className="ghost back" onClick={onClick}><img src="/icons/back-button-96.png" alt="" />{label}</button>;
+  return <button className="ghost back" onClick={onClick}><i className="chevron" aria-hidden />{label}</button>;
 }
 
 export function HarnessBadge({ harness, compact }: { harness: string; compact?: boolean }) {
@@ -78,10 +95,10 @@ export function DisplayMenu() {
 
 const scales = [['1', '100'], ['1.25', '125'], ['1.5', '150']] as const;
 
-/** UI scale in percent. 150 is the default; remembered per browser like the theme. */
+/** UI scale in percent. 100 is the default; remembered per browser like the theme. */
 function ScaleSwitch() {
   const [scale, setScale] = useState<string>();
-  useEffect(() => { setScale(document.documentElement.dataset.scale ?? '1.5'); }, []);
+  useEffect(() => { setScale(document.documentElement.dataset.scale ?? '1'); }, []);
   const choose = (next: string) => {
     document.documentElement.dataset.scale = next;
     try { localStorage.setItem('wisdom-scale', next); } catch { /* still applies to this page */ }
@@ -139,9 +156,9 @@ export function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
-/** A session's counts in one line. Zeros are left out; failures and gaps stand out. */
+/** A session's harness and counts in one line. Zeros are left out; failures and gaps stand out. */
 export function SessionFacts({ session: s }: { session: Session }) {
-  const facts: [string, string?][] = [];
+  const facts: [string, string?][] = [[(harnessLabel[s.harness] ?? s.harness).split(' ')[0]]];
   if (s.requests) facts.push([plural(s.requests, 'request')]);
   if (s.tools) facts.push([plural(s.tools, 'tool')]);
   if (s.failures) facts.push([`${s.failures} failed`, 'bad']);

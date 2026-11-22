@@ -18,7 +18,7 @@ Start the daemon with `--no-dashboard` to skip it. It never affects recording: i
 - **Health:** a line at the top of every page with `wisdom doctor`'s checks, refreshed every minute. Open it for each check and its fix, **Repair…** for broken hooks or an older reading skill (backed up first, restorable), and earlier backups. See [usage](usage.md#health-storage-and-repair-in-the-dashboard).
 - **Storage:** on the overview, the project's disk space by session, database and harness home, the largest sessions, and **Clean up…** for sessions not active for 30 days (or another number).
 - **Delete:** each session page has **Delete**. A dialog shows what goes, the linked sessions still recording, and, for a connected session, a choice to delete the harness's own copy too. See [deleting a session](usage.md#deleting-a-session).
-- **Display:** Light, Dark and Night themes and the text size (100, 125 or 150%, default 150%). The choice is remembered per browser, and the first visit follows the system setting.
+- **Display:** Light, Dark and Night themes and the text size (100, 125 or 150%, default 100%). The choice is remembered per browser, and the first visit follows the system setting.
 
 Claude Code's internal helper agents (prompt suggestions, recaps) are recorded but folded out of the tree.
 
