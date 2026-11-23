@@ -72,7 +72,7 @@ export function Overview({ stats, sessions, titles, harness, onOpen, onDeleted }
       {models.length > 0 && (
         <section className="card">
           <h2>Models</h2>
-          <table className="table models">
+          <table className="table models num-cols">
             <thead><tr><th>harness</th><th>model</th><th>responses</th><th>fresh input</th><th>cache read</th><th>cache write</th><th>output</th><th>reasoning</th><th>total</th><th>cost</th></tr></thead>
             <tbody>{models.map(m => (
               <tr key={`${m.harness}:${m.model}`} className="static">
@@ -125,7 +125,7 @@ export function Overview({ stats, sessions, titles, harness, onOpen, onDeleted }
 
       <section className="card">
         <h2>Sessions</h2>
-        <table className="table">
+        <table className="table num-cols">
           <thead><tr><th>session</th><th>last active</th><th title="Start to end. Left blank when recording had gaps, since it would count idle time.">length</th><th>requests</th><th>tools</th><th>failed</th><th>changes</th>{anySubagents && <th>subagents</th>}<th>tokens</th><th>cost</th></tr></thead>
           <tbody>
             {sessions.map(s => (

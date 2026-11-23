@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { call } from '../src/service/client.js';
 import { startDaemon } from '../src/service/daemon.js';
@@ -129,6 +130,26 @@ test('the session list reads as plain text, for a person and for an agent', asyn
     assert.doesNotMatch(text, /[{}]/);
   } finally {
     await daemon.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a daemon.json left by an earlier run, whose port another project\'s daemon now holds, reads as not running', async () => {
+  const root = temp();
+  const other = await startDaemon(path.join(root, 'other', '.wisdom'), 0);
+  const project = path.join(root, 'project');
+  const data = path.join(project, '.wisdom');
+  fs.mkdirSync(data, { recursive: true });
+  fs.writeFileSync(path.join(data, 'wisdom.json'), '{}');
+  fs.writeFileSync(path.join(data, 'daemon.json'), JSON.stringify({ ...other.connection, token: 'from-an-earlier-run' }));
+  try {
+    await assert.rejects(call(JSON.parse(fs.readFileSync(path.join(data, 'daemon.json'), 'utf8')), '/health'), /daemon is not answering/);
+    // Not `run`: a synchronous child would hold this process, and with it the other daemon.
+    const stopped = await promisify(execFile)(process.execPath, [bin, 'daemon', 'stop'], { cwd: project, encoding: 'utf8', windowsHide: true });
+    assert.deepEqual([stopped.stdout, stopped.stderr], ['Wisdom is not running.\n', '']);
+    assert.equal((await call(other.connection, '/health')).status, 'running', 'the other project\'s daemon is left alone');
+  } finally {
+    await other.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

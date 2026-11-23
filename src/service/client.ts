@@ -32,6 +32,10 @@ export async function call(connection: Connection, route: string, input?: unknow
       throw new Error(`Wisdom daemon is not answering at ${connection.url}. Run: wisdom daemon start`);
     }
   }
+  // Each daemon makes a new token when it starts, and only it writes daemon.json. A refused token
+  // means this daemon.json is from an earlier run that ended without removing it, and another
+  // project's daemon has since taken its port: this project's daemon is not running.
+  if (response.status === 401) throw new Error(`Wisdom daemon is not answering at ${connection.url}; another process holds that address. Run: wisdom daemon start`);
   const result = await response.json() as any;
   if (!response.ok) throw new Error(result.error ?? `Daemon returned HTTP ${response.status}`);
   return result;

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { recordBodies, resultBody } from '@/lib/api';
 import type { TreeNode } from '@/lib/tree';
+import { readableJson } from './bits';
 
 type Body = { available: boolean; text?: string; truncated?: boolean; reason?: string } | undefined;
 
@@ -21,7 +22,8 @@ export function Inspector({ captureId, readVersion, node, onClose }: { captureId
     return () => { current = false; };
   }, [captureId, readVersion, node]);
 
-  if (!node) return <aside className="inspector card empty small">Select a request, tool call or change to see its recorded evidence.</aside>;
+  // Nothing selected: no panel, so the tree keeps the full width (the hint is in the tree's bar).
+  if (!node) return null;
   const r = node.record;
   return (
     <aside className="inspector card">
@@ -59,8 +61,7 @@ function Section({ title, body, json, diff }: { title: string; body: Body; json?
     try {
       const value = JSON.parse(text);
       const only = value && typeof value === 'object' && Object.keys(value).length === 1 && 'input' in value;
-      // Display only: line breaks inside strings read as line breaks. The stored body is unchanged.
-      text = JSON.stringify(only ? value.input : value, null, 2).replace(/(?<!\\)(\\r)?\\n/g, '\n');
+      text = readableJson(only ? value.input : value);
     } catch { /* raw text */ }
   }
   return (

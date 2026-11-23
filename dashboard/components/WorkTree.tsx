@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { captureEvents, type EventRecord, type Session } from '@/lib/api';
 import { buildTree, subtreeStats, tokensByRequest, toolState, type TreeNode } from '@/lib/tree';
 import { Inspector } from './Inspector';
-import { BackButton, Face, HarnessIcon, StatusDot, UserAvatar, cost, harnessLabel, plural, sessionLength, since, tokens } from './bits';
+import { BackButton, Face, HarnessIcon, Icon, StatusDot, UserAvatar, cost, harnessLabel, plural, sessionLength, since, tokens } from './bits';
 import { TokenBar } from './TokenBar';
 import { ChatView, toolTargets } from './ChatView';
 import { DeleteDialog } from './DeleteDialog';
+import { SessionTitle } from './SessionList';
 
 type View = 'chat' | 'dev';
 function useView(): [View, (view: View) => void] {
@@ -64,17 +65,17 @@ export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDelet
   const hasProblem = (node: TreeNode): boolean => (node.kind === 'tool' && ['error', 'pending'].includes(toolState(node)))
     || node.children.some(hasProblem);
 
-  const render = (node: TreeNode, depth: number) => {
+  const render = (node: TreeNode) => {
     if (onlyProblems && !hasProblem(node)) return null;
     // Problems only has to reach the problems, so it opens the way to them.
     const open = onlyProblems || opened.has(node.key);
     return (
       <li key={node.key}>
-        <NodeRow node={node} depth={depth} open={open} selected={selected?.key === node.key}
+        <NodeRow node={node} open={open} selected={selected?.key === node.key}
           target={node.record.toolCallId ? targets.get(node.record.toolCallId) : undefined}
           tokenTotal={node.kind === 'request' ? usage.byRequest.get(node.record.id)?.total : undefined}
           onToggle={() => toggle(node.key)} onSelect={() => setSelected(node)} />
-        {open && node.children.length > 0 && <ul>{node.children.map(child => render(child, depth + 1))}</ul>}
+        {open && node.children.length > 0 && <ul>{node.children.map(child => render(child))}</ul>}
       </li>
     );
   };
@@ -83,9 +84,7 @@ export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDelet
     <div className="session-view">
       <div className="session-head">
         <BackButton onClick={onBack} label="Overview" />
-        <StatusDot status={session.status} />
-        <HarnessIcon harness={session.harness} size="large" live={session.status === 'recording'} />
-        <span className="session-meta" title={details(session.captureId)}>{details(session.captureId.slice(0, 8))}</span>
+        <span className="spacer" />
         <span className="themes" role="radiogroup" aria-label="View">
           {(['chat', 'dev'] as const).map(option => (
             <button key={option} role="radio" aria-checked={view === option} className={view === option ? 'on' : ''} onClick={() => setView(option)}
@@ -97,6 +96,13 @@ export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDelet
           title={session.status === 'recording' ? 'It can be deleted once it stops recording' : 'Delete this session'}>Delete</button>}
         {deleting && <DeleteDialog sessions={[session.captureId]} titles={titles} onClose={() => setDeleting(false)} onDeleted={onDeleted} />}
       </div>
+      <header className="session-title-row">
+        <HarnessIcon harness={session.harness} size="large" live={session.status === 'recording'} />
+        <div className="session-heading">
+          <h1><SessionTitle session={session} titles={titles} /><StatusDot status={session.status} /></h1>
+          <span className="session-meta" title={details(session.captureId)}>{details(session.captureId.slice(0, 8))}</span>
+        </div>
+      </header>
       {session.shared ? (
         <div className="resume-line shared-line">
           <span className="label">shared</span>
@@ -141,7 +147,7 @@ export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDelet
       </div>
       {error && <div className="banner">{error}</div>}
       {session.evidenceMissing && <div className="banner">This capture's evidence folder is missing on disk. Its records remain, but request text, tool input and output, patches and the transcript copy cannot be shown.</div>}
-      {session.tokens.calls > 0 && <TokenBar tokens={session.tokens} showCost={false} />}
+      {session.tokens.calls > 0 && <TokenBar tokens={session.tokens} compact showCost={false} />}
       {gaps.length > 0 && (
         <details className="gaps"><summary>{plural(gaps.length, 'coverage gap')}</summary>
           <ul>{gaps.map(g => <li key={g.id} className="mono small">{g.summary}</li>)}</ul></details>
@@ -160,16 +166,19 @@ export function WorkTree({ session, readVersion, titles, onBack, onOpen, onDelet
       {view === 'chat' && outsideFiles.length > 0 && (
         <div className="turn-files"><span className="eyebrow">Changed outside any request</span>{outsideFiles.map(node => <code key={node.key}>{node.record.path}</code>)}</div>
       )}
-      {view === 'dev' && <div className="split">
+      {view === 'dev' && <div className={`split ${selected ? 'open' : ''}`}>
         <div className="tree card">
-          <label className="toggle"><input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> Problems only</label>
+          <div className="tree-bar">
+            <span className="muted small">Select a request, tool call or change to see its recorded evidence.</span>
+            <label className="toggle"><input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> Problems only</label>
+          </div>
           {!data && <div className="empty small">Loading capture…</div>}
           {data && !tree.roots.length && !tree.unlinked.length && <div className="empty small">Nothing recorded yet.</div>}
-          <ul className="nodes">{tree.roots.map(node => render(node, 0))}</ul>
+          <ul className="nodes">{tree.roots.map(node => render(node))}</ul>
           {tree.unlinked.length > 0 && (
             <>
               <div className="group-title">Outside a recorded request <span className="muted">idle or external changes, unlinked evidence</span></div>
-              <ul className="nodes">{tree.unlinked.map(node => render(node, 0))}</ul>
+              <ul className="nodes">{tree.unlinked.map(node => render(node))}</ul>
             </>
           )}
           {tree.internalAgents > 0 && !onlyProblems && (
@@ -192,11 +201,12 @@ const stateTitle = {
   unknown: 'A result was recorded, but the harness did not report success or failure.',
 };
 
-function NodeRow({ node, depth, open, selected, target, tokenTotal, onToggle, onSelect }: { node: TreeNode; depth: number; open: boolean; selected: boolean; target?: string; tokenTotal?: number; onToggle: () => void; onSelect: () => void }) {
+function NodeRow({ node, open, selected, target, tokenTotal, onToggle, onSelect }: { node: TreeNode; open: boolean; selected: boolean; target?: string; tokenTotal?: number; onToggle: () => void; onSelect: () => void }) {
   const r = node.record;
   const counts = node.children.length ? subtreeStats(node) : undefined;
   const state = node.kind === 'tool' ? toolState(node) : undefined;
-  const icon = { request: '▸', reply: '❝', tool: '⚙', change: r.operation === 'create' ? '+' : r.operation === 'delete' ? '−' : '±', subagent: '⑂', gap: '!', note: '·' }[node.kind];
+  const icon = node.kind === 'tool' ? <Icon name="tool" /> : node.kind === 'reply' ? <Icon name="reply" /> : node.kind === 'gap' ? <Icon name="gap" />
+    : node.kind === 'change' ? (r.operation === 'create' ? '+' : r.operation === 'delete' ? '−' : '±') : '·';
   const label = node.kind === 'request' ? r.summary || '(empty request)'
     : node.kind === 'tool' ? r.toolName
     : node.kind === 'change' ? `${r.path}${r.worktree ? ` · worktree ${r.worktree}` : ''}`
@@ -205,7 +215,7 @@ function NodeRow({ node, depth, open, selected, target, tokenTotal, onToggle, on
     : r.type === 'subagent_stopped' ? (r.summary && r.summary !== 'subagent_stopped' ? `returned: ${r.summary}` : 'subagent finished')
     : r.summary;
   return (
-    <div className={`node k-${node.kind} ${state ? `t-${state}` : ''} ${selected ? 'on' : ''}`} style={{ paddingLeft: 8 + depth * 18 }} onClick={onSelect}>
+    <div className={`node k-${node.kind} ${state ? `t-${state}` : ''} ${selected ? 'on' : ''}`} onClick={onSelect}>
       <button className="twisty" onClick={e => { e.stopPropagation(); onToggle(); }} disabled={!node.children.length}>
         {node.children.length ? <i className={`chevron ${open ? 'open' : ''}`} aria-hidden /> : null}
       </button>
@@ -215,7 +225,6 @@ function NodeRow({ node, depth, open, selected, target, tokenTotal, onToggle, on
       {state && <span className={`state st-${state}`} title={stateTitle[state]}>{stateLabel[state]}</span>}
       {node.result?.resultBasis && <span className="tag" title="Result taken from the harness transcript; no result hook arrived">transcript</span>}
       {node.kind === 'change' && <span className={`tag ${r.attribution === 'observed-during-tool' ? '' : 'warn'}`}>{r.attribution === 'observed-during-tool' ? 'during tool' : 'external/unknown'}</span>}
-      <span className="spacer" />
       {tokenTotal ? <span className="tag" title="Tokens of the model responses during this request">{tokens(tokenTotal)} tokens</span> : null}
       {counts && (counts.tools > 0 || counts.changes > 0) && (
         <span className="counts muted small">{[counts.tools && plural(counts.tools, 'tool'), counts.changes && plural(counts.changes, 'change')].filter(Boolean).join(' · ')}

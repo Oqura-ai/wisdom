@@ -5,7 +5,7 @@ import { Markdown } from './Markdown';
 import { view, type Session, type Tokens } from '@/lib/api';
 import type { TreeNode } from '@/lib/tree';
 import { subtreeEnd, subtreeStats } from '@/lib/tree';
-import { Face, HarnessIcon, UserAvatar, harnessLabel, plural, tokens as fmtTokens } from './bits';
+import { Face, HarnessIcon, Icon, UserAvatar, harnessLabel, plural, readableJson, tokens as fmtTokens } from './bits';
 import { TokenLegend } from './TokenBar';
 
 interface Body { text: string; truncated?: true; totalChars?: number; recordId?: string }
@@ -131,7 +131,7 @@ function ItemView({ item, harness }: { item: Item; harness: string }) {
     const seconds = item.durationMs !== undefined ? ` for ${(item.durationMs / 1000).toFixed(item.durationMs < 10000 ? 1 : 0)}s` : '';
     return (
       <details className="fold thinking">
-        <summary><span className="glyph">◌</span>Thought{seconds}{item.redacted && <span className="muted"> · text not recorded</span>}</summary>
+        <summary><Icon name="thought" className="glyph" />Thought{seconds}{item.redacted && <span className="muted"> · text not recorded</span>}</summary>
         {item.redacted
           ? <p className="muted small">The harness recorded that the model reasoned here, but not the reasoning itself ({harness === 'codex'
             ? 'Codex stores reasoning encrypted; enable reasoning summaries to record a summary' : `${harnessLabel[harness] ?? harness} omitted the thinking text`}).</p>
@@ -176,7 +176,7 @@ function ToolView({ tool, harness }: { tool: Extract<Item, { kind: 'tool' }>; ha
   return (
     <details className={`fold tool st-${tool.status}`}>
       <summary>
-        <span className="glyph">⚙</span><b>{tool.name}</b><span className="tool-target">{target(tool)}</span>
+        <Icon name="tool" className="glyph" /><b>{tool.name}</b><span className="tool-target">{target(tool)}</span>
         <span className="spacer" />
         {tool.changes.length > 0 && <span className="tag">{plural(tool.changes.length, 'change')}</span>}
         {tool.subagent && <span className="tag">subagent</span>}
@@ -221,7 +221,7 @@ function SubagentView({ subagent, harness }: { subagent: Subagent; harness: stri
 
 function Section({ title, body }: { title: string; body: Body }) {
   let text = body.text;
-  try { if (!body.truncated) text = JSON.stringify(JSON.parse(text), null, 2); } catch { /* plain text */ }
+  try { if (!body.truncated) text = readableJson(JSON.parse(text)); } catch { /* plain text */ }
   return <div className="io"><span className="eyebrow">{title}</span><pre>{text}</pre><Clipped body={body} /></div>;
 }
 
