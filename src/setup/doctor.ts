@@ -8,7 +8,7 @@ import { harnessPath, readSettings, SETTINGS_FILE, settingsOrDefaults } from '..
 import { hookCommand, hookState, resolveCommand, skillState, type Command, type Place } from '../harnesses/launch.js';
 import { hookEvents, inspectHooks, requireTrustedHooks } from '../harnesses/codex/launch.js';
 import { piCommand } from '../harnesses/pi/launch.js';
-import { oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trusted, type Policy } from '../team/gitrefs.js';
+import { gitText, oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trusted, type Policy } from '../team/gitrefs.js';
 
 export type Level = 'ok' | 'note' | 'problem';
 export interface Check { level: Level; name: string; detail: string; fix?: string }
@@ -99,6 +99,17 @@ function teamChecks(project: string, dataDir: string, settings: ReturnType<typeo
     : { level: 'ok', name: 'Team', detail: `team mode, ${POLICY_FILE} reads correctly${policyCommands(policy).length ? ', its commands are trusted here' : ''}` });
   const ignored = (['model', 'turns', 'timeoutSeconds', 'extra'] as const).filter(key => settings.guides?.[key] !== undefined);
   if (ignored.length) checks.push({ level: 'note', name: 'Team', detail: `team mode: guides.${ignored.join(', guides.')} in ${SETTINGS_FILE} ${ignored.length === 1 ? 'is' : 'are'} ignored; guides are written as ${POLICY_FILE} says, the same for everyone` });
+  // Whether git pull brings the team's commit links and records (wisdom team sync). The same two
+  // lines relink.ts syncSpecs adds; read here without it, so the doctor stays light.
+  const remote = policy.remote ?? 'origin';
+  let fetchList: string[] = [];
+  try { fetchList = gitText(project, ['config', '--get-all', `remote.${remote}.fetch`]).split('\n'); } catch { /* no such remote, or no fetch lines */ }
+  const synced = ['links', 'records'].every(kind => fetchList.includes(`+refs/wisdom/${policy!.repoId}/${kind}/*:refs/wisdom/fetched/${kind}/*`));
+  checks.push(synced ? { level: 'ok', name: 'Team', detail: `git pull brings the team's commit links and records from ${remote}` }
+    : { level: 'note', name: 'Team', detail: `git pull does not bring the team's commit links and records; wisdom team fetch does`, fix: 'wisdom team sync on' });
+  let outbox: { since?: string; cause?: string } | undefined;
+  try { outbox = JSON.parse(fs.readFileSync(path.join(dataDir, 'links-outbox.json'), 'utf8')); } catch { outbox = undefined; }
+  if (outbox) checks.push({ level: 'note', name: 'Team', detail: `commit links are waiting to be sent since ${outbox.since ?? 'an earlier push'} (${outbox.cause ?? 'the push failed'}); they are retried in the background and at each commit and push`, fix: 'git push, or wisdom team push' });
   return checks;
 }
 

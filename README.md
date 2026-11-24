@@ -146,8 +146,9 @@ wisdom team fetch                 # bring teammates' sessions here, read-only
 wisdom glance --commit <commit>   # any commit, with the steps that made it and its guide
 ```
 
-- **On commit**, Wisdom adds a `Wisdom-Record:` line to the message, so the record follows the commit through an amend, a rebase or a squash merge. A background job then keeps the record, and for agent work a model writes the guide. Run `wisdom guide off` to get Wisdom's plain guide instead.
-- **On push**, your `git push` waits for any guide still being written, up to five minutes, then sends the sessions and the records, every possible secret redacted. A failure here never stops your push.
+- **On commit**, Wisdom adds a `Wisdom-Record:` line to the message as a readable backup. A background job then keeps the record, and for agent work a model writes the guide. Run `wisdom guide off` to get Wisdom's plain guide instead.
+- **When a commit gets a new sha** (an amend, a rebase, a squash or rebase merge on GitHub), a [commit link](docs/team.md#commit-links) leads from it to the records of the commits it came from: git's own hook writes it on your machine, and a CI job (`wisdom team relink`) writes it for merges GitHub makes. `wisdom team sync on` has `git pull` bring them.
+- **On push**, your `git push` waits for any guide still being written, up to five minutes, then sends the commit links, the sessions and the records, every possible secret redacted. A failure here never stops your push.
 - **In CI**, `wisdom check --range origin/main..HEAD` fails a pull request whose agent commits have no guide, or whose sessions aren't on the remote.
 - **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.yaml`.
 

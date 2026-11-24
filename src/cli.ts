@@ -19,6 +19,7 @@ import { planClone } from './sessions/clone.js';
 import { chooseRedactions, defaultSharePath, draftShare, findSecrets, formatFindings, homePlaces, writeShare } from './share/share.js';
 import { redactSecrets } from './share/secrets.js';
 import { prCheck } from './team/team.js';
+import { relink, setSync, syncOn, workflowFile, writeWorkflow } from './team/relink.js';
 import { oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trustCommands, trusted, writePolicy } from './team/gitrefs.js';
 import { guideCommit, installHooks, LOCAL_HOOKS, removeHooks, runGitHook } from './team/githooks.js';
 import { guidesOn, setGuides } from './team/guides.js';
@@ -77,6 +78,10 @@ Team mode (a repository with wisdom-team.yaml)
                                   record's window. Without one, glance --commit shows a plain
                                   guide built from the record in local mode
   wisdom check --range A..B       In CI: each agent commit has a guide, its sessions are pushed
+  wisdom team relink --range A..B Link commits GitHub or a rewrite gave a new sha to the records of
+                                  the commits they came from (the CI job after a merge runs it);
+                                  --commit-map FILE: after git filter-repo
+  wisdom team sync on|off         Whether git pull also brings the team's commit links and records
   wisdom team push|fetch          Send your sessions and commit records now, or read teammates'
   wisdom team delete <session>    Remove a pushed session for everyone
   wisdom team prune               Remove pushed sessions older than the policy keeps them
@@ -122,7 +127,7 @@ async function main(): Promise<void> {
     options: {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, commit: { type: 'string' }, remote: { type: 'string' }, range: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
-      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' }, emit: { type: 'boolean' },
+      'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, 'commit-map': { type: 'string' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' }, emit: { type: 'boolean' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
@@ -139,7 +144,7 @@ async function main(): Promise<void> {
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
     clone: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     glance: ['cwd', 'commit', 'from', 'at'], open: ['cwd', 'capture', 'from', 'at'],
-    guide: ['cwd'], check: ['cwd', 'range', 'remote'], team: ['cwd', 'remote'],
+    guide: ['cwd'], check: ['cwd', 'range', 'remote'], team: ['cwd', 'remote', 'range', 'commit-map'],
   };
   const allowed = options[command];
   if (!allowed) throw new Error(['start', 'stop', 'status'].includes(command) ? `Unknown command: ${command}. Did you mean: wisdom daemon ${command}?` : `Unknown command: ${command}. Run: wisdom --help`);
@@ -158,10 +163,34 @@ async function main(): Promise<void> {
     console.log(result.text); if (!result.ok) process.exitCode = 1; return;
   }
   if (command === 'team' && first === 'init') {
-    const { file, policy, created } = writePolicy(path.resolve(values.cwd ?? process.cwd()));
+    const cwd = path.resolve(values.cwd ?? process.cwd());
+    const { file, policy, created } = writePolicy(cwd);
     console.log(created ? `Wrote ${file} (repo ID ${policy.repoId}). Commit it to turn team mode on for everyone; remove it to go back to local mode.` : `${POLICY_FILE} is already there: ${file}`);
+    await offerWorkflow(cwd);
     return;
   }
+  if ((command === 'team') && (first === 'relink' || first === 'sync')) {
+    const cwd = path.resolve(values.cwd ?? process.cwd());
+    if (first === 'relink') {
+      if (positionals.length > 2) throw new Error('Use: wisdom team relink --range <base>..<head> [--commit-map FILE]');
+      const result = await relink(cwd, { range: values.range, commitMap: values['commit-map'], remote: values.remote });
+      for (const line of result.lines) console.log(line);
+      return;
+    }
+    if (values.range || values['commit-map']) throw new Error('--range and --commit-map apply only to team relink');
+    const on = positionals[2];
+    if (on !== 'on' && on !== 'off') {
+      const { remote, on: now } = syncOn(cwd, values.remote);
+      console.log(`git pull ${now ? 'brings' : 'does not bring'} the team's commit links and records from ${remote}. Change it with: wisdom team sync on|off`);
+      return;
+    }
+    const { remote, changed } = setSync(cwd, on === 'on', values.remote);
+    console.log(on === 'on'
+      ? `${changed ? 'Added' : 'Already there:'} two lines in .git/config (remote.${remote}.fetch), so git fetch and git pull bring the team's commit links and records into refs/wisdom/fetched/. Sessions still come with wisdom team fetch. Undo: wisdom team sync off`
+      : `${changed ? 'Removed' : 'Not there:'} Wisdom's two lines in .git/config (remote.${remote}.fetch). Your other fetch settings are as they were.`);
+    return;
+  }
+  if (command === 'team' && (values.range || values['commit-map'])) throw new Error('--range and --commit-map apply only to team relink');
   const explicit = values.data ?? process.env.WISDOM_DATA_DIR;
   const start = path.resolve(values.cwd ?? process.cwd());
   const found = explicit ? path.resolve(explicit) : findDataDir(start);
@@ -283,6 +312,7 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   console.log(fresh ? `Wisdom is set up in ${project}` : `Wisdom was already set up in ${project}. Its hooks and skills are refreshed.`);
   if (settings) console.log(settings);
   teamHooks(project, dataDir);
+  await offerSync(project);
   const known = fresh ? undefined : movedFrom(dataDir);
   if (known) console.log(`This project moved from ${known}. Its recorded sessions follow it when the daemon starts.`);
   console.log('\nStart an agent:');
@@ -366,6 +396,40 @@ function teamHooks(project: string, dataDir: string): void {
   } catch (error) { console.log(`Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
 }
 
+/** A yes/no question on the terminal. Undefined with no terminal to ask in (a script, CI):
+ * then nothing is changed, and the caller says how to do it later. */
+async function askYes(question: string): Promise<boolean | undefined> {
+  if (!process.stdin.isTTY) return undefined;
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try { return /^y(es)?$/i.test((await prompt.question(`${question} [y/N] `)).trim()); }
+  finally { prompt.close(); }
+}
+
+/** In a team-mode repository, ask before adding Wisdom's two lines to the remote's fetch list,
+ * so `git pull` brings the team's commit links and records. It edits .git/config, so it asks. */
+async function offerSync(project: string): Promise<void> {
+  let state: { remote: string; on: boolean };
+  try { if (!readPolicy(project)) return; state = syncOn(project); } catch { return; }
+  if (state.on) return;
+  const later = `To have git pull bring the team's commit links and records, run: wisdom team sync on`;
+  const yes = await askYes(`Let git pull bring the team's commit links and records too? This adds two lines to remote.${state.remote}.fetch in .git/config (undo: wisdom team sync off).`);
+  if (yes === undefined) { console.log(later); return; }
+  if (!yes) { console.log(`Not changed. ${later}`); return; }
+  try { setSync(project, true); console.log(`git pull now brings them, into refs/wisdom/fetched/. Undo: wisdom team sync off`); }
+  catch (error) { console.log(`Not changed: ${error instanceof Error ? error.message : error}`); }
+}
+
+/** After `wisdom team init`: offer the CI job that links squash and rebase merges GitHub makes. */
+async function offerWorkflow(project: string): Promise<void> {
+  const file = workflowFile(project);
+  if (fs.existsSync(file)) { console.log(`The CI job that links GitHub's merges is already there: ${file}`); return; }
+  const what = 'a GitHub Actions job that, after each merge, links the commits GitHub squashed or rebased to their records (it needs contents: write to push Wisdom\'s refs)';
+  const yes = await askYes(`Also write ${path.relative(project, file)}, ${what}?`);
+  if (yes === undefined) { console.log(`Not written (no terminal to ask in). ${what[0].toUpperCase()}${what.slice(1)} is in docs/team.md#ci; without it, merges made on GitHub stay unlinked until someone runs wisdom team relink.`); return; }
+  if (!yes) { console.log('Not written. Without it, merges made on GitHub stay unlinked until someone runs wisdom team relink (docs/team.md#ci).'); return; }
+  console.log(`Wrote ${writeWorkflow(project)}. Commit it with ${POLICY_FILE}.`);
+}
+
 /** The harnesses that run here: each is asked for its version. */
 function installedHarnesses(values: any, project: string, settings: Settings): Connectable[] {
   const programs: Record<Connectable, () => Command> = {
@@ -383,6 +447,7 @@ function installedHarnesses(values: any, project: string, settings: Settings): C
 async function connectProject(project: string, values: any, port?: number): Promise<void> {
   const { dataDir, fresh, settings } = makeProject(project);
   teamHooks(project, dataDir);
+  await offerSync(project);
   const chosen = settingsOrDefaults(project);
   const found = installedHarnesses(values, project, chosen);
   const result = connect(dataDir, found);
@@ -733,18 +798,26 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
   if (command === 'check') throw new Error('Use: wisdom check --range <base>..<head>, in CI. A commit\'s guide is written and checked by itself after the commit.');
   if (action === 'trust') return trustTeamCommands(project, dataDir);
   if (action === 'hooks') {
-    if (session === 'off') { const removed = removeHooks(project); console.log(removed.length ? `Removed Wisdom's ${removed.join(', ')} hooks.` : 'Wisdom\'s git hooks were not installed.'); return 0; }
+    if (session === 'off') {
+      const removed = removeHooks(project);
+      console.log(removed.length ? `Removed Wisdom's ${removed.join(', ')} hooks.` : 'Wisdom\'s git hooks were not installed.');
+      // Its lines in the fetch list go too: hooks off undoes what hooks on offered.
+      try { if (readPolicy(project) && setSync(project, false).changed) console.log('Removed Wisdom\'s two lines from the remote\'s fetch list in .git/config, too.'); } catch { /* no remote: nothing to undo */ }
+      return 0;
+    }
     if (session !== 'on') throw new Error('Use: wisdom team hooks on|off');
     if (!readPolicy(project)) throw new Error(`This repository has no ${POLICY_FILE}, so it is in local mode and needs no git hooks.`);
     const { dir, chained } = installHooks(project, dataDir);
     console.log(`Wisdom's git hooks are in ${dir}${chained.length ? `; your own ${chained.join(', ')} still run first` : ''}.`);
+    await offerSync(project);
     return 0;
   }
   const connection = await ensureDaemon(dataDir);
   if (action === 'push') {
     const result = await call(connection, '/team', { action: 'push', remote: values.remote });
     for (const s of result.sessions) console.log(`session ${s.id}: ${s.state}${s.heldBack ? ' (tried again at each push)' : ''}`);
-    console.log(`${result.records} commit record${result.records === 1 ? '' : 's'} pushed to ${result.remote}.${result.recordRedactions ? ` ${result.recordRedactions} possible secret${result.recordRedactions === 1 ? '' : 's'} redacted in them first.` : ''}`);
+    console.log(`${result.records} commit record${result.records === 1 ? '' : 's'}${result.links ? ` and ${result.links} commit link${result.links === 1 ? '' : 's'}` : ''} pushed to ${result.remote}.${result.recordRedactions ? ` ${result.recordRedactions} possible secret${result.recordRedactions === 1 ? '' : 's'} redacted in them first.` : ''}`);
+    if (result.linksFailed) console.log(`Commit links not sent: ${result.linksFailed}. They stay here and go with the next push.`);
     if (result.missing.length) { console.log(`Not on ${result.remote} yet, so reviewers cannot open them: ${result.missing.join(', ')}`); return 1; }
     console.log('Ready: every session these records name is on the remote.');
     return 0;

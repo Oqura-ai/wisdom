@@ -139,6 +139,37 @@ export const refSafe = (value: string) => value.replace(/[^A-Za-z0-9._-]/g, '_')
 export const recordRef = (commit: string) => `refs/wisdom/records/${commit}`;
 export const sessionRef = (key: string) => `refs/wisdom/sessions/${key}`;
 export const remoteRef = (repoId: string, local: string) => local.replace(/^refs\/wisdom\//, `refs/wisdom/${repoId}/`);
+/** Where `git pull` puts the team's records and links once `wisdom team sync on` asked git to
+ * bring them: a namespace of their own, so a fetch that prunes (fetch.prune) only ever removes
+ * copies of the remote, never a record or link of this clone's that is not pushed yet. */
+export const FETCHED_RECORDS = 'refs/wisdom/fetched/records/';
+export const FETCHED_LINKS = 'refs/wisdom/fetched/links/';
+
+/** A commit's record as text: this clone's own, else a copy `git pull` brought. */
+export function recordText(cwd: string, commit: string): string | undefined {
+  return (readFile(cwd, recordRef(commit), 'record.json') ?? readFile(cwd, `${FETCHED_RECORDS}${commit}`, 'record.json'))?.toString('utf8');
+}
+
+/** Every commit with a record here, own or fetched, and the ref that holds it (own first). */
+export function recordRefs(cwd: string): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const prefix of ['refs/wisdom/records/', FETCHED_RECORDS]) {
+    for (const [ref] of listRefs(cwd, prefix)) { const commit = ref.slice(prefix.length); if (!found.has(commit)) found.set(commit, ref); }
+  }
+  return found;
+}
+
+/** `git patch-id --stable` of a commit against its first parent: a hash of the change itself,
+ * with line numbers and whitespace left out, so a commit moved onto another base keeps it.
+ * Undefined for a merge, a commit with no change, or one this clone does not have. */
+export function patchId(cwd: string, commit: string): string | undefined {
+  try {
+    const parents = gitText(cwd, ['log', '-1', '--format=%P', commit]).split(' ').filter(Boolean);
+    if (parents.length > 1) return undefined;
+    const diff = git(cwd, ['diff-tree', '-p', '--no-commit-id', '--no-color', '--no-ext-diff', '--no-textconv', '--full-index', '--root', commit]);
+    return gitText(cwd, ['patch-id', '--stable'], { input: diff }).split(' ')[0] || undefined;
+  } catch { return undefined; }
+}
 
 // ---------- policy and recorder ----------
 
@@ -179,16 +210,16 @@ export function recordIds(cwd: string, commit: string): string[] {
   } catch { return []; }
 }
 
-/** Local records whose `Wisdom-Record:` line is one of these, found by reading each record. */
+/** Records here (own or fetched) whose `Wisdom-Record:` line is one of these, found by reading each record. */
 export function recordsWithIds(cwd: string, ids: string[]): { commit: string; text: string }[] {
   if (!ids.length) return [];
   const found: { commit: string; text: string }[] = [];
-  for (const [ref] of listRefs(cwd, 'refs/wisdom/records/')) {
+  for (const [commit, ref] of recordRefs(cwd)) {
     const bytes = readFile(cwd, ref, 'record.json');
     if (!bytes) continue;
     const text = bytes.toString('utf8');
     const id = /"recordId":\s*"([^"]+)"/.exec(text)?.[1];
-    if (id && ids.includes(id)) found.push({ commit: ref.slice('refs/wisdom/records/'.length), text });
+    if (id && ids.includes(id)) found.push({ commit, text });
   }
   return found.sort((a, b) => ids.indexOf(/"recordId":\s*"([^"]+)"/.exec(a.text)![1]) - ids.indexOf(/"recordId":\s*"([^"]+)"/.exec(b.text)![1]));
 }
