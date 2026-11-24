@@ -209,7 +209,7 @@ test('team mode: every commit gets its link line, a model writes the guide after
     assert.match((await call(bobDaemon.connection, '/ledger', { glance: true, commit: sha })).text, /t1\/c1 \(session not available\) in session alice-se/);
     assert.match(prCheck(bob.dir, `${base}..${sha}`).text, /session alice-se is not on origin/);
 
-    assert.deepEqual(removeHooks(alice.dir), ['prepare-commit-msg', 'post-commit', 'pre-push']);
+    assert.deepEqual(removeHooks(alice.dir), ['prepare-commit-msg', 'post-commit', 'post-rewrite', 'pre-push']);
     assert.equal(hooksInstalled(alice.dir), false);
   } finally {
     await daemon.close(); await bobDaemon?.close();

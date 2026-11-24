@@ -326,6 +326,10 @@ export interface CommitRecord {
   /** The `Wisdom-Record:` line in the commit's message. It survives what changes the hash
    * (amend, rebase, a squash merge on the server), so a reader can find this record again. */
   recordId?: string;
+  /** `git patch-id --stable` of the commit when the record was kept: lets `wisdom team relink`
+   * find this record from a rewritten copy of the commit (the same change on a new base) even
+   * where the original commit is gone, as on a CI runner. Absent on records kept before commit links. */
+  patchId?: string;
   steps: RecordStep[];
   files: RecordFile[];
   sessions: RecordSession[];

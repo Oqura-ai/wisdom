@@ -6,19 +6,27 @@ import { buildRecord } from '../read/discovery.js';
 import { ReadStore } from '../storage/readstore.js';
 import { startDetached } from '../service/client.js';
 import { agentWork, readCommit, type CommitRecord } from './commits.js';
-import { commitFiles, git, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, resolve, setRef, teamCommit, type Policy } from './gitrefs.js';
+import { commitFiles, git, gitText, listRefs, oldPolicyNote, patchId, readFile, readPolicy, recordIds, recordRef, recorderId, resolve, setRef, teamCommit, type Policy } from './gitrefs.js';
 import { writeGuide } from './writer.js';
 import { guidesOn } from './guides.js';
-import { push } from './team.js';
+import { push, pushLinks, type PushResult } from './team.js';
+import { parseRewrites, writeLink } from './links.js';
 
-/** Team mode's git hooks, copying the infrastructure Entire proved, with three hooks, not five:
+/** What git gave the hook on stdin; empty when there is none. */
+function readStdin(): string {
+  try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
+}
+
+/** Team mode's git hooks, copying the infrastructure Entire proved, with four hooks:
  *
- *   prepare-commit-msg  adds `Wisdom-Record: r-…` to every commit message, so the link
- *                       survives amend, rebase and a squash merge on the server
+ *   prepare-commit-msg  adds `Wisdom-Record: r-…` to every commit message, a readable backup
+ *                       link that can survive amend, rebase and a squash merge on the server
  *   post-commit         starts a background job that keeps the commit's record and has the
  *                       guide written; the commit itself never waits
+ *   post-rewrite        after an amend or a rebase, keeps a link from each new commit to the
+ *                       commits it came from, as git reports them (links.ts)
  *   pre-push            waits for those jobs, writes any guide still missing, then pushes the
- *                       sessions and records along with the person's own push
+ *                       links, the sessions and the records along with the person's own push
  *
  * They go into whatever folder git runs hooks from (core.hooksPath included). A hook already
  * there is kept and run first, as `<name>.pre-wisdom`. A hooks folder the repository tracks
@@ -30,7 +38,7 @@ import { push } from './team.js';
  * is, and nothing is pushed: the record and its guide live in this clone's refs/wisdom.
  */
 
-export const HOOKS = ['prepare-commit-msg', 'post-commit', 'pre-push'] as const;
+export const HOOKS = ['prepare-commit-msg', 'post-commit', 'post-rewrite', 'pre-push'] as const;
 /** The one hook `wisdom guide on` installs in a local-mode repository. */
 export const LOCAL_HOOKS = ['post-commit'] as const;
 type HookName = typeof HOOKS[number];
@@ -55,11 +63,14 @@ export function postCommitInstalled(project: string): boolean {
 
 function script(name: string, dataDir: string): string {
   const call = `"${unix(process.execPath)}" "${unix(bin)}" githook ${name} --data "${unix(dataDir)}" "$@"`;
-  // pre-push reads the refs being pushed on stdin; a chained hook gets them too.
-  const chain = name === 'pre-push'
+  // pre-push and post-rewrite read git's list on stdin; a chained hook gets it too. Only
+  // post-rewrite needs it itself (the old and new shas); every other call reads nothing.
+  const stdin = name === 'pre-push' || name === 'post-rewrite';
+  const chain = stdin
     ? 'input=$(cat)\nif [ -x "$0.pre-wisdom" ]; then printf \'%s\\n\' "$input" | "$0.pre-wisdom" "$@" || exit $?; fi\n'
     : 'if [ -x "$0.pre-wisdom" ]; then "$0.pre-wisdom" "$@" || exit $?; fi\n';
-  return `#!/bin/sh\n${MARK}: ${name}. Remove with: wisdom team hooks off (team mode) or wisdom guide off (local mode)\n${chain}${call} </dev/null || true\nexit 0\n`;
+  const run = name === 'post-rewrite' ? `printf '%s\\n' "$input" | ${call} || true` : `${call} </dev/null || true`;
+  return `#!/bin/sh\n${MARK}: ${name}. Remove with: wisdom team hooks off (team mode) or wisdom guide off (local mode)\n${chain}${run}\nexit 0\n`;
 }
 
 export function installHooks(project: string, dataDir: string, names: readonly HookName[] = HOOKS): { dir: string; chained: string[] } {
@@ -206,6 +217,8 @@ export function recordCommit(dataDir: string, sha: string, options: { requested?
       // Only team mode adds the link line; in local mode a line in the message was carried
       // from another commit (a squash), and names that one.
       if (policy) record.recordId = recordIds(project, sha)[0];
+      const id = patchId(project, sha);
+      if (id) record.patchId = id;
       keepRecord(project, sha, record);
     }
     if (options.guide !== false && (options.requested || (!record.guide && !record.guideMissing))) {
@@ -285,8 +298,48 @@ function waitingForGuides(project: string, running: string[]): string[] {
 
 const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** `wisdom githook <name>`: what each hook does. It never throws: a hook must not fail git. */
-export function runGitHook(name: string, args: string[], dataDir: string, log: (line: string) => void = line => process.stderr.write(line + '\n')): void {
+// ---------- the links outbox ----------
+
+/** Links a push could not send stay in this clone's refs: the outbox is simply "links here the
+ * remote lacks". This file only says a retry is due, and which process is doing it, so the next
+ * commit does not start a second one. */
+const outboxFile = (dataDir: string) => path.join(dataDir, 'links-outbox.json');
+interface Outbox { since: string; cause: string; attempts: number; pid?: number }
+/** How long the background retry waits before each attempt. */
+const LINK_RETRY_MS = [30_000, 120_000, 600_000];
+
+export function readOutbox(dataDir: string): Outbox | undefined {
+  try { return JSON.parse(fs.readFileSync(outboxFile(dataDir), 'utf8')) as Outbox; } catch { return undefined; }
+}
+
+/** Note that links are waiting, and start the background retry unless one is running. */
+export function queueLinks(dataDir: string, cause: string): void {
+  const before = readOutbox(dataDir);
+  if (before?.pid && alive(before.pid)) return;
+  fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ since: before?.since ?? new Date().toISOString(), cause, attempts: before?.attempts ?? 0 }));
+  startDetached([bin, 'githook', 'links', '--data', dataDir]);
+}
+
+/** One attempt to send the waiting links. Clears the outbox when nothing is left to send. */
+export function sendQueuedLinks(dataDir: string): { sent: number } | { failed: string } {
+  const project = path.dirname(dataDir);
+  try {
+    const { links } = pushLinks(project);
+    fs.rmSync(outboxFile(dataDir), { force: true });
+    jobLine(dataDir, `links outbox · ${links} link${links === 1 ? '' : 's'} sent`);
+    return { sent: links };
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    const box = readOutbox(dataDir);
+    if (box) fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ ...box, cause, attempts: box.attempts + 1 }));
+    jobLine(dataDir, `links outbox · not sent: ${cause}`);
+    return { failed: cause };
+  }
+}
+
+/** `wisdom githook <name>`: what each hook does. It never throws: a hook must not fail git.
+ * `input` is what git gave the hook on stdin (post-rewrite's old and new shas); read here when not given. */
+export function runGitHook(name: string, args: string[], dataDir: string, log: (line: string) => void = line => process.stderr.write(line + '\n'), input?: string): void {
   const project = path.dirname(dataDir);
   try {
     // Local mode runs only what `wisdom guide on` installed: the job after each commit. A job
@@ -308,6 +361,29 @@ export function runGitHook(name: string, args: string[], dataDir: string, log: (
     } else if (name === 'post-commit') {
       startJob(dataDir, gitText(project, ['rev-parse', 'HEAD']), 1, settingsNow(project, dataDir));
       retryJobs(dataDir);
+      // Links still waiting from an earlier push get another try, in the background.
+      const box = readOutbox(dataDir);
+      if (box && !(box.pid && alive(box.pid))) queueLinks(dataDir, box.cause);
+    } else if (name === 'post-rewrite') {
+      // git ran an amend or a rebase: each new commit, and the commits it came from, exactly.
+      const how = args[0] === 'amend' ? 'amend' : 'rebase';
+      const writer = recorderId(dataDir);
+      let count = 0;
+      for (const [commit, from] of parseRewrites(input ?? readStdin())) if (writeLink(project, { commit, from, how, basis: 'git', writer }) !== 'kept') count++;
+      if (count) jobLine(dataDir, `post-rewrite (${how}) · ${count} link${count === 1 ? '' : 's'} kept`);
+    } else if (name === 'links') {
+      // The outbox's background retry: a few tries, further apart each time.
+      const box = readOutbox(dataDir);
+      if (!box) return;
+      fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ ...box, pid: process.pid }));
+      for (const wait of LINK_RETRY_MS) {
+        sleep(wait);
+        // A push in the meantime sent them and cleared the outbox: nothing left to do.
+        if (!readOutbox(dataDir)) return;
+        if ('sent' in sendQueuedLinks(dataDir)) return;
+      }
+      const left = readOutbox(dataDir);
+      if (left) fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ ...left, pid: undefined }));
     } else if (name === 'record') {
       const sha = args[0];
       const started = Date.now();
@@ -331,12 +407,26 @@ export function runGitHook(name: string, args: string[], dataDir: string, log: (
       for (const sha of waitingForGuides(project, running.map(job => job.sha))) recordCommit(dataDir, sha);
       const store = new ReadStore(dataDir);
       try {
-        const result = push(store, dataDir, remote);
-        log(`Wisdom: ${result.records} commit record${result.records === 1 ? '' : 's'} and ${result.sessions.filter(s => s.state.startsWith('new')).length} session version(s) sent to ${result.remote}.`
+        let result: PushResult;
+        try { result = push(store, dataDir, remote); }
+        catch (error) {
+          // The push stopped part way (the remote could not be reached, or refused the sessions).
+          // Links go first, so they may be there already; one quick try says, and any still
+          // waiting go to the outbox, retried in the background.
+          if (listRefs(project, 'refs/wisdom/links/').size) {
+            try { pushLinks(project, remote); } catch (linkError) { queueLinks(dataDir, linkError instanceof Error ? linkError.message : String(linkError)); }
+          }
+          throw error;
+        }
+        log(`Wisdom: ${result.records} commit record${result.records === 1 ? '' : 's'}${result.links ? `, ${result.links} commit link${result.links === 1 ? '' : 's'}` : ''} and ${result.sessions.filter(s => s.state.startsWith('new')).length} session version(s) sent to ${result.remote}.`
           + (result.recordRedactions ? ` ${result.recordRedactions} possible secret${result.recordRedactions === 1 ? '' : 's'} redacted in the records first.` : '')
           + (result.missing.length ? ` Not on the remote, so reviewers cannot open them: ${result.missing.join(', ')}` : ''));
         const held = result.sessions.filter(s => s.heldBack);
         if (held.length) log(`Wisdom: held back ${held.map(s => `${s.id.slice(0, 8)} (${s.heldBack})`).join(', ')}; it is tried again at each push.`);
+        if (result.linksFailed) {
+          log(`Wisdom: commit links not sent (${result.linksFailed}); retrying in the background. Your push is not affected.`);
+          queueLinks(dataDir, result.linksFailed);
+        } else if (readOutbox(dataDir)) fs.rmSync(outboxFile(dataDir), { force: true });
       } finally { store.close(); }
     }
   } catch (error) {

@@ -5,8 +5,9 @@ import { execSync } from 'node:child_process';
 import { draftFrom, writeShare, type Exported } from '../share/share.js';
 import { view } from '../read/views.js';
 import { agentWork, projectOf, type CommitRecord } from './commits.js';
-import { commitFiles, deleteRef, git, gitError, gitIdentity, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, teamCommit,
+import { commitFiles, deleteRef, FETCHED_LINKS, git, gitError, gitIdentity, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, recordText, teamCommit,
   refSafe, remoteRef, resolve, sessionRef, setRef, trusted, type Policy } from './gitrefs.js';
+import { followLinks, linkWords, ownLink } from './links.js';
 import { writeJson } from '../storage/ledger.js';
 import { redactSecrets, scanSecrets } from '../share/secrets.js';
 import type { SessionStore } from '../storage/store.js';
@@ -20,11 +21,11 @@ import type { SharedLibrary } from '../share/shared.js';
  */
 
 const DELETED = 'refs/wisdom/deleted';
-const FETCHED = 'refs/wisdom/fetched/sessions/';
+export const FETCHED = 'refs/wisdom/fetched/sessions/';
 
 interface Deleted { key: string; deletedAt: string; reason: 'deleted' | 'retention' }
 
-function policyOrThrow(project: string): Policy {
+export function policyOrThrow(project: string): Policy {
   const policy = readPolicy(project);
   if (!policy) throw new Error(oldPolicyNote(project)
     ?? 'This repository has no wisdom-team.yaml, so Wisdom is in local mode: nothing is pushed. An admin starts team mode with: wisdom team init');
@@ -32,7 +33,7 @@ function policyOrThrow(project: string): Policy {
 }
 
 /** The remote's Wisdom refs for this repository. */
-function remoteRefs(project: string, remote: string, policy: Policy): Map<string, string> {
+export function remoteRefs(project: string, remote: string, policy: Policy): Map<string, string> {
   let out: string;
   try { out = gitText(project, ['ls-remote', remote, `refs/wisdom/${policy.repoId}/*`]); }
   catch (error) { throw new Error(`Cannot reach the remote "${remote}": ${gitError(error)}. Name another with --remote, or set "remote" in wisdom-team.yaml.`); }
@@ -44,24 +45,66 @@ function readDeleted(project: string): Deleted[] {
   try { return bytes ? JSON.parse(bytes.toString('utf8')) : []; } catch { return []; }
 }
 
-/** Bring the deletion list and others' sessions and records here. Missing refs are fine. */
-function fetchRefs(project: string, remote: string, policy: Policy, refs = remoteRefs(project, remote, policy)): Map<string, string> {
+/** Bring the deletion list and others' sessions, records and links here. Missing refs are fine.
+ * Never pruned, even where the person set fetch.prune: a prune would delete every record of
+ * this clone's that is not pushed yet, since the remote lacks it. */
+export function fetchRefs(project: string, remote: string, policy: Policy, refs = remoteRefs(project, remote, policy)): Map<string, string> {
   const base = `refs/wisdom/${policy.repoId}/`;
-  const specs = [`+${base}records/*:refs/wisdom/records/*`, `+${base}sessions/*:${FETCHED}*`];
+  const specs = [`+${base}records/*:refs/wisdom/records/*`, `+${base}sessions/*:${FETCHED}*`, `+${base}links/*:${FETCHED_LINKS}*`];
   if (refs.has(`${base}deleted`)) specs.push(`+${base}deleted:${DELETED}`);
-  if ([...refs.keys()].length) git(project, ['fetch', '--no-tags', '--quiet', remote, ...specs]);
+  if ([...refs.keys()].length) git(project, ['fetch', '--no-tags', '--no-prune', '--quiet', remote, ...specs]);
   return refs;
 }
 
-const sessionKey = (recorder: string, id: string) => `${recorder}/${refSafe(id)}`;
+/** This clone's links of commits in `history` (team-mode commits only) that the remote lacks. A
+ * link the remote has in another version (CI wrote its own for the same commit) stays here:
+ * readers take the stronger of the two. */
+function unpushedLinks(project: string, policy: Policy, refs: Map<string, string>, history: Set<string>): string[] {
+  return [...listRefs(project, 'refs/wisdom/links/')].flatMap(([ref]) => {
+    const commit = ref.slice('refs/wisdom/links/'.length);
+    return history.has(commit) && !refs.has(remoteRef(policy.repoId, ref)) && teamCommit(project, commit) ? [ref] : [];
+  });
+}
 
-/** Records reachable from HEAD that the remote does not have yet, of commits made in team mode
- * (teamCommit): work recorded before the policy file was committed is not sent. */
+/** Commits this clone's links lead to from `history`, however many links deep: a commit amended
+ * or rebased before it was ever pushed is on no branch, so without this its record would never
+ * reach the remote, and the link would point at nothing there. */
+function linkedCommits(project: string, history: Set<string>): Set<string> {
+  const found = new Set<string>();
+  const todo = [...listRefs(project, 'refs/wisdom/links/')].map(([ref]) => ref.slice('refs/wisdom/links/'.length)).filter(commit => history.has(commit));
+  for (let commit = todo.pop(); commit; commit = todo.pop()) {
+    for (const from of ownLink(project, commit)?.from ?? []) if (!found.has(from) && !history.has(from)) { found.add(from); todo.push(from); }
+  }
+  return found;
+}
+
+const headHistory = (project: string) => new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
+
+/** Send this clone's links that the remote lacks, on their own: what the outbox retries when a
+ * push could not send them. Returns how many went; throws when the push fails. */
+export function pushLinks(project: string, remoteName?: string): { remote: string; links: number } {
+  const policy = policyOrThrow(project);
+  const remote = remoteName ?? policy.remote ?? 'origin';
+  const refs = remoteRefs(project, remote, policy);
+  const links = unpushedLinks(project, policy, refs, headHistory(project));
+  if (links.length) {
+    try { git(project, ['push', '--quiet', '--no-verify', remote, ...links.map(ref => `${ref}:${remoteRef(policy.repoId, ref)}`)]); }
+    catch (error) { throw new Error(`Commit links could not be pushed to ${remote}: ${gitError(error)}`); }
+  }
+  return { remote, links: links.length };
+}
+
+export const sessionKey = (recorder: string, id: string) => `${recorder}/${refSafe(id)}`;
+
+/** Records reachable from HEAD, or through this clone's links from a commit reachable from it,
+ * that the remote does not have yet, of commits made in team mode (teamCommit): work recorded
+ * before the policy file was committed is not sent. */
 function unpushedRecords(project: string, policy: Policy, refs: Map<string, string>): { ref: string; sha: string; record: CommitRecord }[] {
-  const history = new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
+  const history = headHistory(project);
+  const linked = linkedCommits(project, history);
   return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref, sha]) => {
     const commit = ref.slice('refs/wisdom/records/'.length);
-    if (!history.has(commit) || refs.get(remoteRef(policy.repoId, ref)) === sha || !teamCommit(project, commit)) return [];
+    if (!(history.has(commit) || linked.has(commit)) || refs.get(remoteRef(policy.repoId, ref)) === sha || !teamCommit(project, commit)) return [];
     const bytes = readFile(project, ref, 'record.json');
     return bytes ? [{ ref, sha, record: JSON.parse(bytes.toString('utf8')) as CommitRecord }] : [];
   });
@@ -77,11 +120,13 @@ function checkFailure(error: unknown): string {
   return 'refused by the project\'s check';
 }
 
-/** Records reachable from HEAD that are on the remote already, as this clone has them. */
+/** Records reachable from HEAD (or through its links) that are on the remote already, as this clone has them. */
 function pushedRecords(project: string, policy: Policy, refs: Map<string, string>): CommitRecord[] {
-  const history = new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
+  const history = headHistory(project);
+  const linked = linkedCommits(project, history);
   return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref]) => {
-    if (!history.has(ref.slice('refs/wisdom/records/'.length)) || !refs.has(remoteRef(policy.repoId, ref))) return [];
+    const commit = ref.slice('refs/wisdom/records/'.length);
+    if (!(history.has(commit) || linked.has(commit)) || !refs.has(remoteRef(policy.repoId, ref))) return [];
     const bytes = readFile(project, ref, 'record.json');
     try { return bytes ? [JSON.parse(bytes.toString('utf8')) as CommitRecord] : []; } catch { return []; }
   });
@@ -157,16 +202,26 @@ export interface PushResult { remote: string;
   /** `heldBack`: the short cause, when the session was not pushed and Wisdom retries it at the next push. */
   sessions: { id: string; state: string; heldBack?: string }[]; records: number; missing: string[];
   /** Values the secret scan redacted in the commit records pushed. */
-  recordRedactions: number }
+  recordRedactions: number;
+  /** Commit links sent, and why none went when they could not be (the outbox retries them). */
+  links: number; linksFailed?: string }
 
-/** `wisdom team push`: sessions first, then the records that name them, then a check that the
- * remote holds every session those records name. */
+/** `wisdom team push`: links first, then sessions, then the records that name them, then a
+ * check that the remote holds every session those records name. Links go first because they
+ * are a few hundred bytes each: a long session upload that fails or runs out of time must not
+ * take them down with it. A link that fails is kept here (the outbox) and does not stop the rest. */
 export function push(captures: SessionStore, dataDir: string, remoteName?: string): PushResult {
   const project = projectOf(captures);
   const policy = policyOrThrow(project);
   const remote = remoteName ?? policy.remote ?? 'origin';
   const me = recorderId(dataDir);
   const refs = fetchRefs(project, remote, policy);
+  const linkRefs = unpushedLinks(project, policy, refs, headHistory(project));
+  let linksFailed: string | undefined;
+  if (linkRefs.length) {
+    try { git(project, ['push', '--quiet', '--no-verify', remote, ...linkRefs.map(ref => `${ref}:${remoteRef(policy.repoId, ref)}`)]); }
+    catch (error) { linksFailed = gitError(error); }
+  }
   const deleted = new Set(readDeleted(project).map(d => d.key));
   const records = unpushedRecords(project, policy, refs);
   const own = new Set(captures.database.manifests().map(m => m.captureId));
@@ -202,7 +257,7 @@ export function push(captures: SessionStore, dataDir: string, remoteName?: strin
   const after = remoteRefs(project, remote, policy);
   const missing = [...new Set(records.flatMap(({ record }) => record.sessions.map(s => sessionKey(s.recorder ?? me, s.id))))]
     .filter(key => !after.has(remoteRef(policy.repoId, sessionRef(key))));
-  return { remote, sessions, records: records.length, missing, recordRedactions };
+  return { remote, sessions, records: records.length, missing, recordRedactions, links: linksFailed ? 0 : linkRefs.length, ...(linksFailed ? { linksFailed } : {}) };
 }
 
 interface Imports { [key: string]: { commit: string; shareId: string } }
@@ -322,14 +377,25 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
   for (const sha of commits) {
     const subject = gitText(cwd, ['log', '-1', '--format=%s', sha]);
     lines.push(`${sha.slice(0, 12)}  ${subject}`);
-    // A commit rewritten on the server (a squash merge) has no record under its own hash; the
-    // records its message names through their Wisdom-Record lines stand for it.
-    const own = readFile(cwd, recordRef(sha), 'record.json')?.toString('utf8');
-    const ownId = own ? (JSON.parse(own) as CommitRecord).recordId : undefined;
-    const carried = recordsWithIds(cwd, recordIds(cwd, sha).filter(id => id !== ownId)).filter(found => found.commit !== sha).map(found => found.text);
-    const texts = [...own ? [own] : [], ...carried];
-    if (!texts.length) { lines.push('    no record: made without Wisdom, or its record was not pushed (wisdom team push)'); continue; }
-    if (carried.length) lines.push(`    carries ${carried.length} recorded commit${carried.length === 1 ? '' : 's'} through their Wisdom-Record lines`);
+    // A commit rewritten where its record was not kept (a squash merge on the server) has no
+    // record under its own hash. Its links lead to the records that stand for it; failing a
+    // link, the records its message names through their Wisdom-Record lines (the backup).
+    const own = recordText(cwd, sha);
+    const linked = own ? undefined : followLinks(cwd, sha);
+    let texts: string[] = own ? [own] : [];
+    if (linked?.length) {
+      const kept = linked.filter(found => found.record);
+      lines.push(`    no record of its own; ${linkWords(linked[0].via[0])}: ${kept.length} recorded commit${kept.length === 1 ? ' stands' : 's stand'} for it`);
+      const absent = linked.filter(found => !found.record).map(found => found.commit.slice(0, 12));
+      if (absent.length) lines.push(`    no record here of ${absent.join(', ')}, which it came from: not pushed, or made without Wisdom`);
+      texts = kept.map(found => JSON.stringify(found.record));
+    } else {
+      const ownId = own ? (JSON.parse(own) as CommitRecord).recordId : undefined;
+      const carried = recordsWithIds(cwd, recordIds(cwd, sha).filter(id => id !== ownId)).filter(found => found.commit !== sha).map(found => found.text);
+      if (carried.length) lines.push(`    carries ${carried.length} recorded commit${carried.length === 1 ? '' : 's'} through their Wisdom-Record lines`);
+      texts = [...texts, ...carried];
+    }
+    if (!texts.length) { lines.push(linked ? '    no record of the commits it came from is here' : '    no record or link: made without Wisdom, or not linked yet (wisdom team relink), or its record was not pushed (wisdom team push)'); continue; }
     let problems = 0;
     for (const text of texts) {
       const record = JSON.parse(text) as CommitRecord;

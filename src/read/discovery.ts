@@ -6,7 +6,8 @@ import { EvidenceReader, evidenceVersion } from '../storage/evidence.js';
 import { betterResult, conversation, type Change, type Subagent, type TurnItem } from './conversation.js';
 import { adapter } from '../harnesses/index.js';
 import { agentWork, projectOf, readCommit, toRecord, windowStart, windowTurns, workFor, type CommitInfo, type CommitRecord, type RecordStep, type Target } from '../team/commits.js';
-import { gitText, readFile, readPolicy, recordIds, recordRef, recordsWithIds } from '../team/gitrefs.js';
+import { gitText, patchId, readFile, readPolicy, recordIds, recordRef, recordsWithIds, recordText } from '../team/gitrefs.js';
+import { followLinks, linkWords, readLink, type CommitLink } from '../team/links.js';
 import { plainGuide } from '../team/plain.js';
 import { wisdomVersion } from '../setup/doctor.js';
 
@@ -428,23 +429,54 @@ function commitGlance(captures: SessionStore, version: number, ref: string, from
   const commit = readCommit(project, ref);
   const harnessOf = (id: string) => stores(id)?.get(id).manifest.harness;
   const next = { glance: true as const, commit: commit.sha, at: version };
-  const keptText = readFile(project, recordRef(commit.sha), 'record.json')?.toString('utf8');
+  const keptText = recordText(project, commit.sha);
   const kept: CommitRecord | undefined = keptText ? JSON.parse(keptText) : undefined;
+  // A commit git or GitHub rewrote: its links lead to the records of the commits it came from
+  // (links.ts). Read first; the message's Wisdom-Record lines are the backup.
+  const link = readLink(project, commit.sha);
+  const linked = kept ? undefined : followLinks(project, commit.sha);
   // Work brought in from other commits (a squash merge, a cherry-pick): the records its message
-  // names through their Wisdom-Record lines, besides its own.
-  const carried = recordsWithIds(project, recordIds(project, commit.sha).filter(id => id !== kept?.recordId))
+  // names through their Wisdom-Record lines, besides its own, when no link leads anywhere.
+  const carried = linked?.length ? [] : recordsWithIds(project, recordIds(project, commit.sha).filter(id => id !== kept?.recordId))
     .filter(found => found.commit !== commit.sha);
   let recorder: string | undefined;
   try { recorder = JSON.parse(fs.readFileSync(path.join(captures.dataDir, 'recorder.json'), 'utf8')).id; } catch { recorder = undefined; }
   const reader = { recorder, madeHere: committedHere(project, commit.sha) };
   const lines = kept ? renderRecord(kept, version, stores, harnessOf, !readPolicy(project), reader)
-    : carried.length ? [`commit ${commit.sha.slice(0, 12)} · ${commit.subject} · version ${version}`, 'no record of its own', `the commit's own diff: git show ${commit.sha.slice(0, 12)}`]
+    : linked?.length || carried.length ? [`commit ${commit.sha.slice(0, 12)} · ${commit.subject} · version ${version}`, 'no record of its own', `the commit's own diff: git show ${commit.sha.slice(0, 12)}`]
     : renderRecord(buildRecord(captures, version, project, commit, { made: 'now' }), version, undefined, harnessOf, false, reader);
+  // Its own record stands for it; a link still says where it came from, and how to read that.
+  if (kept && link) lines.push('', `${linkWords(link)}, from ${link.from.map(sha => sha.slice(0, 12)).join(', ')}${changeNote(project, commit.sha, link)}`,
+    `the record${link.from.length === 1 ? '' : 's'} from before: ${link.from.map(sha => `wisdom glance --commit ${sha.slice(0, 12)}`).join(' · ')}`);
+  if (linked?.length) {
+    const found = linked.filter(item => item.record);
+    lines.push('', `${linkWords(link!)}: it came from ${plural(linked.length, 'commit')}${changeNote(project, commit.sha, link!)}; ${found.length === linked.length ? 'their records follow' : `${number(found.length)} of their records ${found.length === 1 ? 'is' : 'are'} here and follow${found.length === 1 ? 's' : ''}`}`);
+    for (const item of linked) {
+      lines.push('', `── from: ${item.commit.slice(0, 12)}`);
+      // A link of a link (amended, then squashed): each step says how.
+      for (const step of item.via.slice(1)) lines.push(`through ${step.commit.slice(0, 12)}: ${linkWords(step)}`);
+      if (!item.record) { lines.push('no record of this commit is here: not pushed, or made without Wisdom (wisdom team fetch)'); continue; }
+      if (item.record.commit.sha !== item.commit) { lines.push(`its record names another commit, ${item.record.commit.sha.slice(0, 12)}, so it is not shown`); continue; }
+      lines.push(...renderRecord(item.record, undefined, stores, harnessOf, false, reader));
+    }
+  }
   if (carried.length) {
     lines.push('', `its message carries ${plural(carried.length, 'recorded commit')} through their Wisdom-Record lines (a squash merge, say); their records follow`);
     for (const found of carried) lines.push('', `── carried: ${found.commit.slice(0, 12)}`, ...renderRecord(JSON.parse(found.text), undefined, stores, harnessOf, false, reader));
   }
   return respond(lines, from, next);
+}
+
+/** For a link from one commit to one: whether the change is still the same (patch-id), from the
+ * old commit or the patch-id its record kept. Said only when it differs, so a reader knows the
+ * commit was edited in the rewrite (an amend that changed files, a cleanup that removed one). */
+function changeNote(project: string, commit: string, link: CommitLink): string {
+  if (link.from.length !== 1 || link.basis === 'order') return '';
+  const now = patchId(project, commit);
+  let before: string | undefined;
+  try { before = (JSON.parse(recordText(project, link.from[0]) ?? 'null') as CommitRecord | null)?.patchId; } catch { before = undefined; }
+  before ??= patchId(project, link.from[0]);
+  return now && before && now !== before ? '; its change differs from the commit it came from (edited in the rewrite)' : '';
 }
 
 /** The text of a commit record. With `stores`, every step is checked against the session it cites.
