@@ -258,7 +258,10 @@ function pathWithoutClaude(): string | undefined {
   // Windows starts background jobs through PowerShell, in the system folders.
   const system = process.platform === 'win32' ? [path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32'),
     path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0')] : [];
-  const dirs = [...new Set([path.dirname(process.execPath), path.dirname(git), ...system])];
+  // Git for Windows runs a hook through its own sh, in <install>/usr/bin. Its cmd/git.exe adds that
+  // folder itself, but mingw64/bin/git.exe (the first git in a Git Bash shell) does not.
+  const sh = process.platform === 'win32' ? path.resolve(spawnSync('git', ['--exec-path'], { encoding: 'utf8', windowsHide: true }).stdout.trim(), '..', '..', '..', 'usr', 'bin') : undefined;
+  const dirs = [...new Set([path.dirname(process.execPath), path.dirname(git), ...system, ...(sh && fs.existsSync(path.join(sh, 'sh.exe')) ? [sh] : [])])];
   const claude = dirs.some(dir => ['claude', 'claude.cmd', 'claude.exe', 'claude.ps1'].some(name => fs.existsSync(path.join(dir, name))));
   return claude ? undefined : dirs.join(path.delimiter);
 }
