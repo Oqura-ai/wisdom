@@ -18,6 +18,7 @@ import { readLink, type CommitLink } from '../team/links.js';
 import { agentWork, type CommitRecord, type RecordStep } from '../team/commits.js';
 import { CONTRACT_VERSION } from './contract.js';
 import type * as C from './contract.js';
+import type { GitHubFacts } from './github.js';
 
 // ---------- inputs ----------
 
@@ -39,6 +40,10 @@ export interface BuildInput {
   /** Other branches with work, by name and the ref to read. */
   branches: { name: string; ref: string }[];
   evidence: Evidence;
+  /** Pull request titles, states, branches and usernames, gathered first (github.ts). Without
+   * them (local mode, another forge, GitHub unreachable) titles come from merge messages and
+   * names from git, a GitHub noreply address still giving its username. */
+  github?: GitHubFacts;
   remote?: string;
   repository?: string;
   wisdomVersion: string;
@@ -52,17 +57,21 @@ export const BRANCH_DAYS = 90;
 
 // ---------- git ----------
 
-interface GitCommit { sha: string; parents: string[]; author: string; committedAt: string; subject: string; body: string }
+/** `email` only puts a username on the commit; it is never written out. */
+interface GitCommit { sha: string; parents: string[]; author: string; email: string; committedAt: string; subject: string; body: string }
 
-const FORMAT = '%H%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%B%x1e';
+const FORMAT = '%H%x1f%P%x1f%an%x1f%ae%x1f%cI%x1f%s%x1f%B%x1e';
 function logCommits(project: string, args: string[]): GitCommit[] {
   let out: string;
   try { out = git(project, ['log', `--format=${FORMAT}`, ...args]).toString('utf8'); } catch { return []; }
   return out.split('\x1e').map(chunk => chunk.replace(/^\r?\n/, '')).filter(Boolean).map(chunk => {
-    const [sha, parents, author, committedAt, subject, body] = chunk.split('\x1f');
-    return { sha, parents: parents.split(' ').filter(Boolean), author, committedAt, subject, body: body ?? '' };
+    const [sha, parents, author, email, committedAt, subject, body] = chunk.split('\x1f');
+    return { sha, parents: parents.split(' ').filter(Boolean), author, email, committedAt, subject, body: body ?? '' };
   });
 }
+
+/** A GitHub noreply address names its username: `12345+maya@users.noreply.github.com`. */
+const noreplyLogin = (email: string) => /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i.exec(email)?.[1];
 
 const recordLines = (body: string) => [...body.matchAll(/^Wisdom-Record:\s*(r-[a-f0-9]{8,})\s*$/gm)].map(match => match[1]);
 const turnOf = (position: string) => { const match = /^t(\d+)/.exec(position); return match ? Number(match[1]) : undefined; };
@@ -104,14 +113,22 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     } catch { /* an unreadable record is no record */ }
   }
 
+  const github = input.github;
+  /** Usernames only: GitHub's for the commit, else the one its email was seen with, else a
+   * noreply address's, else git's author name. */
+  const username = (sha: string, email: string, name: string) =>
+    github?.loginBySha.get(sha) ?? (email ? github?.loginByEmail.get(email.toLowerCase()) ?? noreplyLogin(email) : undefined) ?? name;
   const known = new Map<string, GitCommit>();
-  const learn = (list: GitCommit[]) => { for (const commit of list) known.set(commit.sha, commit); return list; };
+  const learn = (list: GitCommit[]) => {
+    for (const commit of list) { commit.author = username(commit.sha, commit.email, commit.author); known.set(commit.sha, commit); }
+    return list;
+  };
   /** A commit from git, or, for one this clone does not have (squashed away), from its record. */
   const gitCommit = (sha: string, fallbackAuthor = ''): GitCommit => {
     const found = known.get(sha) ?? learn(logCommits(project, ['-1', sha]))[0];
     if (found) return found;
     const record = byCommit.get(sha);
-    return { sha, parents: record?.commit.parent ? [record.commit.parent] : [], author: fallbackAuthor,
+    return { sha, parents: record?.commit.parent ? [record.commit.parent] : [], author: username(sha, '', fallbackAuthor), email: '',
       committedAt: record?.commit.committedAt ?? '', subject: record?.commit.subject ?? '(not in this clone)', body: '' };
   };
 
@@ -272,8 +289,9 @@ export function buildData(input: BuildInput): Map<string, unknown> {
       const own = learn(logCommits(project, ['--reverse', `${top.parents[0]}..${top.parents[1]}`]));
       const id = pr ? pr[1] : `m-${top.sha.slice(0, 12)}`;
       const list = own.map(c => summary(analyse(c.sha)));
-      const title = pr ? (top.body.split('\n').slice(1).find(l => l.trim())?.trim() ?? top.subject) : top.subject;
-      const change = changeOf(id, { ...(pr ? { pr: Number(pr[1]) } : {}), title, state: 'merged', author: own[0]?.author ?? top.author, branch: branchName,
+      const about = pr ? github?.pulls.get(Number(pr[1])) : undefined;
+      const title = about?.title || (pr ? (top.body.split('\n').slice(1).find(l => l.trim())?.trim() ?? top.subject) : top.subject);
+      const change = changeOf(id, { ...(pr ? { pr: Number(pr[1]) } : {}), title, state: 'merged', author: about?.author || own[0]?.author || top.author, branch: about?.branch || branchName,
         base: top.parents[0], commits: list, landed: { how: 'merge', at: top.committedAt, onMain: [{ sha: top.sha, merge: true }] } });
       entries.push(mainChange(change, top, [top.sha], 'merge'));
       continue;
@@ -293,8 +311,9 @@ export function buildData(input: BuildInput): Map<string, unknown> {
       const list = from.map(sha => summary(analyse(sha, top.author)));
       const linkReasons = run.flatMap(c => commitsLinkReasons(c.sha));
       const how: C.LandHow = link.how === 'squash-merge' ? 'squash' : 'rebase';
-      const change = changeOf(String(link.pr), { pr: link.pr, title: top.subject.replace(/\s*\(#\d+\)$/, ''), state: 'merged', author: list[0]?.author || top.author,
-        branch: '', base: run[0].parents[0] ?? '', commits: list,
+      const about = github?.pulls.get(link.pr);
+      const change = changeOf(String(link.pr), { pr: link.pr, title: about?.title || top.subject.replace(/\s*\(#\d+\)$/, ''), state: 'merged',
+        author: about?.author || list[0]?.author || top.author, branch: about?.branch ?? '', base: run[0].parents[0] ?? '', commits: list,
         landed: { how, at: top.committedAt, onMain: run.map(c => { const l = readLink(project, c.sha)!; return { sha: c.sha, from: originOf(l) }; }) } }, linkReasons);
       entries.push(mainChange(change, top, run.map(c => c.sha), how));
       continue;
@@ -322,11 +341,13 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     const list = own.map(c => summary(analyse(c.sha)));
     const v = verdict(list.flatMap(c => c.reasons.map(reason => ({ ...reason, commit: reason.commit ?? c.sha }))));
     const keys = new Set(list.flatMap(c => commits.get(c.sha)?.sessionsNamed.map(s => s.key) ?? []));
-    // Local mode has no pull request numbers (policy 5.20): every branch opens to its own page.
-    const id = `b-${refSafe(branch.name)}`;
-    if (input.mode === 'local') changeOf(id, { title: branch.name, state: 'open', author: own[0].author, branch: branch.name,
-      base: own[0].parents[0] ?? '', commits: list });
-    branchList.push({ name: branch.name, ...(input.mode === 'local' ? { change: id } : {}), author: tip.author, lastActiveAt: tip.committedAt,
+    // A branch with an open pull request opens to it. Local mode has no pull request numbers
+    // (policy 5.20): there every branch opens to its own page.
+    const pull = input.mode === 'team' ? github?.open.find(p => p.branch === branch.name && !p.fork) : undefined;
+    const id = pull ? String(pull.number) : input.mode === 'local' ? `b-${refSafe(branch.name)}` : undefined;
+    if (id) changeOf(id, { ...(pull ? { pr: pull.number } : {}), title: pull?.title || branch.name, state: 'open', author: pull?.author || own[0].author,
+      branch: branch.name, base: own[0].parents[0] ?? '', commits: list });
+    branchList.push({ name: branch.name, ...(id ? { change: id } : {}), author: tip.author, lastActiveAt: tip.committedAt,
       recent: [...list].reverse().slice(0, 10), commits: list.length, sessions: keys.size, ...v });
   }
   branchList.sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));

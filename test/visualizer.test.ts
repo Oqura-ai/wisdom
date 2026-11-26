@@ -6,7 +6,10 @@ import path from 'node:path';
 import { commitFiles, git, gitText, recordRef, setRef } from '../src/team/gitrefs.js';
 import { writeLink } from '../src/team/links.js';
 import type { CommitRecord } from '../src/team/commits.js';
+import http from 'node:http';
+import { githubApi } from '../src/team/github.js';
 import { buildData, writeData, type BuildInput, type Evidence } from '../src/visualizer/build.js';
+import { gatherGitHub } from '../src/visualizer/github.js';
 import type * as C from '../src/visualizer/contract.js';
 
 /** A repository with each way a change lands on main, records and links written straight into
@@ -64,7 +67,7 @@ function fixture() {
   const f1 = commit('x.ts', 'x', 'Try backoff');
   record(f1, 'f1', { sessions: ['s1', 's2'], twoSessions: true });
   run('checkout', '-q', 'main');
-  return { dir, teamOn, x1, s124, d1, r1, r2, f1, g2 };
+  return { dir, teamOn, x1, s124, d1, r1, r2, f1, g1, g2 };
 }
 
 const evidence: Evidence = {
@@ -130,4 +133,52 @@ test('local mode gives every branch its own page, and the build is written whole
   assert.ok(manifest.inputs[recordRef(f.f1)]);
   assert.ok(fs.existsSync(path.join(out, 'commit', `${f.f1}.json`)));
   assert.ok(!fs.existsSync(`${out}.building`));
+});
+
+/** GitHub stand-in: a local server answering in GitHub's shape, as links.test.ts does. */
+async function githubStub(routes: Record<string, unknown>) {
+  const server = http.createServer((request, response) => {
+    const body = routes[request.url!.replace(/^\/repos\/acme\/app/, '')];
+    response.writeHead(body === undefined ? 404 : 200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(body ?? { message: 'Not Found' }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  return { env: { GITHUB_API_URL: `http://127.0.0.1:${port}`, GITHUB_REPOSITORY: 'acme/app', GITHUB_TOKEN: 'test-token' } as NodeJS.ProcessEnv,
+    close: () => new Promise<void>(resolve => server.close(() => resolve())) };
+}
+
+test('with GitHub: pull request titles, branches and open pull requests, and usernames instead of git names', async () => {
+  const f = fixture();
+  const pull = (number: number, title: string, login: string, branch: string, merged = true) => ({ number, title, state: merged ? 'closed' : 'open',
+    ...(merged ? { merged_at: '2026-11-20T00:00:00Z' } : {}), user: { login }, head: { ref: branch, repo: { full_name: 'acme/app' } } });
+  const commits = (list: { sha: string; login: string; email?: string }[]) => list.map(c => ({ sha: c.sha, author: { login: c.login }, commit: { author: { email: c.email } } }));
+  const page = '?per_page=100&page=1';
+  const stub = await githubStub({
+    '/pulls?state=open&per_page=100&page=1': [pull(130, 'Exponential backoff', 'leepark', 'feat/x', false)],
+    '/pulls/121': pull(121, 'Bump express to 5.1', 'sokafor', 'chore/express-5'),
+    '/pulls/124': pull(124, 'Healthcheck endpoint', 'leepark', 'feat/healthz'),
+    '/pulls/126': pull(126, 'Docs cleanup', 'sokafor', 'docs/cleanup'),
+    [`/pulls/121/commits${page}`]: commits([{ sha: f.x1, login: 'mayachen', email: 'maya@example.com' }]),
+    [`/pulls/124/commits${page}`]: commits([{ sha: f.g1, login: 'leepark' }, { sha: f.g2, login: 'leepark' }]),
+    [`/pulls/126/commits${page}`]: [], [`/pulls/130/commits${page}`]: [],
+  });
+  try {
+    const github = await gatherGitHub(githubApi(f.dir, 'origin', stub.env)!, f.dir, 'refs/heads/main');
+    assert.deepEqual(github.warnings, []);
+    const files = buildData({ ...input(f.dir, 'team'), github });
+    const squash = files.get('change/124.json') as C.Change;
+    assert.deepEqual([squash.title, squash.author, squash.branch], ['Healthcheck endpoint', 'leepark', 'feat/healthz']);
+    assert.deepEqual(squash.commits.map(c => c.author), ['leepark', 'leepark'], 'a squashed-away commit is named from GitHub');
+    assert.equal((files.get(`commit/${f.x1}.json`) as C.Commit).author, 'mayachen');
+    // The same email elsewhere gets the same username, and no git name or email is left.
+    assert.equal((files.get(`commit/${f.teamOn}.json`) as C.Commit).author, 'mayachen');
+    const index = files.get('index.json') as C.Index;
+    assert.ok(!index.people.some(p => p.username === 'maya'));
+    assert.ok(![...files.values()].some(value => JSON.stringify(value).includes('@example.com')), 'no email is written out');
+    // An open pull request: its branch opens to it.
+    assert.equal(index.branches[0].change, '130');
+    const open = files.get('change/130.json') as C.Change;
+    assert.deepEqual([open.state, open.title, open.pr], ['open', 'Exponential backoff', 130]);
+  } finally { await stub.close(); }
 });

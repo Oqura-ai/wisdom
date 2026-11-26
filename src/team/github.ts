@@ -1,9 +1,11 @@
 import { gitText } from './gitrefs.js';
 
 /** The one place Wisdom asks GitHub anything: which pull request made a commit on the default
- * branch, and which commits that pull request had. Used only by `wisdom team relink`, in the CI
- * job after a merge, where no git hook on anyone's machine saw GitHub squash or rebase the
- * work. Read-only. Another forge (GitLab) would be another module with the same two questions.
+ * branch, and which commits that pull request had (`wisdom team relink`, in the CI job after a
+ * merge, where no git hook on anyone's machine saw GitHub squash or rebase the work); and, for
+ * the Commits build in CI, each pull request's title, state, branch and author, the open ones,
+ * and the GitHub username behind each of their commits (usernames only, policy: never an email
+ * in what is shown). Read-only. Another forge (GitLab) would be another module with the same questions.
  *
  * Where: GITHUB_API_URL (GitHub Enterprise, or a test's stand-in), else api.github.com.
  * Which repository: GITHUB_REPOSITORY (set in GitHub Actions), else the remote's URL.
@@ -19,12 +21,40 @@ export interface PullRequest {
   fork?: { fullName: string; cloneUrl: string };
 }
 
+/** A pull request as the Commits dashboard shows it. */
+export interface PullDetail {
+  number: number;
+  title: string;
+  state: 'open' | 'merged' | 'closed';
+  /** The GitHub username that opened it. */
+  author: string;
+  /** Its head branch's name, and whether that branch is in a fork. */
+  branch: string; fork: boolean;
+  mergedAt?: string;
+}
+
+/** Who made one of a pull request's commits on GitHub: the username, and the email git has for
+ * it (used only to put a username on the same person's other commits, never shown). */
+export interface PullAuthor { sha: string; login?: string; email?: string }
+
 export interface GitHubApi {
   repository: string;
   /** The pull requests GitHub associates with a commit (merged into the default branch). */
   pullsForCommit(sha: string): Promise<PullRequest[]>;
   /** A pull request's commits, oldest first (GitHub lists at most 250). */
   pullCommits(number: number): Promise<string[]>;
+  /** A pull request's commits with who made them on GitHub, oldest first (at most 250). */
+  pullAuthors(number: number): Promise<PullAuthor[]>;
+  pull(number: number): Promise<PullDetail>;
+  /** The open pull requests, newest first (at most 300). */
+  openPulls(): Promise<PullDetail[]>;
+}
+
+function detail(pull: any, repository: string): PullDetail {
+  const headRepo = pull.head?.repo?.full_name;
+  return { number: Number(pull.number), title: String(pull.title ?? ''), state: pull.merged_at ? 'merged' : pull.state === 'open' ? 'open' : 'closed',
+    author: String(pull.user?.login ?? ''), branch: String(pull.head?.ref ?? ''), fork: !!headRepo && headRepo !== repository,
+    ...(pull.merged_at ? { mergedAt: String(pull.merged_at) } : {}) };
 }
 
 /** owner/name from a GitHub remote URL (https, ssh, or git@host:owner/name). */
@@ -60,13 +90,29 @@ export function githubApi(cwd: string, remote: string, env: NodeJS.ProcessEnv = 
       });
     },
     async pullCommits(number) {
-      const shas: string[] = [];
+      return (await this.pullAuthors(number)).map(commit => commit.sha);
+    },
+    async pullAuthors(number) {
+      const found: PullAuthor[] = [];
       for (let page = 1; page <= 3; page++) {
         const commits = await get(`/pulls/${number}/commits?per_page=100&page=${page}`) as any[];
-        shas.push(...commits.map(commit => String(commit.sha)));
+        found.push(...commits.map(commit => ({ sha: String(commit.sha), ...(commit.author?.login ? { login: String(commit.author.login) } : {}),
+          ...(commit.commit?.author?.email ? { email: String(commit.commit.author.email) } : {}) })));
         if (commits.length < 100) break;
       }
-      return shas;
+      return found;
+    },
+    async pull(number) {
+      return detail(await get(`/pulls/${number}`), repository);
+    },
+    async openPulls() {
+      const found: PullDetail[] = [];
+      for (let page = 1; page <= 3; page++) {
+        const pulls = await get(`/pulls?state=open&per_page=100&page=${page}`) as any[];
+        found.push(...pulls.map(pull => detail(pull, repository)));
+        if (pulls.length < 100) break;
+      }
+      return found;
     },
   };
 }
