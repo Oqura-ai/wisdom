@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Change, Commit, Index, Manifest } from '@contract';
-import { useData, useManifest } from '@/lib/data';
+import { signInHref, useData, useGate, useManifest } from '@/lib/data';
 import { go, useRoute, type Route } from '@/lib/route';
 import { PLACE, SINCE, STATUS, TONE, ago, plural, reasonWords, setPlace, short } from '@/lib/words';
 import { Dot, StateNote } from './bits';
@@ -27,6 +27,27 @@ export function App() {
   const pending = useRef<string>(undefined);
   useEffect(() => { setSelected(pending.current); pending.current = undefined; }, [route]);
   const pickOnMain = (key: string) => { pending.current = key; go({ view: 'main' }); };
+  const gate = useGate();
+
+  // Behind the gate: the open link shows only this until GitHub says the viewer may read the repository.
+  if (gate) return (
+    <div className="shell">
+      <TopBar repository={manifest?.repository} newer={false} />
+      <div className="gate">
+        <div className="card state-note">
+          {gate.need === 'sign-in' ? <>
+            <b>Sign in to read this dashboard</b>
+            <p>It shows commits and the recorded sessions behind them, for people who can read the repository on GitHub. Signing in asks GitHub only who you are and whether you can read it.</p>
+            <p><a className="pos big" href={signInHref()}>Sign in with GitHub</a></p>
+          </> : <>
+            <b>Your GitHub account can&apos;t read {gate.repo ?? 'this repository'}</b>
+            <p>This dashboard shows only what people who can read the repository may see. Ask its admins for access, or sign in as someone else.</p>
+            <p><a className="pos big" href="/auth/logout">Sign out</a></p>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="shell">
@@ -68,6 +89,12 @@ function TopBar({ repository, mode, readAt, newer }: { repository?: string; mode
   // "read from origin 2 min ago" moves on by itself.
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick(n => n + 1), 30_000); return () => clearInterval(timer); }, []);
+  // Deployed behind the gate: who is signed in. A public deployment has no gate, and says nothing.
+  const [me, setMe] = useState<string>();
+  useEffect(() => {
+    if (mode !== 'team') return;
+    fetch('/auth/me', { credentials: 'same-origin', cache: 'no-store' }).then(r => r.ok ? r.json() : undefined).then(body => setMe(body?.login || undefined), () => {});
+  }, [mode]);
   return (
     <header className="topbar">
       <span className="wordmark">wisdom</span>
@@ -76,6 +103,7 @@ function TopBar({ repository, mode, readAt, newer }: { repository?: string; mode
       {mode === 'local' && <span className="chip soft">Commits · this machine <span className="live">&nbsp;● live</span></span>}
       {newer && <button className="fresh" onClick={() => window.location.reload()}>New data · reload</button>}
       <span className="spacer" />
+      {me && <span className="small muted nowrap">Signed in as <b>{me}</b> · <a href="/auth/logout">Sign out</a></span>}
       <span className="seg" role="radiogroup" aria-label="Theme">
         {THEMES.map(t => <button key={t} role="radio" aria-checked={theme === t} className={theme === t ? 'on' : ''} onClick={() => pick(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
       </span>

@@ -18,8 +18,26 @@ const listeners = new Set<() => void>();
 function renew() { cache.clear(); generation++; listeners.forEach(listener => listener()); }
 const useGeneration = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => generation, () => 0);
 
+// The deployed dashboard's gate (src/visualizer/gate.ts): its data needs a GitHub sign-in by
+// someone who may read the repository. 401: sign in first (or again: a sign-in lasts 8 hours).
+// 403: this GitHub account may not read it. Either one, from any read, puts up the sign-in screen.
+export type Gate = { need: 'sign-in' } | { need: 'access'; repo?: string };
+let gateNow: Gate | undefined;
+const gateListeners = new Set<() => void>();
+function stopAt(gate: Gate) { gateNow = gate; gateListeners.forEach(listener => listener()); }
+export const useGate = () => useSyncExternalStore(listener => { gateListeners.add(listener); return () => { gateListeners.delete(listener); }; }, () => gateNow, () => undefined);
+export class Gated extends Error {}
+
+/** Where the gate's sign-in starts, coming back to this page afterwards. */
+export const signInHref = () => `/auth/login?to=${encodeURIComponent(window.location.hash || '#/')}`;
+
 const once = async (file: string) => {
-  const response = await fetch(`${BASE}/${file}`, { cache: 'no-cache' });
+  const response = await fetch(`${BASE}/${file}`, { cache: 'no-cache', credentials: 'same-origin' });
+  if (response.status === 401) { stopAt({ need: 'sign-in' }); throw new Gated('Sign in to read this dashboard.'); }
+  if (response.status === 403) {
+    const body = await response.json().catch(() => ({})) as { denied?: string };
+    stopAt({ need: 'access', repo: body.denied }); throw new Gated('This GitHub account may not read this repository.');
+  }
   if (response.status === 404) throw new Missing(`${file} is not in this build`);
   if (!response.ok) throw new Error(`${file}: HTTP ${response.status}`);
   return response.json();
@@ -30,7 +48,8 @@ const once = async (file: string) => {
 export function load<T>(file: string): Promise<T> {
   let found = cache.get(file);
   if (!found) {
-    found = once(file).catch(() => new Promise(resolve => setTimeout(resolve, 400)).then(() => once(file)));
+    // Tried again only when it may help: never after the gate said no.
+    found = once(file).catch(error => error instanceof Gated ? Promise.reject(error) : new Promise(resolve => setTimeout(resolve, 400)).then(() => once(file)));
     found.catch(() => cache.delete(file));
     cache.set(file, found);
   }
@@ -78,7 +97,9 @@ export function useManifest(): { manifest?: Manifest; newer: boolean; error?: st
       if (asking) return;
       asking = true;
       try {
-        const response = await fetch(`${BASE}/manifest.json`, { cache: 'no-store' });
+        const response = await fetch(`${BASE}/manifest.json`, { cache: 'no-store', credentials: 'same-origin' });
+        if (response.status === 401) { stopAt({ need: 'sign-in' }); throw new Gated('Sign in to read this dashboard.'); }
+        if (response.status === 403) { const body = await response.json().catch(() => ({})) as { denied?: string }; stopAt({ need: 'access', repo: body.denied }); throw new Gated('No access.'); }
         if (!response.ok) throw new Error(response.status === 404 ? 'No build here yet.' : `manifest.json: HTTP ${response.status}`);
         const next = await response.json() as Manifest;
         if (!live) return;
