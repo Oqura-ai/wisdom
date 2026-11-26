@@ -43,6 +43,7 @@ export type ReasonCode =
   | 'order-link'         // linked by position only: the change is not identical
   | 'no-guide'           // agent work with no guide
   | 'guide-problems'     // a guide that failed its check
+  | 'step-changed'       // a cited step's change is no longer in its session as recorded (trimmed, redacted, edited)
   // no record
   | 'no-record';         // no line, no record, no link
 
@@ -54,7 +55,8 @@ export interface Reason {
   detail?: string;
 }
 
-/** A thing's status with the reasons behind it, worst first. Empty `reasons` only for `good`. */
+/** A thing's status with the reasons behind it, worst first. Empty `reasons` for `good`, and for
+ * a merge commit with no record (`none`: it carries no work of its own). */
 export interface Verdict { status: Status; reasons: Reason[] }
 
 // ---------- manifest.json ----------
@@ -211,7 +213,8 @@ export interface Commit extends CommitSummary {
   found: { by: 'record' | 'link' | 'line' | 'unlinked'; recordId?: string; link?: CommitOrigin;
     /** Fixed words when unlinked or when the line names no record here. */
     cause?: string };
-  pieces: Piece[];
+  /** Its files as its records describe them (all of them, for a squash standing for several). */
+  files: FileChange[];
   /** Absent when there is none; then `guideMissing` or a `no-guide` reason says why. */
   guide?: { text: string; writer: string; writtenAt: string; problems: string[]; costUsd?: number; seconds?: number };
   guideMissing?: string;
@@ -219,22 +222,32 @@ export interface Commit extends CommitSummary {
   sessionsNamed: CommitSession[];
 }
 
-/** One piece of the commit's diff (a hunk, or a whole file when that is how it was matched). */
-export interface Piece {
+export interface FileChange {
   path: string;
-  header: string;
+  operation: string;
   added: number; removed: number;
+  binary?: true;
+  pieces: Piece[];
+}
+
+/** One piece of a file's diff (a hunk, or the whole file when that is how it was matched). */
+export interface Piece {
+  /** The hunk header, or `whole file`. */
+  header: string;
   /** recorded: made by one recorded step. two-sessions: two sessions both made it. outside: no
-   * recorded step made it. no-record: the commit has no record. */
-  state: 'recorded' | 'two-sessions' | 'outside' | 'no-record';
+   * recorded step made it (or the file was excluded from recording). */
+  state: 'recorded' | 'two-sessions' | 'outside';
+  /** Lines of it no recorded step made, when only part of it was. */
+  unexplained: number;
   /** The steps that made it, oldest first. */
   steps: StepRef[];
 }
 
 export interface StepRef {
   session: string;
-  /** The turn, and the ledger position (`t3/c2`, `t3/a1/c1`) for `wisdom open`. */
-  turn: number; position: string;
+  /** The ledger position (`t3/c2`, `a1/c2`, `outside`) for `wisdom open`, and its turn when the
+   * position names one (a subagent's or an outside position does not). */
+  position: string; turn?: number;
   /** A subagent's ID, when one made it. */
   agent?: string;
   /** observed-during-tool / external-or-unknown, unchanged from the record. */
