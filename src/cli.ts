@@ -57,6 +57,9 @@ Read a session
   wisdom dashboard                Print the address of the live dashboard
   wisdom commits                  Print the address of Commits on this machine: main and your
                                   branches, each commit's record and the sessions behind it, live
+  wisdom commits build            In CI: the team's Commits dashboard from the remote, ready to
+                                  deploy (behind a GitHub sign-in; --public: none, on purpose)
+  wisdom commits prune            In CI: remove the dashboard's older Vercel deployments
   wisdom glance                   List recorded sessions, newest first
   wisdom glance <session>         Show one session's shape and every turn
   wisdom glance --commit <commit> Show which recorded steps made each piece of a git commit
@@ -130,6 +133,7 @@ async function main(): Promise<void> {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, commit: { type: 'string' }, remote: { type: 'string' }, range: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
       'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, 'commit-map': { type: 'string' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' }, emit: { type: 'boolean' },
+      public: { type: 'boolean' }, main: { type: 'string' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
@@ -140,7 +144,7 @@ async function main(): Promise<void> {
   if (command === 'handoff-run') { if (first) await runBackgroundHarness(first); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
-    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], commits: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
+    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], commits: ['cwd', 'port', 'public', 'main', 'out', 'remote'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'emit', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
@@ -153,7 +157,7 @@ async function main(): Promise<void> {
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
   if (separator >= 0 && !['track', 'handoff'].includes(command)) throw new Error('Arguments after -- are only supported by track and handoff');
   // A handoff's words may follow its target without `--`: PowerShell drops a `--` it is given.
-  if (!['share', 'handoff'].includes(command) && positionals.length >(['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
+  if (!['share', 'handoff'].includes(command) && positionals.length >(['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open', 'commits'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
@@ -171,6 +175,23 @@ async function main(): Promise<void> {
     await offerWorkflow(cwd);
     return;
   }
+  // The team's Commits dashboard, in CI: no data folder either.
+  if (command === 'commits' && (first === 'build' || first === 'prune')) {
+    // Loaded only here: the builder is large, and git hooks run this file too.
+    const { buildTeam } = await import('./visualizer/ci.js');
+    const { pruneDeployments } = await import('./visualizer/vercel.js');
+    if (first === 'build') {
+      const result = await buildTeam(path.resolve(values.cwd ?? process.cwd()), { out: values.out, public: values.public, main: values.main, remote: values.remote });
+      for (const line of result.lines) console.log(line);
+      return;
+    }
+    const token = process.env.VERCEL_TOKEN, projectId = process.env.VERCEL_PROJECT_ID;
+    if (!token || !projectId) throw new Error('wisdom commits prune needs VERCEL_TOKEN and VERCEL_PROJECT_ID (and VERCEL_ORG_ID for a team), as the CI job sets them.');
+    const { kept, removed } = await pruneDeployments({ token, projectId, orgId: process.env.VERCEL_ORG_ID, api: process.env.VERCEL_API });
+    console.log(kept.length ? `Kept ${kept.join(', ')}; removed ${removed.length} older deployment${removed.length === 1 ? '' : 's'}${removed.length ? `: ${removed.join(', ')}` : ''}` : 'No finished production deployment yet, so nothing was removed.');
+    return;
+  }
+  if (command === 'commits' && (values.public || values.main || values.out || values.remote)) throw new Error('--public, --main, --out and --remote apply only to wisdom commits build');
   if ((command === 'team') && (first === 'relink' || first === 'sync')) {
     const cwd = path.resolve(values.cwd ?? process.cwd());
     if (first === 'relink') {

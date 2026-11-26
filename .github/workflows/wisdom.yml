@@ -1,0 +1,116 @@
+# Wisdom's reusable workflow (design policy 5.25, 5.26): what a team-mode repository runs in CI,
+# called from one short file in that repository (`wisdom commits deploy` writes it; docs/team.md#ci):
+#
+#   jobs:
+#     wisdom:
+#       uses: Oqura-ai/wisdom/.github/workflows/wisdom.yml@v1
+#
+#   check    on a pull request: every agent commit has its guide and its sessions are pushed
+#   relink   on a push to the default branch: link the commits GitHub made at a merge
+#   commits  the team's Commits dashboard, built and deployed (after relink, so new links count),
+#            on the default branch, on the team's own pull requests, on the schedule and by hand
+#
+# Pushes of Wisdom's own refs (refs/wisdom/*) start no workflow (live test, 2026-11-26): sessions
+# pushed between merges reach the dashboard at the next pull request, merge, or scheduled run.
+name: wisdom
+on:
+  workflow_call:
+    inputs:
+      main:
+        description: The default branch.
+        type: string
+        default: main
+      commits:
+        description: Build and deploy the Commits dashboard.
+        type: boolean
+        default: false
+      public:
+        description: The dashboard without a sign-in. Only for a public repository, on purpose.
+        type: boolean
+        default: false
+      vercel-org-id:
+        type: string
+        default: ''
+      vercel-project-id:
+        type: string
+        default: ''
+      wisdom-version:
+        description: The @oqura/wisdom version to run.
+        type: string
+        default: latest
+    secrets:
+      VERCEL_TOKEN:
+        required: false
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm install -g "@oqura/wisdom@${{ inputs.wisdom-version }}"
+      - run: wisdom check --range "origin/${{ github.base_ref }}..HEAD"
+
+  relink:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', inputs.main)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # to push Wisdom's link refs (refs/wisdom/...), never a branch
+      pull-requests: read    # to ask which pull request made a commit
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm install -g "@oqura/wisdom@${{ inputs.wisdom-version }}"
+      - run: wisdom team relink --range "${{ github.event.before }}..${{ github.sha }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  commits:
+    needs: relink
+    # After relink when there was one (a failed relink still leaves the last links good to show).
+    # A pull request from a fork gets no secrets, so it is not built: the team's own are.
+    if: >-
+      always() && inputs.commits && needs.relink.result != 'cancelled' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read    # pull request titles, states and usernames
+    # One build at a time per repository; a newer one replaces one still running (the newest wins).
+    concurrency:
+      group: wisdom-commits-${{ github.repository }}
+      cancel-in-progress: true
+    env:
+      VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+      VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm install -g "@oqura/wisdom@${{ inputs.wisdom-version }}"
+      # The last build's data and imported sessions: unchanged sessions' turns are copied, not rebuilt.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .wisdom-commits/data
+            .wisdom-commits/sessions
+          key: wisdom-commits-${{ github.run_id }}
+          restore-keys: wisdom-commits-
+      - run: wisdom commits build ${{ inputs.public && '--public' || '' }} --main "${{ inputs.main }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx --yes vercel@67 deploy --prebuilt --prod --token "$VERCEL_TOKEN" --cwd .wisdom-commits/site
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      # Older deployments still hold older data, sessions since deleted included: they go.
+      - run: wisdom commits prune
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
