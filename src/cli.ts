@@ -460,6 +460,17 @@ function teamHooks(project: string, dataDir: string): void {
   } catch (error) { console.log(`Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
 }
 
+/** Sessions removed for everyone: the team's dashboard, if there is one, drops them now (gh) or says when. */
+async function afterRemoval(project: string, remote?: string): Promise<void> {
+  try {
+    const { rebuildDashboard } = await import('./visualizer/rebuild.js');
+    const { terminalIO } = await import('./visualizer/deploy.js');
+    const io = terminalIO();
+    const line = rebuildDashboard(project, remote ?? readPolicy(project)?.remote ?? 'origin', args => io.gh(args));
+    if (line) console.log(line);
+  } catch { /* the removal itself is done; the dashboard catches up at its next build */ }
+}
+
 /** A yes/no question on the terminal. Undefined with no terminal to ask in (a script, CI):
  * then nothing is changed, and the caller says how to do it later. */
 async function askYes(question: string): Promise<boolean | undefined> {
@@ -896,11 +907,13 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     if (!session) throw new Error('Use: wisdom team delete <session>');
     const result = await call(connection, '/team', { action: 'delete', session, remote: values.remote });
     console.log(`Deleted ${result.key} from the team remote and added it to the deletion list, so no clone pushes it back. Your own recording here is kept.`);
+    await afterRemoval(project, values.remote);
     return 0;
   }
   if (action === 'prune') {
     const result = await call(connection, '/team', { action: 'prune', remote: values.remote });
     console.log(result.removed.length ? `Removed ${result.removed.length} pushed sessions older than the policy keeps them.` : 'Nothing is older than the policy keeps.');
+    if (result.removed.length) await afterRemoval(project, values.remote);
     return 0;
   }
   throw new Error('Use: wisdom team init|trust|hooks on|off|push|fetch|delete <session>|prune');

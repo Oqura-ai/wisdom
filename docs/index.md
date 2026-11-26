@@ -6,7 +6,7 @@
 - [Usage](usage.md): commands, how recording works, reading a session, privacy.
 - [Dashboard](dashboard.md): the live viewer.
 - [Harnesses](harnesses.md): Claude Code, Codex and Pi, including setup and what each records.
-- [Team mode](team.md): commit guides, sharing sessions through your git remote, the CI check.
+- [Team mode](team.md): commit guides, sharing sessions through your git remote, the CI check, and the team's Commits dashboard.
 
 ## Connecting agents
 

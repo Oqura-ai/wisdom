@@ -21,6 +21,7 @@
 | `wisdom open <position> --capture <session\|latest>` | Read one turn, tool call or subagent, whole. |
 | `wisdom dashboard` | Print the address of the live dashboard. |
 | `wisdom commits` | Print the address of Commits on this machine: main and your branches, each commit's record and the sessions behind it, live. See [Commits on this machine](#commits-on-this-machine). |
+| `wisdom commits deploy` | Team mode: set up the same dashboard for the whole team, from your git remote, behind a GitHub sign-in. See [Commits for your team](team.md#commits-for-your-team). |
 | `wisdom doctor` | Check that everything is working. See [installation](installation.md#check-a-project). |
 | `wisdom daemon start\|run\|status\|stop` | Control the background service. `run` stays in the foreground. |
 | `wisdom mcp` | Serve the optional `ledger` tool over MCP. See [agents](agents.md). |

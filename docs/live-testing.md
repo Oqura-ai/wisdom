@@ -12,7 +12,7 @@ step by step: what to do, how to see the result, and what you should see.
 
 | Command | What it covers |
 | --- | --- |
-| `npm test` | Recording, reading, positions and limits, secrets and sharing, clone and export, commit records and guides (with a stand-in writer), team push, fetch and delete against a git remote on disk, the CI check, hook installation, `wisdom doctor`, the npm package contents |
+| `npm test` | Recording, reading, positions and limits, secrets and sharing, clone and export, commit records and guides (with a stand-in writer), team push, fetch and delete against a git remote on disk, the CI check, hook installation, `wisdom doctor`, the npm package contents; Commits: the builder, local Commits served and live, the sign-in gate and the deployable site against a stand-in GitHub, the CI build from a fresh clone, pruning against a stand-in Vercel, and `commits deploy` with stand-ins for GitHub, the Vercel CLI and the browser |
 | `npm run test:pi` | The installed Pi, driven by a scripted provider: real file tools, no model spend |
 | `npm run test:codex` | The installed Codex finds and trusts Wisdom's hooks; no model calls |
 
@@ -27,6 +27,7 @@ step by step: what to do, how to see the result, and what you should see.
 | Two people | A teammate's view: fetched copies, wording, windows that ignore pulled commits | `src/team/team.ts`, `src/read/discovery.ts`, `src/share/` |
 | Windows | File locks, shells, CRLF, hook processes and detached jobs | anything that starts processes or deletes files |
 | Size | Thousands of files, long sessions, many pushed versions | `src/record/workspace.ts`, `src/team/`, the dashboard |
+| The team's Commits dashboard | GitHub Actions, the GitHub App and Vercel run only on their own services, with real accounts | `src/visualizer/` (gate, site, ci, vercel, deploy), `.github/workflows/wisdom.yml` |
 
 ## Setting up a live run
 
@@ -53,6 +54,8 @@ Each row is one scenario, with the plan section that has its steps. "Passes if" 
 | 9 | Deletion: `wisdom team delete`; teammate fetches; push again; prune | [7](live-test-plan.md#7-deletion-and-retention) | Gone from the remote and from the teammate's disk; not pushed back |
 | 10 | Stress: a 2,000-file commit; a lockfile update; stop the daemon mid-session; kill a guide job then push; a long window; `git push --mirror` | [8](live-test-plan.md#8-stress-and-failure) | Nothing lost; gaps stated honestly; the push repairs the missing guide |
 | 11 | Measure: 20 or more pieces whose author you know, checked against the input of the call `glance --commit` names | [9](live-test-plan.md#9-measurement) | Count right, wrong and missed |
+| 12 | Commits on this machine: `wisdom commits`, then commit, amend, rebase and record while the page is open | — | Each change shows within seconds, the page and panel staying where they were; statuses as `glance --commit` gives them |
+| 13 | The team's Commits dashboard, end to end, on a scratch repository: `wisdom commits deploy`, push the CI file, a pull request, a merge, `team delete` | — | The first build deploys; a reader signs in and sees the merge as it landed; someone without access is refused; the deleted session is gone after the rebuild; older deployments are removed |
 
 ## Status of the last full run
 
@@ -67,6 +70,7 @@ Each row is one scenario, with the plan section that has its steps. "Passes if" 
 | 10, stress | Partly open, see below |
 | 11, measurement | 30 of 31 checkable pieces right; the one wrong was the two-agent case, since fixed |
 | PR from a fork | Not run: the test organisation does not allow forks of private repositories |
+| 12, 13 | Not run yet. 13 needs the release that carries it (its workflow at `v1`, the package on npm; see [development](development.md#a-release-that-carries-the-teams-commits-dashboard)). Its parts were checked live on their own on 2026-11-26: a push of only `refs/wisdom/*` started no workflow, not even an unfiltered one; a GitHub App made from a manifest with a `127.0.0.1` return address, then a sign-in that read a private repository (8-hour token); on Vercel, `/data/*` reached only through a function, the files themselves unreachable, and an old deployment removed |
 
 ## Still open
 

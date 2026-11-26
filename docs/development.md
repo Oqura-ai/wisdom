@@ -42,9 +42,22 @@ npm run dashboard:build     # what the daemon runs and the package ships
 
 `dashboard:build` runs `next build` in standalone mode, then [scripts/bundle-dashboard.mjs](../scripts/bundle-dashboard.mjs) assembles `dist-dashboard/`: it adds the static files, removes this machine's paths, restores the bundled packages' licenses, and fails if a native binary got in. The daemon runs `dist-dashboard/server.js`.
 
+## Commits
+
+The Commits app is its own Next.js app in [visualizer/](../visualizer/), a static export that reads only the JSON files the builder ([src/visualizer/build.ts](../src/visualizer/build.ts)) writes, in the shapes of [contract.ts](../src/visualizer/contract.ts).
+
+```sh
+npm run commits:install     # once
+npm run commits:sample      # the test repository's data into visualizer/public/data
+npm run commits:dev         # live development on port 7436, with that data
+npm run commits:build       # the static export, bundled into dist-commits/ without sample data
+```
+
+On a person's machine the daemon serves `dist-commits/` with this machine's build beside it ([src/visualizer/serve.ts](../src/visualizer/serve.ts)). For a team, CI builds the same app with the remote's data and deploys it behind the GitHub sign-in ([gate.ts](../src/visualizer/gate.ts), [site.ts](../src/visualizer/site.ts)); see [Commits for your team](team.md#commits-for-your-team). Its `components/Markdown.tsx` is a copy of the dashboard's (each app has its own React), and a test fails if they differ.
+
 ## Packaging
 
-The `files` list in [package.json](../package.json) decides what ships: the compiled `dist/src` without source maps, `dist-dashboard`, `integrations`, `skills`, the license and the README. [test/package.test.ts](../test/package.test.ts) fails if tests, docs or other development files get in.
+The `files` list in [package.json](../package.json) decides what ships: the compiled `dist/src` without source maps, `dist-dashboard`, `dist-commits`, `integrations`, `skills`, the license and the README. [test/package.test.ts](../test/package.test.ts) fails if tests, docs or other development files get in, or any Commits data.
 
 To try the package as a user would:
 
@@ -54,7 +67,7 @@ npm install -g ./oqura-wisdom-<version>.tgz
 wisdom doctor
 ```
 
-`npm pack` runs `prepack`, which builds the code and the dashboard, so `npm run dashboard:install` must have run first.
+`npm pack` runs `prepack`, which builds the code, the dashboard and Commits, so `npm run dashboard:install` and `npm run commits:install` must have run first.
 
 To publish, you need to be a member of the `oqura` organization on npm:
 
@@ -63,6 +76,15 @@ npm publish
 ```
 
 `prepublishOnly` runs the tests first. The dashboard bundle has only been built on Windows so far. It holds no native binaries, but run it on macOS and Linux before promising them.
+
+### A release that carries the team's Commits dashboard
+
+A team's CI takes two things from here, so both must be out before a team can use a change to them:
+
+- **The reusable workflow**, [.github/workflows/wisdom.yml](../.github/workflows/wisdom.yml), at the tag `v1`, which every team's file names (`…/wisdom.yml@v1`). `v1` is a moving tag: after a release that changes the workflow compatibly, move it (`git tag -f v1 <commit>`, `git push -f origin v1`). A change a team's file must follow is `v2`, and `wisdom commits deploy` then writes `@v2`.
+- **The package**, which the workflow installs from npm (`wisdom-version`, `latest` by default).
+
+The first release that carries the dashboard also needs its end-to-end run, which no test can make: on a scratch repository, `wisdom commits deploy`, push the CI file, watch the first build deploy, then sign in as someone who can read the repository and as someone who can't. Each part was checked live on its own before (pushes of Wisdom's refs start no workflow, a GitHub App made from a manifest, Vercel keeping the data inside the function); see [live testing](live-testing.md).
 
 ## Reading the code
 

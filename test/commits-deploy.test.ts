@@ -8,7 +8,8 @@ import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { parse } from 'yaml';
 import { gitText } from '../src/team/gitrefs.js';
 import { workflowFile, writeWorkflow } from '../src/team/relink.js';
-import { deployCommits, ENV_NAMES, TOKEN_SECRET, type DeployIO, type Run } from '../src/visualizer/deploy.js';
+import { deployCommits, ENV_NAMES, TOKEN_SECRET, writeDeployState, type DeployIO, type Run } from '../src/visualizer/deploy.js';
+import { rebuildDashboard } from '../src/visualizer/rebuild.js';
 import { REUSABLE } from '../src/visualizer/ci.js';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -130,6 +131,23 @@ test('commits deploy: Vercel, the sign-in app from a manifest, its secrets, the 
     assert.match(team, /remote: origin {3}# where sessions go/);
     assert.deepEqual(parse(team).commits, { url: DASHBOARD, vercelProject: 'wisdom-app', githubApp: 'wisdom-app-abc123' });
   } finally { await gh.close(); }
+});
+
+test('after a team delete: the dashboard rebuilds now through gh, or the person is told when the session leaves it', () => {
+  const dir = repository();
+  const gh = (status: number | undefined) => { const calls: string[][] = []; return { calls, run: (args: string[]) => { calls.push(args); return status === undefined ? undefined : { status, stdout: '', stderr: status ? 'HTTP 404: workflow not found' : '' }; } }; };
+  // No dashboard set up: nothing to say.
+  const none = gh(0);
+  assert.equal(rebuildDashboard(dir, 'origin', none.run), undefined);
+  assert.deepEqual(none.calls, []);
+  writeDeployState(dir, { url: DASHBOARD, vercelProject: 'wisdom-app' });
+  const started = gh(0);
+  assert.match(rebuildDashboard(dir, 'origin', started.run)!, /rebuilding now/);
+  assert.deepEqual(started.calls, [['workflow', 'run', 'wisdom.yml', '--repo', 'acme/app']]);
+  const missing = rebuildDashboard(dir, 'origin', gh(undefined).run)!;
+  assert.match(missing, /within 20 minutes/);
+  assert.match(missing, /https:\/\/github\.com\/acme\/app\/actions\/workflows\/wisdom\.yml/);
+  assert.match(rebuildDashboard(dir, 'origin', gh(1).run)!, /gh could not start it: HTTP 404/);
 });
 
 test('commits deploy again: a running dashboard is never replaced by the placeholder, and the app is kept when asked', async () => {

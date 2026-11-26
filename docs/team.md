@@ -122,8 +122,11 @@ the model back on.
 | `wisdom team sync on\|off` | Whether `git fetch` and `git pull` also bring the team's commit links and records. On adds two lines to the remote's fetch list in `.git/config`; off takes out exactly those. `wisdom init`, `wisdom connect` and `team hooks on` ask first; `team hooks off` undoes it. With no argument it says whether it is on. |
 | `wisdom team relink --range A..B` | Links each commit in the range that has neither a record nor a link, from the merged pull request GitHub says made it, or else by its patch-id. Run by the [CI job](#ci) after each merge; anyone can run it later. Needs no data folder. |
 | `wisdom team relink --commit-map FILE` | After `git filter-repo`: links each rewritten commit from filter-repo's own `.git/filter-repo/commit-map`. |
-| `wisdom team delete <session>` | Removes a pushed session for everyone and adds it to the deletion list, so no clone pushes it back. Your own recording stays. |
+| `wisdom team delete <session>` | Removes a pushed session for everyone and adds it to the deletion list, so no clone pushes it back. Your own recording stays. With the team's dashboard and `gh`, it rebuilds the dashboard at once. |
 | `wisdom team prune` | Removes pushed sessions older than `retentionDays`. |
+| `wisdom commits deploy` | Sets up [the team's Commits dashboard](#commits-for-your-team): Vercel, the GitHub sign-in app, the CI file. `--public`: no sign-in, on purpose. Run again to fix the setup. |
+| `wisdom commits build` | For CI: the dashboard from the remote, ready to deploy. Needs no data folder. |
+| `wisdom commits prune` | For CI: removes the dashboard's older Vercel deployments. |
 
 `--remote NAME` uses another remote than the policy's.
 
@@ -180,6 +183,7 @@ guides:
 | `guides.turns` | `30` | How many steps the Claude Code writer may take reading the sessions, 5 to 60. |
 | `guides.timeoutSeconds` | `150` | How long one guide may take to write, 30 to 300. |
 | `guides.extra` | none | The team's own words, added after the writer's rules, such as "Name the tests run." Wisdom's check of the guide is the same. |
+| `commits` | none | Written by `wisdom commits deploy`: the [team dashboard](#commits-for-your-team)'s `url`, its `vercelProject` and the `githubApp` it signs in with (`public: true` without one). Read by deploy when run again and by `team delete`. |
 | `guides.command` | Claude Code (`claude -p --model <model>`, with only Wisdom's ledger tool) | Any other writer: it reads the prompt on stdin, prints the guide, and finds the model in `WISDOM_GUIDE_MODEL`. Use it for Codex, Pi, an API key, or a local model. It gets the cited steps already opened (up to 6,000 characters each, 60,000 in all) and may not use tools, so it does not read the rest of the window. The guide names its writer as the command followed by `(model not named)`, since the command picks its own model; set `guides.model` as well and it reads `<model> via <command>`. |
 
 **Guides are written the same way for everyone.** In team mode the `guides` settings come from
@@ -294,9 +298,105 @@ A private fork the job cannot read stays unlinked, and says so.
 names what to fetch, so git does not use the fetch list then; a plain `git pull` or `git fetch`
 does.
 
+## Commits for your team
+
+A dashboard the whole team opens in the browser: what landed on main and how (merge, squash or
+rebase), the open pull requests and active branches, each commit with how its record was found,
+its pieces, its guide and its sessions, and a session's turns down to the chat view. It is the
+same app as [`wisdom commits`](usage.md#commits-on-this-machine) on your machine, built from what
+the team's remote holds instead, so every status is one the remote can prove: Wisdom checks
+each step against its session and each guide again, on every build.
+
+### Setting it up
+
+An admin runs, once, in a checkout of the team-mode repository:
+
+```text
+wisdom commits deploy
+```
+
+It asks before each step that writes anywhere, and can be run again to fix the setup.
+
+1. **Who may see it.** The link is open, but the data needs a GitHub sign-in by someone who can
+   read the repository. `--public` deploys it with no sign-in, only on purpose: for a private
+   repository it asks again.
+2. **Vercel.** It runs on Vercel. The free Hobby plan is for personal and non-commercial use only,
+   so a company's dashboard needs **Vercel Pro**. Only whoever deploys needs a Vercel seat:
+   everyone else signs in with GitHub. Deploy logs in to Vercel, creates the project, and
+   confirms its address with a placeholder page.
+3. **The sign-in app.** A GitHub App, created from the terminal: you press "Create GitHub App"
+   on GitHub, then install it on this repository only. It asks for **Metadata: read**, nothing
+   else, and has no webhook. Its private key is used once, to check the installation, and never
+   stored. Its client ID and secret, and a new key for the sign-in cookies, go into the Vercel
+   project's environment.
+4. **The CI token.** CI deploys with a Vercel token you create on Vercel's token page. It goes
+   into the repository's secret `WISDOM_VERCEL_TOKEN`, through `gh secret set` (which asks you
+   for it) or GitHub's secrets page. Wisdom never sees it.
+5. **The CI file.** `.github/workflows/wisdom.yml`, one job calling Wisdom's reusable workflow
+   (see [CI](#ci)), and a `commits:` section in `wisdom-team.yaml` with the dashboard's address.
+   It offers to remove the older `wisdom-relink.yml`, since the new file relinks too. Commit both
+   and push: the first build deploys the dashboard. `wisdom team init` offers all this too, and
+   says no unless you say yes.
+
+### Who sees what
+
+- **Signing in** asks GitHub who you are and whether you can read the repository. Only a yes
+  opens the data. Your GitHub token stays in your own browser, in a cookie encrypted with a key
+  only the dashboard holds.
+- **Losing access** on GitHub locks you out within 10 minutes: the dashboard asks GitHub again
+  that often. A sign-in lasts at most 8 hours. When GitHub can't be asked, the dashboard shows
+  nothing rather than guess.
+- **The data is never a public file.** It sits inside the sign-in function, which reads it for
+  you; no address reaches it around the sign-in.
+- **Older builds are removed** after each deploy (`wisdom commits prune`): an old build still holds
+  sessions deleted since. Vercel also keeps a build's own address behind its login by default.
+
+### When it updates
+
+| Event | What happens |
+| --- | --- |
+| A pull request opened or pushed | Built, so the open pull request shows. A fork's pull request is not: GitHub gives it no secrets |
+| A push to the default branch (a merge) | `relink` first, so the merge's new commits link to their records, then built |
+| Every 20 minutes | Built: sessions and records pushed between merges start no workflow (Wisdom's own refs never do) |
+| `wisdom team delete`, `prune` | With `gh` installed and logged in, a build starts at once; otherwise the next one drops the session |
+| By hand | Actions > wisdom > Run workflow |
+
+One build runs at a time per repository, and a newer one replaces one still running. A build
+reuses the turns of sessions unchanged since the last one (kept in the Actions cache).
+
+### Limits
+
+- **GitHub and Vercel only, for now.** The site is written for Vercel by a small adapter; other
+  hosts would be others. Hosting the dashboard for you is part of the enterprise offering.
+- **Size.** Everything the remote holds is read up front, so every click is quick. A Vercel
+  function holds at most 250 MB: a build with more stops and says so. Faster, separate session
+  storage is part of the enterprise offering; meanwhile `wisdom team prune` brings it down.
+- **Not yet tried end to end on GitHub and Vercel.** Each part was checked live on its own (pushes
+  of Wisdom's refs start no workflow, the app made from a manifest, Vercel keeping the data inside
+  the function), and the whole flow is tested with stand-ins; the full run waits for the first
+  release that carries it.
+
 ## CI
 
-GitHub Actions, as an example:
+With [the team's dashboard](#commits-for-your-team), CI is one file that `wisdom commits deploy`
+writes, calling Wisdom's reusable workflow, which checks pull requests, relinks after merges
+and builds the dashboard:
+
+```yaml
+jobs:
+  wisdom:
+    uses: Oqura-ai/wisdom/.github/workflows/wisdom.yml@v1
+    with:
+      main: "main"
+      commits: true
+      vercel-org-id: "team_..."
+      vercel-project-id: "prj_..."
+    secrets:
+      VERCEL_TOKEN: ${{ secrets.WISDOM_VERCEL_TOKEN }}
+```
+
+Without `commits: true` it only checks and relinks. Without the dashboard, the two jobs below do
+the same written out in full: GitHub Actions, as an example:
 
 ```yaml
 name: wisdom
