@@ -189,7 +189,9 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   // Once the port is held, and before daemon.json says so: the hook that started this daemon
   // waits for that file, so the file baseline of a kept tool start is taken before the tool runs.
   captures.drainSpool();
-  writeJson(path.join(dataDir, 'daemon.json'), connection);
+  // A daemon nobody can find must not keep the port: close and fail, so the next start can take it.
+  try { writeJson(path.join(dataDir, 'daemon.json'), connection); }
+  catch (error) { server.close(); captures.shutdown(); captures.database.close(); fs.unlinkSync(lock); throw error; }
   timer = setInterval(() => { captures.poll(); library.poll(); watcher.poll(); }, 500);
   // Optional viewer. Started after daemon.json exists, since it reads it to connect.
   if (options.dashboardPort) dashboard = startDashboard(dataDir, options.dashboardPort);

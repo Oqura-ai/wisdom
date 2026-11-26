@@ -17,6 +17,7 @@ import { prCheck, pushLinks } from '../src/team/team.js';
 import { relink, setSync, syncOn, syncSpecs, workflowText, writeWorkflow, workflowFile } from '../src/team/relink.js';
 import { githubApi, repositoryFromUrl } from '../src/team/github.js';
 import { setGuides } from '../src/team/guides.js';
+import { wisdomVersion } from '../src/setup/doctor.js';
 import { observeSession, openSession } from './session.js';
 
 /** Commit links, with real git throughout: real repositories, commits, amends, rebases, hooks
@@ -618,8 +619,16 @@ test('CLI: with no terminal to ask in, team init writes no workflow and team syn
     assert.match(text, /^ {2}contents: write/m);
     assert.match(text, /^ {2}pull-requests: read/m);
     assert.match(text, /wisdom team relink --range "\$\{\{ github\.event\.before \}\}\.\.\$\{\{ github\.sha \}\}"/);
+    // npm's latest can be a Wisdom without relink: the job installs the version that wrote it.
+    assert.ok(text.includes(`- run: npm install -g @oqura/wisdom@${wisdomVersion()}\n`));
     assert.equal(writeWorkflow(me.dir, 'main'), undefined, 'never over one that is there');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the CI examples in docs/team.md install this version of Wisdom', () => {
+  const docs = fs.readFileSync(fileURLToPath(new URL('../../docs/team.md', import.meta.url)), 'utf8');
+  const installs = [...docs.matchAll(/npm install -g (\S+)/g)].map(match => match[1]);
+  assert.deepEqual(installs, [`@oqura/wisdom@${wisdomVersion()}`, `@oqura/wisdom@${wisdomVersion()}`]);
 });
 
 test('a link is read before the message line; the line stays the backup when there is no link', { skip: !hasGit }, () => {

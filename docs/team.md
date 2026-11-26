@@ -297,9 +297,12 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npm install -g @oqura/wisdom
+      - run: npm install -g @oqura/wisdom@0.6.0-beta.3
       - run: wisdom check --range origin/${{ github.base_ref }}..HEAD
 ```
+
+Pin the version your team uses (`wisdom --version`): plain `@oqura/wisdom` installs npm's
+`latest`, which may be an older Wisdom without team mode, and the job fails with an unknown option.
 
 And the job that links what GitHub makes at a merge. `wisdom team init` offers to write it as
 `.github/workflows/wisdom-relink.yml`, and asks first. Without it, merges made with GitHub's
@@ -323,7 +326,8 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npm install -g @oqura/wisdom
+      # Pinned: npm's latest may be an older Wisdom without relink. Update it with the team's.
+      - run: npm install -g @oqura/wisdom@0.6.0-beta.3
       - run: wisdom team relink --range "${{ github.event.before }}..${{ github.sha }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
