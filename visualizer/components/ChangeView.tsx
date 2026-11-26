@@ -210,7 +210,8 @@ function ChangeCanvas({ change, commits, sessions, manifest, selected, onSelect 
   const W = Math.max(X0 + cs.length * GAP + 60 + (merged ? 260 : 0), ...rows.map(r => r.end + 40));
   const H = TOP + Math.max(1, rows.length) * ROW + 40;
 
-  const [kind, key] = selected ? [selected.slice(0, selected.indexOf(':')), selected.slice(selected.indexOf(':') + 1)] : [];
+  // A picked snippet is `session:<key>#<from>-<to>`: it highlights like its session, and its frame.
+  const [kind, key] = selected ? [selected.slice(0, selected.indexOf(':')), selected.slice(selected.indexOf(':') + 1).split('#')[0]] : [];
   const cites = (sha: string, session: string) => rows.some(r => r.s.key === session && r.snips.some(g => g.owner === sha && !g.other));
   const pick = (k: string) => onSelect(k === selected ? undefined : k);
 
@@ -271,10 +272,11 @@ function ChangeCanvas({ change, commits, sessions, manifest, selected, onSelect 
               {r.snips.map(g => {
                 const n = g.to - g.from + 1, shown = n <= MAX_BOXES ? Array.from({ length: n }, (_, k) => k) : [0, 1, 3, 4];
                 const owner = g.owner ? short(g.owner) : 'no commit';
+                const picked = selected === `session:${s.key}#${g.from}-${g.to}`;
                 return (
-                  <g key={g.from} className="turn snip" data-pick={`session:${s.key}`}>
+                  <g key={g.from} className="turn snip" data-pick={`session:${s.key}#${g.from}-${g.to}`}>
                     <title>{`${short(s.id)} t${g.from}${n > 1 ? `–t${g.to}` : ''} · ${plural(n, 'turn')} · ${owner}${g.other ? ' (another change)' : ''}`}</title>
-                    <rect className="frame" x={g.x - 5} y={y - 5} width={g.w + 6} height={CELL + 10} rx={5} fill="transparent" stroke="transparent" strokeWidth={1.5} />
+                    <rect className="frame" x={g.x - 5} y={y - 5} width={g.w + 6} height={CELL + 10} rx={5} fill={picked ? 'var(--surface)' : 'transparent'} stroke={picked ? 'var(--accent)' : 'transparent'} strokeWidth={1.5} />
                     {shown.map(slot => <rect key={slot} className={`tb ${g.owner ? '' : 'none'} ${r.missing ? 'held' : ''}`} style={g.other ? { opacity: .4 } : undefined}
                       x={g.x + slot * STEP} y={y} width={CELL} height={CELL} rx={3} />)}
                     {n > MAX_BOXES && <><text x={g.x + 2 * STEP + 2} y={y + 11} style={{ fill: 'var(--muted)' }}>⋯</text>

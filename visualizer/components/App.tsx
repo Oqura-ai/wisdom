@@ -9,7 +9,9 @@ import { Dot, StateNote } from './bits';
 import { BranchesView } from './BranchesView';
 import { ChangeView } from './ChangeView';
 import { CommitView } from './CommitView';
+import { PeopleView, PersonPanel, SessionsView } from './ExploreViews';
 import { MainView } from './MainView';
+import { SessionsPanel, parseOpening } from './SessionsPanel';
 
 const THEMES = ['light', 'dark', 'night'] as const;
 
@@ -35,7 +37,7 @@ export function App() {
             : !index.data ? <StateNote title="Reading…" />
             : <View route={route} index={index.data} manifest={manifest!} selected={selected} onSelect={setSelected} onMainPick={pickOnMain} />}
         </main>
-        <aside className="inspector"><Panel route={route} index={index.data} selected={selected} /></aside>
+        <aside className="inspector">{index.data && manifest && <Panel route={route} index={index.data} manifest={manifest} selected={selected} />}</aside>
       </div>
     </div>
   );
@@ -48,7 +50,8 @@ function View({ route, index, manifest, selected, onSelect, onMainPick }: { rout
     case 'branches': return <BranchesView index={index} mode={manifest.mode} selected={selected} onSelect={onSelect} />;
     case 'commit': return <CommitView key={route.sha} sha={route.sha} via={route.change} index={index} manifest={manifest} onSelect={onSelect} />;
     case 'change': return <ChangeView key={route.id} id={route.id} index={index} manifest={manifest} selected={selected} onSelect={onSelect} onMainPick={onMainPick} />;
-    default: return <StateNote title="Not built yet">This page comes in the next part of the Commits app.</StateNote>;
+    case 'people': return <PeopleView index={index} mode={manifest.mode} selected={selected} onSelect={onSelect} />;
+    case 'sessions': return <SessionsView index={index} mode={manifest.mode} selected={selected} onSelect={onSelect} />;
   }
 }
 
@@ -101,12 +104,23 @@ function Nav({ route, index }: { route: Route; index?: Index }) {
 }
 
 /** The right panel: a preview of what was picked on a canvas, one click from its page. */
-function Panel({ route, index, selected }: { route: Route; index?: Index; selected?: string }) {
+function Panel({ route, index, manifest, selected }: { route: Route; index: Index; manifest: Manifest; selected?: string }) {
   const [kind, key] = selected ? [selected.slice(0, selected.indexOf(':')), selected.slice(selected.indexOf(':') + 1)] : [];
   const change = useData<Change>(kind === 'change' ? `change/${key}.json` : undefined).data;
   const commit = useData<Commit>(kind === 'commit' ? `commit/${key}.json` : undefined).data;
-  const branch = kind === 'branch' ? index?.branches.find(b => b.name === key) : undefined;
-  const session = kind === 'session' ? index?.sessions.find(s => s.key === key) : undefined;
+  const branch = kind === 'branch' ? index.branches.find(b => b.name === key) : undefined;
+  // Sessions open in the panel scoped to the page: behind this commit, in this change, or all.
+  const pageCommit = useData<Commit>(route.view === 'commit' ? `commit/${route.sha}.json` : undefined).data;
+  const pageChange = useData<Change>(route.view === 'change' ? `change/${route.id}.json` : undefined).data;
+  const opening = parseOpening(selected);
+  if (opening || route.view === 'commit' && !selected) {
+    const [keys, scope, here] = pageCommit ? [pageCommit.sessionsNamed.map(s => s.key), `behind ${short(pageCommit.sha)}`,
+      new Set([pageCommit.sha, ...(pageCommit.from && pageCommit.from.how !== 'amend' ? pageCommit.from.commits : [])])]
+      : pageChange ? [pageChange.sessions, pageChange.pr ? `in #${pageChange.pr}` : 'in this change', new Set(pageChange.commits.map(c => c.sha))]
+      : [index.sessions.map(s => s.key), 'in this project', undefined];
+    return <SessionsPanel key={selected ?? ''} keys={keys} scope={scope} opening={opening} here={here} index={index} manifest={manifest} />;
+  }
+  if (kind === 'person' && key) return <PersonPanel name={key} index={index} manifest={manifest} />;
   if (branch) return (
     <>
       <span className="kicker">Branch · no pull request yet</span>
@@ -120,16 +134,6 @@ function Panel({ route, index, selected }: { route: Route; index?: Index; select
         </div>
       ))}
       <p className="small muted" style={{ marginTop: 12 }}>{plural(branch.sessions, 'session')} behind it, by <b>{branch.author}</b>. It gets a full page, with its canvas, once a pull request is opened.</p>
-    </>
-  );
-  if (session) return (
-    <>
-      <span className="kicker">Session · {session.harness}</span>
-      <h3><code style={{ fontSize: 14 }}>{short(session.id)}</code> {session.title}</h3>
-      <div className="facts"><span><b>{plural(session.turns, 'turn')}</b></span><span>by <b>{session.person}</b></span><span>last active {ago(session.lastActiveAt)}</span></div>
-      {!session.turns && <p className="small t-bad" style={{ marginTop: 8 }}>Not on the remote: a record names it, but its turns can&apos;t be read here.</p>}
-      <span className="kicker" style={{ marginTop: 12 }}>Commits pointing here</span>
-      <div className="row">{session.commits.map(sha => <button key={sha} className="pos" onClick={() => go({ view: 'commit', sha })}>{short(sha)}</button>)}</div>
     </>
   );
   if (selected === 'earlier') return <div className="helptext"><span className="kicker">Before team mode</span><h3>Earlier commits</h3>
@@ -159,10 +163,12 @@ function Panel({ route, index, selected }: { route: Route; index?: Index; select
       <span className="kicker">How to read it</span><h3>Drag the canvas, click anything</h3>
       <p>Commit cards sit on the branch. Below, each session is a row of snippets: one per stretch of turns a commit points to, at most five boxes, with ⋯ when there are more.
         A straight wire runs from a commit to its snippet: that pointer is what a commit&apos;s record stores.</p>
-      <p>Click a commit card to preview it here, then open its page. Click a session to see it here.</p>
+      <p>Click a commit card to preview it here, then open its page. Click a snippet and its session opens here with that stretch marked; a turn opens to the chat view.</p>
       <p>Faded boxes are turns another change&apos;s commit points to; dashed ones, turns no commit points to.</p>
     </div>
   );
+  if (route.view === 'people') return <div className="helptext"><span className="kicker">People</span><h3>Click a person</h3><p>Their recent changes and the sessions they recorded open here.</p></div>;
+  if (route.view === 'sessions') return <div className="helptext"><span className="kicker">Sessions</span><h3>Click a session</h3><p>It opens here with its turns; a turn opens to the chat view, as the Usage dashboard shows it.</p></div>;
   if (route.view === 'branches') return (
     <div className="helptext">
       <span className="kicker">Active branches</span><h3>Work not on main yet</h3>

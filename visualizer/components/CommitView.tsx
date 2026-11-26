@@ -7,6 +7,7 @@ import { useData, useMany } from '@/lib/data';
 import { go } from '@/lib/route';
 import { BASIS, HOW, STATUS, TONE, ago, plural, reasonWords, short } from '@/lib/words';
 import { Avatar, Crumbs, Dot, FoundPath, Seg, StateNote } from './bits';
+import { Markdown } from './Markdown';
 
 type Tab = 'pieces' | 'guide' | 'sessions';
 const LABEL: Record<Piece['state'], [string, string]> = { recorded: ['lb-rec', 'recorded'], outside: ['lb-out', 'changed outside any recorded step'], 'two-sessions': ['lb-amb', 'seen by two sessions'] };
@@ -130,7 +131,7 @@ function Pieces({ commit, onSelect }: { commit: Commit; onSelect: (key?: string)
             <div key={k} className="piece">
               <span className="h-delta">{p.header}</span><span className="spacer" />
               {p.steps.map((s, j) => (
-                <button key={j} className="pos" title={s.attribution ? `${s.position} · ${s.attribution}` : s.position} onClick={() => onSelect(`session:${s.session}`)}>
+                <button key={j} className="pos" title={s.attribution ? `${s.position} · ${s.attribution}` : s.position} onClick={() => onSelect(s.turn ? `turn:${s.session}#${s.turn}` : `session:${s.session}`)}>
                   {s.position} {idOf(s.session)}</button>
               ))}
               {p.unexplained > 0 && <span className="small t-warn">{plural(p.unexplained, 'line')} no recorded step made</span>}
@@ -154,29 +155,9 @@ function Guide({ commit }: { commit: Commit }) {
     <>
       <p className="small muted">Derived, not evidence. {g.problems.length ? <span className="t-bad">Its check found {plural(g.problems.length, 'problem')}:</span> : 'Its citations were checked against this build.'} · {facts}</p>
       {g.problems.length > 0 && <ul className="small t-bad" style={{ margin: '0 0 10px' }}>{g.problems.map((p, k) => <li key={k}>{p}</li>)}</ul>}
-      <div className="guide">{guideBlocks(g.text)}</div>
+      <div className="guide"><Markdown text={g.text} /></div>
     </>
   );
-}
-
-/** Just enough Markdown for a guide: headings, list items, paragraphs. Nothing is cut or reworded. */
-function guideBlocks(text: string): React.ReactNode[] {
-  const out: React.ReactNode[] = [];
-  let list: string[] = [], para: string[] = [];
-  const flush = () => {
-    if (para.length) out.push(<p key={out.length}>{para.join(' ')}</p>);
-    if (list.length) out.push(<ul key={out.length}>{list.map((item, k) => <li key={k}>{item}</li>)}</ul>);
-    para = []; list = [];
-  };
-  for (const line of text.split('\n')) {
-    const heading = /^#{1,6}\s+(.*)$/.exec(line), item = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (heading) { flush(); out.push(<p key={out.length}><b>{heading[1]}</b></p>); }
-    else if (item) { if (para.length) { const p = para; para = []; out.push(<p key={out.length}>{p.join(' ')}</p>); } list.push(item[1]); }
-    else if (!line.trim()) flush();
-    else { if (list.length) flush(); para.push(line); }
-  }
-  flush();
-  return out;
 }
 
 function Sessions({ commit, index, manifest, onSelect }: { commit: Commit; index: Index; manifest: Manifest; onSelect: (key?: string) => void }) {
@@ -186,7 +167,7 @@ function Sessions({ commit, index, manifest, onSelect }: { commit: Commit; index
   const self = new Set([commit.sha, ...(commit.from && commit.from.how !== 'amend' ? commit.from.commits : [])]);
   return (
     <>
-      <p className="small muted" style={{ margin: 0 }}>Every turn, tagged by the commit that points to it · click a session to see it in the panel</p>
+      <p className="small muted" style={{ margin: 0 }}>Every turn, tagged by the commit that points to it · click a turn to read it in the panel</p>
       {commit.sessionsNamed.map(s => <SessionBlock key={s.key} s={s} commit={commit} self={self} summary={index.sessions.find(x => x.key === s.key)}
         listing={listings?.find(l => l?.key === s.key)} onSelect={onSelect} />)}
     </>
@@ -212,7 +193,7 @@ function SessionBlock({ s, commit, self, summary, listing, onSelect }: { s: Comm
         const here = t.cited.some(c => self.has(c)) || mine.has(t.turn);
         const other = t.cited.find(c => !self.has(c));
         return (
-          <div key={t.turn} className={`tline ${here ? 'here' : ''}`} onClick={() => onSelect(`session:${s.key}`)}>
+          <div key={t.turn} className={`tline ${here ? 'here' : ''}`} onClick={() => onSelect(`turn:${s.key}#${t.turn}`)}>
             <code>t{t.turn}</code><span className="req">{t.request}</span>
             {here ? <span className="tag this">this commit</span> : other ? <span className="tag">{short(other)}</span> : <span className="tag none">no commit</span>}
           </div>
