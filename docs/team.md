@@ -98,6 +98,15 @@ as it would in any Claude Code session.
    names its records by `Wisdom-Record:` line alone does it fetch every record, still no
    session, since a line gives a record's ID, not its commit.
 
+   In GitHub Actions it also shows its result on the pull request as a check run named
+   **Wisdom**. Its title is one line ("3 of 4 commits explained by recorded sessions · 1 needs
+   attention"), and its summary lists each commit that needs attention and why. With the
+   [team's dashboard](#commits-for-your-team), **Details** opens the pull request there, with its
+   commits and the sessions behind them. The dashboard updates a few minutes after each push.
+   The check run only reports: pass or fail is the check's own. It needs `checks: write`. A
+   pull request from a fork gets a read-only token, so there the check run is refused, and the
+   job's own summary page shows the same.
+
 A model writes guides by default. `wisdom guide off` stops calling a model for your own
 commits: Wisdom writes a plain guide from the record instead, naming the step that made
 each piece and quoting what was asked in that turn. It costs nothing and comes out the same
@@ -116,7 +125,7 @@ the model back on.
 | `wisdom guide on\|off` | Team mode: who writes your guides, a model reading the sessions (on, the default) or Wisdom from the record with no model (off). Local mode: whether a model writes one after each commit (off by default; on installs only `post-commit`). Each commit's job goes by the switch, and by the policy's `guides` writer, as they were at that commit. |
 | `wisdom guide <commit>` | A model writes that commit's guide now, in either mode, from its record's window. In team mode it goes with your next push; in local mode it stays on this machine. |
 | `wisdom glance --commit <commit>` | A commit's pieces, the steps that made them, and its guide. |
-| `wisdom check --range A..B` | For CI: needs no data folder. Exit code 1 when a commit needs attention. |
+| `wisdom check --range A..B` | For CI: needs no data folder. Exit code 1 when a commit needs attention. In GitHub Actions, also a check run on the pull request, and the job's summary. |
 | `wisdom team push` | Sends your links, sessions and records now, without a `git push`. |
 | `wisdom team fetch` | Brings here, read-only, the records and links of the commits your own branches reach, and the teammates' sessions those records name; applies the whole deletion list. |
 | `wisdom team sync on\|off` | Whether `git fetch` and `git pull` also bring the team's commit links and records. On adds two lines to the remote's fetch list in `.git/config`; off takes out exactly those. `wisdom init`, `wisdom connect` and `team hooks on` ask first; `team hooks off` undoes it. With no argument it says whether it is on. |
@@ -401,6 +410,9 @@ the same written out in full: GitHub Actions, as an example:
 ```yaml
 name: wisdom
 on: pull_request
+permissions:
+  contents: read
+  checks: write          # the result as a check run on the pull request
 jobs:
   guides:
     runs-on: ubuntu-latest
@@ -411,6 +423,8 @@ jobs:
         with: { node-version: 24 }
       - run: npm install -g @oqura/wisdom
       - run: wisdom check --range origin/${{ github.base_ref }}..HEAD
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 And the job that links what GitHub makes at a merge. `wisdom team init` offers to write it as

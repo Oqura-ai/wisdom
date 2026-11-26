@@ -55,7 +55,7 @@ Each row is one scenario, with the plan section that has its steps. "Passes if" 
 | 10 | Stress: a 2,000-file commit; a lockfile update; stop the daemon mid-session; kill a guide job then push; a long window; `git push --mirror` | [8](live-test-plan.md#8-stress-and-failure) | Nothing lost; gaps stated honestly; the push repairs the missing guide |
 | 11 | Measure: 20 or more pieces whose author you know, checked against the input of the call `glance --commit` names | [9](live-test-plan.md#9-measurement) | Count right, wrong and missed |
 | 12 | Commits on this machine: `wisdom commits`, then commit, amend, rebase and record while the page is open | — | Each change shows within seconds, the page and panel staying where they were; statuses as `glance --commit` gives them |
-| 13 | The team's Commits dashboard, end to end, on a scratch repository: `wisdom commits deploy`, push the CI file, a pull request, a merge, `team delete` | — | The first build deploys; a reader signs in and sees the merge as it landed; someone without access is refused; the deleted session is gone after the rebuild; older deployments are removed |
+| 13 | The team's Commits dashboard, end to end, on a scratch repository: `wisdom commits deploy`, push the CI file, a pull request, a merge, `team delete` | — | The first build deploys; the pull request shows a **Wisdom** check run whose Details open it on the dashboard; a reader signs in and sees the merge as it landed; someone without access is refused; the deleted session is gone after the rebuild; older deployments are removed |
 
 ## Status of the last full run
 

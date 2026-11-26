@@ -77,6 +77,7 @@ test('the workflows: the team\'s one file calls Wisdom\'s reusable one, which ch
   assert.deepEqual(full.jobs.wisdom.with, { main: 'trunk', commits: true, 'vercel-org-id': 'team_x', 'vercel-project-id': 'prj_y' });
   assert.equal(full.jobs.wisdom.secrets.VERCEL_TOKEN, '${{ secrets.WISDOM_VERCEL_TOKEN }}');
   assert.equal(full.permissions.contents, 'write', 'relink pushes link refs');
+  assert.equal(full.permissions.checks, 'write', 'a called workflow gets no more than its caller grants: the check run needs it here too');
   assert.equal(parse(teamWorkflowText('main', { orgId: 'a', projectId: 'b', public: true })).jobs.wisdom.with.public, true);
 
   // Wisdom's reusable workflow, as published.
@@ -86,6 +87,7 @@ test('the workflows: the team\'s one file calls Wisdom\'s reusable one, which ch
   assert.match(steps('check'), /wisdom check --range/);
   assert.match(steps('relink'), /wisdom team relink --range/);
   assert.equal(reusable.jobs.relink.permissions.contents, 'write');
+  assert.equal(reusable.jobs.check.permissions.checks, 'write', 'the check posts its result as a check run');
   const commits = reusable.jobs.commits;
   assert.equal(commits.needs, 'relink', 'built after relink, so a merge\'s new links count');
   assert.equal(commits.concurrency['cancel-in-progress'], true, 'the newest build wins');

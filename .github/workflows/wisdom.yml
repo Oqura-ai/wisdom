@@ -5,7 +5,8 @@
 #     wisdom:
 #       uses: Oqura-ai/wisdom/.github/workflows/wisdom.yml@v1
 #
-#   check    on a pull request: every agent commit has its guide and its sessions are pushed
+#   check    on a pull request: every agent commit has its guide and its sessions are pushed,
+#            reported as a check run whose Details open the pull request on the dashboard
 #   relink   on a push to the default branch: link the commits GitHub made at a merge
 #   commits  the team's Commits dashboard, built and deployed (after relink, so new links count),
 #            on the default branch, on the team's own pull requests, on the schedule and by hand
@@ -48,6 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      checks: write          # its result as a check run on the pull request (a fork's is refused; the job summary has it)
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -55,6 +57,8 @@ jobs:
         with: { node-version: 24 }
       - run: npm install -g "@oqura/wisdom@${{ inputs.wisdom-version }}"
       - run: wisdom check --range "origin/${{ github.base_ref }}..HEAD"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   relink:
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', inputs.main)

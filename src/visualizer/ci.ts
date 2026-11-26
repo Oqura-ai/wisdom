@@ -119,6 +119,7 @@ ${triggers}
 permissions:
   contents: write        # relink pushes Wisdom's link refs (refs/wisdom/...), never a branch
   pull-requests: read
+  checks: write          # the check's result, shown on each pull request
 jobs:
   wisdom:
     uses: ${REUSABLE}

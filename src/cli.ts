@@ -167,8 +167,13 @@ async function main(): Promise<void> {
   if (command === 'connect') { await connectProject(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
   // These two work in any git checkout, with no data folder: an admin's first step, and CI.
   if (command === 'check' && values.range) {
-    const result = prCheck(path.resolve(values.cwd ?? process.cwd()), values.range, values.remote);
-    console.log(result.text); if (!result.ok) process.exitCode = 1; return;
+    const cwd = path.resolve(values.cwd ?? process.cwd());
+    const result = prCheck(cwd, values.range, values.remote);
+    console.log(result.text);
+    // In GitHub Actions: also as a check run on the pull request. It only reports.
+    const { reportCheck } = await import('./team/checkrun.js');
+    for (const line of await reportCheck(cwd, values.remote ?? readPolicy(cwd)?.remote ?? 'origin', result)) console.log(line);
+    if (!result.ok) process.exitCode = 1; return;
   }
   if (command === 'team' && first === 'init') {
     const cwd = path.resolve(values.cwd ?? process.cwd());

@@ -5,7 +5,8 @@ import { gitText } from './gitrefs.js';
  * merge, where no git hook on anyone's machine saw GitHub squash or rebase the work); and, for
  * the Commits build in CI, each pull request's title, state, branch and author, the open ones,
  * and the GitHub username behind each of their commits (usernames only, policy: never an email
- * in what is shown). Read-only. Another forge (GitLab) would be another module with the same questions.
+ * in what is shown). Read-only but for one write: the check run `wisdom check` posts on a pull
+ * request (postCheckRun). Another forge (GitLab) would be another module with the same questions.
  *
  * Where: GITHUB_API_URL (GitHub Enterprise, or a test's stand-in), else api.github.com.
  * Which repository: GITHUB_REPOSITORY (set in GitHub Actions), else the remote's URL.
@@ -115,4 +116,35 @@ export function githubApi(cwd: string, remote: string, env: NodeJS.ProcessEnv = 
       return found;
     },
   };
+}
+
+/** What `wisdom check` reports on a pull request (GitHub's check run): a title, a summary and
+ * text in Markdown, and where Details leads. */
+export interface CheckRun { name: string; headSha: string; ok: boolean; title: string; summary: string; text?: string; detailsUrl?: string }
+
+/** Post a check run on a commit (the only thing Wisdom ever writes through GitHub's API). Needs
+ * a token with `checks: write`; a fork's pull request gets a read-only one, and is refused. */
+export async function postCheckRun(cwd: string, remote: string, run: CheckRun, env: NodeJS.ProcessEnv = process.env): Promise<{ url?: string }> {
+  let repository = env.GITHUB_REPOSITORY;
+  if (!repository) {
+    try { repository = repositoryFromUrl(gitText(cwd, ['remote', 'get-url', remote])); } catch { repository = undefined; }
+  }
+  if (!repository) throw new Error(`${remote} is not a GitHub repository, and GITHUB_REPOSITORY is not set`);
+  const token = env.GITHUB_TOKEN || env.GH_TOKEN;
+  if (!token) throw new Error('no GITHUB_TOKEN to post with');
+  const base = (env.GITHUB_API_URL || 'https://api.github.com').replace(/\/+$/, '');
+  // GitHub's limits on a check run's output.
+  const cut = (text: string, max: number) => text.length > max ? `${text.slice(0, max - 40)}\n\n… cut at GitHub's limit; the job log has all of it.` : text;
+  const response = await fetch(`${base}/repos/${repository}/check-runs`, {
+    method: 'POST',
+    headers: { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'wisdom-check', authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: run.name, head_sha: run.headSha, status: 'completed', conclusion: run.ok ? 'success' : 'failure',
+      ...(run.detailsUrl ? { details_url: run.detailsUrl } : {}),
+      output: { title: cut(run.title, 255), summary: cut(run.summary, 65_000), ...(run.text ? { text: cut(run.text, 65_000) } : {}) },
+    }),
+  });
+  if (!response.ok) throw new Error(`GitHub answered ${response.status}${response.status === 403 ? ' (a pull request from a fork gets a read-only token; otherwise give the job checks: write)' : ''}`);
+  const body = await response.json() as { html_url?: string };
+  return body.html_url ? { url: body.html_url } : {};
 }

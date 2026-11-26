@@ -443,7 +443,11 @@ export function prune(captures: SessionStore, remoteName?: string, now = Date.no
 
 /** `wisdom check --range base..head`, for CI: every commit of the PR with agent work has a
  * checked guide, and every session its record names is on the remote. Needs no data folder. */
-export function prCheck(cwd: string, range: string, remoteName?: string): { ok: boolean; text: string } {
+/** One commit as the check found it: `problems` fail it (the check's own rules); `recorded`:
+ * whether any record stands for it (none fails nothing: made without Wisdom, or not linked yet). */
+export interface CheckedCommit { sha: string; subject: string; recorded: boolean; problems: string[] }
+
+export function prCheck(cwd: string, range: string, remoteName?: string): { ok: boolean; text: string; commits: CheckedCommit[] } {
   const policy = policyOrThrow(cwd);
   const remote = remoteName ?? policy.remote ?? 'origin';
   if (range.startsWith('-')) throw new Error(`"${range}" is not a range.`);
@@ -463,9 +467,12 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
   }))];
   if (carried.length && recordsWithIds(cwd, carried).length < carried.length) fetchAllRecords(cwd, remote, policy, refs);
   const lines: string[] = [];
+  const checked: CheckedCommit[] = [];
   let failed = 0;
   for (const sha of commits) {
     const subject = gitText(cwd, ['log', '-1', '--format=%s', sha]);
+    const entry: CheckedCommit = { sha, subject, recorded: false, problems: [] };
+    checked.push(entry);
     lines.push(`${sha.slice(0, 12)}  ${subject}`);
     // A commit rewritten where its record was not kept (a squash merge on the server) has no
     // record under its own hash. Its links lead to the records that stand for it; failing a
@@ -486,6 +493,7 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
       texts = [...texts, ...carried];
     }
     if (!texts.length) { lines.push(linked ? '    no record of the commits it came from is here' : '    no record or link: made without Wisdom, or not linked yet (wisdom team relink), or its record was not pushed (wisdom team push)'); continue; }
+    entry.recorded = true;
     let problems = 0;
     for (const text of texts) {
       const record = JSON.parse(text) as CommitRecord;
@@ -497,10 +505,11 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
         ...missing.map(id => `session ${id.slice(0, 8)} is not on ${remote}`),
       ];
       problems += found.length;
+      entry.problems.push(...found);
       lines.push(`    ${found.length ? found.join(' · ') : [agent ? 'agent work' : 'no agent work recorded', record.guide ? `guide by ${record.guide.writer}` : '', `${record.sessions.length} sessions`].filter(Boolean).join(' · ')}`);
     }
     if (problems) failed++;
   }
   lines.unshift(`${commits.length} commits · ${failed ? `${failed} need attention` : 'all good'}`, '');
-  return { ok: !failed, text: lines.join('\n') };
+  return { ok: !failed, text: lines.join('\n'), commits: checked };
 }
