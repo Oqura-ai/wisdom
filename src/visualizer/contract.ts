@@ -21,8 +21,12 @@
  *
  * This file holds types only (and the version number and one path helper), so the browser app can import it.
  */
-import type { LinkBasis, LinkHow } from '../team/links.js';
-import type { TurnItem } from '../read/conversation.js';
+// Nothing here may import Wisdom's Node code: the browser app type-checks this file. The link
+// kinds are written out (build.ts checks they match links.ts); a turn's shape has its own file.
+import type { TurnItem } from '../read/turn.js';
+
+export type LinkHow = 'amend' | 'rebase' | 'squash-merge' | 'rebase-merge' | 'filter-repo' | 'rewrite';
+export type LinkBasis = 'git' | 'github' | 'commit-map' | 'patch-id' | 'order';
 
 /** Raised when a file's shape changes in a way an older app cannot read. */
 export const CONTRACT_VERSION = 1;
@@ -182,6 +186,8 @@ export interface SessionSummary {
   /** The commits whose records name it. */
   commits: string[];
   lastActiveAt: string;
+  /** Its folder (sessionPath): `index.json` and `t<N>.json` are inside, when this build has its turns. */
+  path: string;
 }
 
 // ---------- change/<id>.json ----------

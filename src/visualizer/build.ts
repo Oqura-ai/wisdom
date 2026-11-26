@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { catFiles, git, listRefs, POLICY_FILE, recordRefs, refSafe } from '../team/gitrefs.js';
-import { loadLinks, type CommitLink } from '../team/links.js';
+import { loadLinks, type CommitLink, type LinkBasis, type LinkHow } from '../team/links.js';
 import { agentWork, type CommitRecord, type RecordStep } from '../team/commits.js';
 import { CONTRACT_VERSION, sessionPath } from './contract.js';
 import type * as C from './contract.js';
@@ -60,6 +60,11 @@ export interface BuildInput {
   wisdomVersion: string;
   now?: Date;
 }
+
+// The contract writes the link kinds out for the browser; these fail to compile if they drift from links.ts.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const howMatches: Same<LinkHow, C.LinkHow> = true, basisMatches: Same<LinkBasis, C.LinkBasis> = true;
+void howMatches; void basisMatches;
 
 /** Changes per page of main. */
 export const MAIN_PAGE = 10;
@@ -197,7 +202,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
         if (!here) reasons.push({ code: 'session-missing', session: key });
         if (!named.some(n => n.key === key)) named.push({ key, id: s.id, harness: here?.harness ?? s.harness, person: info.author, present: !!here, ...(s.turns ? { turns: s.turns } : {}) });
         const summary = sessions.get(key) ?? { key, id: s.id, harness: here?.harness ?? s.harness, person: info.author, title: here?.title ?? '',
-          turns: here?.turns ?? 0, commits: [], lastActiveAt: here?.lastActiveAt ?? info.committedAt };
+          turns: here?.turns ?? 0, commits: [], lastActiveAt: here?.lastActiveAt ?? info.committedAt, path: sessionPath(key) };
         if (!summary.commits.includes(sha)) summary.commits.push(sha);
         if (info.committedAt > summary.lastActiveAt) summary.lastActiveAt = info.committedAt;
         sessions.set(key, summary);
@@ -414,7 +419,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
   if (evidence.turns) for (const s of sessions.values()) {
     const turns = evidence.turns(s.id);
     if (!turns.length) continue;
-    const base = sessionPath(s.key);
+    const base = s.path;
     const citedBy = (turn: number) => [...cited.get(s.key)?.get(turn) ?? []];
     const listing: C.SessionTurns = { ...s, turnList: turns.map(t => ({ turn: t.turn, request: t.request, at: t.at, cited: citedBy(t.turn) })) };
     files.set(`${base}/index.json`, listing);

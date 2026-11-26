@@ -1,0 +1,22 @@
+{
+  "name": "wisdom-commits",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Commits: every change on main and the branches, the commits behind it, and the recorded sessions behind those. Static files; reads the data the Commits builder writes.",
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 7436",
+    "build": "next build",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.6",
+    "react": "19.2.9",
+    "react-dom": "19.2.9"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  }
+}

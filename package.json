@@ -46,6 +46,10 @@
     "dashboard:install": "npm --prefix dashboard ci",
     "dashboard:build": "npm --prefix dashboard run build && node scripts/bundle-dashboard.mjs",
     "dashboard:dev": "npm --prefix dashboard run dev",
+    "commits:install": "npm --prefix visualizer ci",
+    "commits:build": "npm --prefix visualizer run build",
+    "commits:dev": "npm --prefix visualizer run dev",
+    "commits:sample": "npm run build && node scripts/commits-sample.mjs",
     "prepack": "npm run build && npm run dashboard:build",
     "prepublishOnly": "npm test"
   },

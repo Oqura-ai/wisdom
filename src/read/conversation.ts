@@ -4,6 +4,8 @@ import { EvidenceReader, evidenceVersion } from '../storage/evidence.js';
 import { nativeMessage } from '../harnesses/index.js';
 import { messageContent } from '../core/content.js';
 import { estimateCost } from './prices.js';
+import type { Body, Change, Subagent, TurnItem } from './turn.js';
+export type { Body, Change, Subagent, TurnItem } from './turn.js';
 
 /** One turn, at one version. Without maxChars every body is returned whole. */
 export interface TurnRequest { captureId: string; requestId: string; readVersion?: number; maxChars?: number }
@@ -30,19 +32,6 @@ export function cleanOutput(body: any): any {
   return blocks === undefined ? extra : { content: text, ...extra };
 }
 
-/** Clipped body: long text keeps its size and the record to inspect for the rest. */
-export interface Body { text: string; truncated?: true; totalChars?: number; recordId?: string }
-export interface Change { kind: 'change'; id: string; at: string; path?: string; operation?: string; attribution?: string; worktree?: string; branch?: string;
-  patch?: Body; patchUnavailable?: string }
-export interface Subagent { agentId: string; agentType?: string; task?: Body; items: TurnItem[]; report?: Body }
-export type TurnItem =
-  | { kind: 'text'; id: string; at: string; text: Body; source: 'transcript' | 'hook' }
-  | { kind: 'thinking'; id: string; at: string; text: Body; redacted?: boolean; durationMs?: number }
-  | { kind: 'tool'; id: string; at: string; toolCallId: string; name: string; agentId?: string; input?: Body; output?: Body;
-      status: 'ok' | 'error' | 'recorded' | 'pending'; resultBasis?: string; durationMs?: number; changes: Change[];
-      subagent?: Subagent; native?: true }
-  | Change
-  | { kind: 'subagent'; id: string; at: string; subagent: Subagent };
 
 /** Which of two results to show for a call. One that says how the call ended beats one that
  * does not; otherwise a hook result is preferred over one established from the transcript.
