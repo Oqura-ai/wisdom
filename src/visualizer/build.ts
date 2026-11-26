@@ -16,8 +16,9 @@ import path from 'node:path';
 import { git, listRefs, readFile, recordRefs, refSafe, teamCommit } from '../team/gitrefs.js';
 import { readLink, type CommitLink } from '../team/links.js';
 import { agentWork, type CommitRecord, type RecordStep } from '../team/commits.js';
-import { CONTRACT_VERSION } from './contract.js';
+import { CONTRACT_VERSION, sessionPath } from './contract.js';
 import type * as C from './contract.js';
+import type { TurnItem } from '../read/conversation.js';
 import type { GitHubFacts } from './github.js';
 
 // ---------- inputs ----------
@@ -30,6 +31,8 @@ export interface Evidence {
   step(step: RecordStep): 'ok' | 'changed' | 'missing';
   /** What is wrong with a guide, checked against the sessions here (guides.ts). Empty: it passes. */
   guide(text: string, record: CommitRecord): string[];
+  /** A session's turns in recorded order; each turn's items are assembled only when written. */
+  turns?(id: string): { turn: number; at: string; request: string; items: () => TurnItem[] }[];
 }
 
 export interface BuildInput {
@@ -381,6 +384,23 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     for (const c of change.commits) { const full = commits.get(c.sha); if (full && !full.change) full.change = change.id; }
   }
   for (const commit of commits.values()) files.set(`commit/${commit.sha}.json`, commit);
+
+  // ----- sessions, one file per turn -----
+  const cited = new Map<string, Map<number, Set<string>>>();
+  for (const commit of commits.values()) for (const file of commit.files) for (const piece of file.pieces) for (const step of piece.steps) {
+    if (step.turn === undefined) continue;
+    const turns = cited.get(step.session) ?? cited.set(step.session, new Map()).get(step.session)!;
+    (turns.get(step.turn) ?? turns.set(step.turn, new Set()).get(step.turn)!).add(commit.sha);
+  }
+  if (evidence.turns) for (const s of sessions.values()) {
+    const turns = evidence.turns(s.id);
+    if (!turns.length) continue;
+    const base = sessionPath(s.key);
+    const citedBy = (turn: number) => [...cited.get(s.key)?.get(turn) ?? []];
+    const listing: C.SessionTurns = { ...s, turnList: turns.map(t => ({ turn: t.turn, request: t.request, at: t.at, cited: citedBy(t.turn) })) };
+    files.set(`${base}/index.json`, listing);
+    for (const t of turns) files.set(`${base}/t${t.turn}.json`, (): C.Turn => ({ session: s.key, turn: t.turn, at: t.at, request: t.request, items: t.items(), cited: citedBy(t.turn) }));
+  }
   return files;
 }
 
@@ -406,7 +426,8 @@ export function writeData(dir: string, input: BuildInput, files: Map<string, unk
   fs.rmSync(building, { recursive: true, force: true });
   const written: Record<string, string> = {};
   for (const [name, value] of files) {
-    const text = json(value);
+    // A turn is assembled only now, so a big build never holds every transcript at once.
+    const text = json(typeof value === 'function' ? value() : value);
     const out = path.join(building, ...name.split('/'));
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, text);

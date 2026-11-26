@@ -40,7 +40,7 @@ export function remoteRefs(project: string, remote: string, policy: Policy): Map
   return new Map(out ? out.split('\n').map(line => { const [sha, ref] = line.split('\t'); return [ref, sha] as [string, string]; }) : []);
 }
 
-function readDeleted(project: string): Deleted[] {
+export function readDeleted(project: string): Deleted[] {
   const bytes = readFile(project, DELETED, 'deleted.json');
   try { return bytes ? JSON.parse(bytes.toString('utf8')) : []; } catch { return []; }
 }

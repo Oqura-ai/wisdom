@@ -11,7 +11,7 @@
  *   main/<page>.json             later pages of main (page 2 onward)
  *   change/<id>.json             one change: an open or merged pull request, or a branch's work
  *   commit/<sha>.json            one commit: how its record was found, its pieces, guide, sessions
- *   session/<key>/index.json     one session's turn list
+ *   session/<key>/index.json     one session's turn list (see sessionPath)
  *   session/<key>/t<N>.json      one turn, in recorded order (opening a turn loads only this)
  *
  * Statuses and their reasons are decided by the builder, from what this snapshot can prove;
@@ -19,7 +19,7 @@
  * check, guides.ts, and each step's hashes against its session), never trusting what a record
  * says it found. Everything here is plain JSON: no functions, no dates as objects.
  *
- * This file holds types only (and the version number), so the browser app can import it.
+ * This file holds types only (and the version number and one path helper), so the browser app can import it.
  */
 import type { LinkBasis, LinkHow } from '../team/links.js';
 import type { TurnItem } from '../read/conversation.js';
@@ -265,8 +265,12 @@ export interface CommitSession {
 // ---------- session/<key>/index.json and t<N>.json ----------
 
 export interface SessionTurns extends SessionSummary {
-  turnList: { turn: number; request: string; at: string; steps: number; changes: number }[];
+  /** Every turn in recorded order; `cited`: the commits citing a step in it. */
+  turnList: { turn: number; request: string; at: string; cited: string[] }[];
 }
+
+/** Where a session's files are: `session/<recorder>/<id>/` (key parts made safe for a path). */
+export const sessionPath = (key: string) => `session/${key.split('/').map(part => part.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_') || '_').join('/')}`;
 
 /** One turn as the Usage dashboard shows it: the same items, assembled in recorded order. */
 export interface Turn {

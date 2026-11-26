@@ -182,3 +182,66 @@ test('with GitHub: pull request titles, branches and open pull requests, and use
     assert.deepEqual([open.state, open.title, open.pr], ['open', 'Exponential backoff', 130]);
   } finally { await stub.close(); }
 });
+
+test('real sessions: a fetched share file is read, its turns written one per file, and both checks re-run against it', async () => {
+  const { randomUUID } = await import('node:crypto');
+  const { startDaemon } = await import('../src/service/daemon.js');
+  const { call } = await import('../src/service/client.js');
+  const { draftShare, writeShare } = await import('../src/share/share.js');
+  const { marker } = await import('../src/core/paths.js');
+  const { storeEvidence, remoteSessions } = await import('../src/visualizer/evidence.js');
+  const { sessionPath } = await import('../src/visualizer/contract.js');
+
+  // A teammate's session: two turns, the second running a tool. Shared as a team push would.
+  const sender = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-visualizer-sender-')));
+  fs.mkdirSync(path.join(sender, '.wisdom'));
+  fs.writeFileSync(path.join(sender, '.wisdom', marker), JSON.stringify({ project: sender }));
+  const daemon = await startDaemon(path.join(sender, '.wisdom'), 0);
+  try {
+    const send = (type: string, extra: Record<string, unknown>) => call(daemon.connection, '/observe', { harness: 'claude-code', cwd: sender,
+      observation: { observationId: randomUUID(), sessionId: 'sess-1', type, ...extra } });
+    await send('input', { data: { text: 'Add a lockout counter' } });
+    await send('input', { data: { text: 'Run the tests' } });
+    await send('tool_started', { toolCallId: 'b1', toolName: 'Bash', data: { input: { command: 'npm test' } } });
+    await send('tool_finished', { toolCallId: 'b1', toolName: 'Bash', data: { response: { stdout: '23 pass' } } });
+    const draft = await draftShare(daemon.connection, ['sess-1']);
+    const file = path.join(sender, 'out.wisdom-share');
+    writeShare(draft, draft.findings, file);
+
+    // A clone where a fetch brought that session and a record citing it at t2/c1, with hashes the session does not have.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-visualizer-real-'));
+    const run = (...args: string[]) => gitText(dir, args);
+    run('init', '-q', '-b', 'main'); run('config', 'user.name', 'maya'); run('config', 'user.email', 'maya@example.com');
+    fs.writeFileSync(path.join(dir, 'wisdom-team.yaml'), 'repoId: test\n'); run('add', '-A'); run('commit', '-q', '-m', 'Turn on team mode');
+    fs.writeFileSync(path.join(dir, 'lockout.ts'), 'x'); run('add', '-A'); run('commit', '-q', '-m', 'Lock after 5');
+    const sha = run('rev-parse', 'HEAD');
+    setRef(dir, 'refs/wisdom/fetched/sessions/r1/sess-1', commitFiles(dir, { 'session.wisdom-share': fs.readFileSync(file) }, 'session'));
+    const value: CommitRecord = { kind: 'wisdom-commit-record', version: 1, commit: { sha, subject: 'Lock after 5', committedAt: '2026-11-20T10:00:00Z', tree: '' },
+      made: 'commit', madeAt: '2026-11-20T10:00:00Z', wisdomVersion: 'test', recorder: 'r1',
+      steps: [{ session: 'sess-1', position: 't2/c1', attribution: 'observed-during-tool', before: null, after: 'not-in-the-session' }],
+      files: [{ path: 'lockout.ts', operation: 'modify' as never, added: 1, removed: 0, complete: true, chain: [0], pieces: [{ header: '@@ -0,0 +1 @@', steps: [0], unexplained: 0 }] }],
+      sessions: [{ id: 'sess-1', harness: 'claude-code', recorder: 'r1', positions: ['t2/c1'] }] };
+    setRef(dir, recordRef(sha), commitFiles(dir, { 'record.json': JSON.stringify(value) }, 'record'));
+
+    const sessions = remoteSessions(dir, path.join(dir, '..', `${path.basename(dir)}-cache`));
+    const build: BuildInput = { project: dir, mode: 'team', main: { name: 'main', ref: 'refs/heads/main' }, branches: [],
+      evidence: storeEvidence(sessions.stores, sessions.ids), wisdomVersion: 'test' };
+    const files = buildData(build);
+    const commit = files.get(`commit/${sha}.json`) as C.Commit;
+    assert.ok(commit.sessionsNamed[0].present, 'the fetched session is here');
+    assert.ok(!commit.reasons.some(r => r.code === 'session-missing'));
+    assert.ok(commit.reasons.some(r => r.code === 'step-changed' && r.detail === 't2/c1'), 'the step is checked against the session, not taken from the record');
+    assert.equal(commit.status, 'attention');
+
+    const base = sessionPath('r1/sess-1');
+    const listing = files.get(`${base}/index.json`) as C.SessionTurns;
+    assert.equal(listing.title, 'Add a lockout counter');
+    assert.deepEqual(listing.turnList.map(t => [t.turn, t.request, t.cited]), [[1, 'Add a lockout counter', []], [2, 'Run the tests', [sha]]]);
+
+    const out = path.join(dir, '..', `${path.basename(dir)}-out`);
+    writeData(out, build, files);
+    const turn = JSON.parse(fs.readFileSync(path.join(out, ...`${base}/t2.json`.split('/')), 'utf8')) as C.Turn;
+    assert.equal(turn.request, 'Run the tests');
+    assert.ok(turn.items.some(item => item.kind === 'tool' && item.name === 'Bash'), 'the turn is assembled as the Usage dashboard shows it');
+  } finally { await daemon.close(); }
+});

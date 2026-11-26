@@ -401,8 +401,8 @@ export function buildRecord(captures: SessionStore, version: number, project: st
 }
 
 /** Has the session a step cites still got that exact change? Each step is checked on its own. */
-type StepState = 'ok' | 'changed' | 'missing';
-function checkStep(stores: (id: string) => SessionStore | undefined, step: RecordStep): StepState {
+export type StepState = 'ok' | 'changed' | 'missing';
+export function checkStep(stores: (id: string) => SessionStore | undefined, step: RecordStep): StepState {
   const store = stores(step.session);
   if (!store) return 'missing';
   const found = store.database.sql.prepare(`SELECT 1 FROM records WHERE capture_id=? AND type='file_change'
