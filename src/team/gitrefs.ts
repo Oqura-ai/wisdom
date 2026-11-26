@@ -123,6 +123,26 @@ export function commitFiles(cwd: string, files: Record<string, string | Buffer>,
   return gitText(cwd, ['commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', message], { env: identityEnv(cwd) });
 }
 
+/** Many objects in one git process (`ref:path`, a sha, `sha^{commit}`...), in the order asked:
+ * undefined for one that is not there. `check`: only whether each is there, not its bytes. */
+export function catFiles(cwd: string, specs: string[], check = false): (Buffer | undefined)[] {
+  if (!specs.length) return [];
+  const out = git(cwd, ['cat-file', check ? '--batch-check' : '--batch'], { input: specs.join('\n') + '\n' });
+  const found: (Buffer | undefined)[] = [];
+  let at = 0;
+  for (let k = 0; k < specs.length; k++) {
+    const end = out.indexOf(0x0a, at);
+    const header = out.subarray(at, end).toString('utf8');
+    at = end + 1;
+    if (/ (missing|ambiguous)$/.test(header)) { found.push(undefined); continue; }
+    if (check) { found.push(Buffer.alloc(0)); continue; }
+    const size = Number(header.split(' ')[2]);
+    found.push(out.subarray(at, at + size));
+    at += size + 1;
+  }
+  return found;
+}
+
 export function readFile(cwd: string, ref: string, name: string): Buffer | undefined {
   try { return git(cwd, ['cat-file', 'blob', `${ref}:${name}`]); } catch { return undefined; }
 }

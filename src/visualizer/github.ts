@@ -7,7 +7,7 @@
  * then falls back to what git has (a merge message's title, a git author name).
  */
 import { git } from '../team/gitrefs.js';
-import { readLink } from '../team/links.js';
+import { loadLinks } from '../team/links.js';
 import type { GitHubApi, PullDetail } from '../team/github.js';
 
 export interface GitHubFacts {
@@ -28,10 +28,11 @@ export async function gatherGitHub(api: GitHubApi, project: string, mainRef: str
   const numbers: number[] = [];
   let line: string[] = [];
   try { line = git(project, ['log', '--first-parent', '--format=%H%x1f%s', mainRef]).toString('utf8').split('\n').filter(Boolean); } catch { line = []; }
+  const links = loadLinks(project);
   for (const entry of line) {
     if (numbers.length >= limit) break;
     const [sha, subject] = entry.split('\x1f');
-    const n = Number(/^Merge pull request #(\d+) /.exec(subject)?.[1] ?? readLink(project, sha)?.pr ?? 0);
+    const n = Number(/^Merge pull request #(\d+) /.exec(subject)?.[1] ?? links.get(sha)?.pr ?? 0);
     if (n && !numbers.includes(n)) numbers.push(n);
   }
   const ask = async <T>(what: string, question: () => Promise<T>): Promise<T | undefined> => {

@@ -38,7 +38,8 @@ function promptText(store: SessionStore, record: LedgerRecord): string {
 }
 const when = (record: LedgerRecord) => record.sourceTimestamp ?? record.observedAt;
 
-export function storeEvidence(stores: (id: string) => SessionStore | undefined, ids: () => string[]): Evidence {
+/** `version`: a session's version when known (a team session's ref), so unchanged turns are reused. */
+export function storeEvidence(stores: (id: string) => SessionStore | undefined, ids: () => string[], version?: (id: string) => string | undefined): Evidence {
   const has = (id: string) => { const store = stores(id); if (!store) return undefined; try { store.get(id); return store; } catch { return undefined; } };
   return {
     session(id) {
@@ -50,6 +51,7 @@ export function storeEvidence(stores: (id: string) => SessionStore | undefined, 
       const last = turns.at(-1);
       return { harness: manifest.harness, title, turns: turns.length, lastActiveAt: manifest.endedAt ?? (last ? when(last) : manifest.startedAt) };
     },
+    ...(version ? { version } : {}),
     step: step => checkStep(stores, step),
     guide: (text, record) => checkGuide(text, record, stores, ids),
     turns(id) {
@@ -65,10 +67,11 @@ export function storeEvidence(stores: (id: string) => SessionStore | undefined, 
 
 /** The sessions a fetch brought into this clone, as read-only stores in `dir` (a cache folder
  * reused between builds: the same share file is imported once). Deleted sessions are skipped. */
-export function remoteSessions(project: string, dir: string): { stores: (id: string) => SessionStore | undefined; ids: () => string[]; keys: Map<string, string> } {
+export function remoteSessions(project: string, dir: string): { stores: (id: string) => SessionStore | undefined; ids: () => string[];
+  keys: Map<string, string>; version: (id: string) => string | undefined } {
   const library = new SharedLibrary(dir);
   const deleted = new Set(readDeleted(project).map(d => d.key));
-  const byId = new Map<string, SessionStore>(), keys = new Map<string, string>();
+  const byId = new Map<string, SessionStore>(), keys = new Map<string, string>(), versions = new Map<string, string>();
   for (const [ref, sha] of listRefs(project, FETCHED)) {
     const key = ref.slice(FETCHED.length);
     if (deleted.has(key)) continue;
@@ -79,10 +82,10 @@ export function remoteSessions(project: string, dir: string): { stores: (id: str
       const file = path.join(temp, `${refSafe(key)}.wisdom-share`);
       fs.writeFileSync(file, bytes);
       const { store } = library.import(file);
-      for (const id of store.ids) { byId.set(id, store); keys.set(id, key); }
+      for (const id of store.ids) { byId.set(id, store); keys.set(id, key); versions.set(id, sha); }
     } catch (error) {
       console.error(`Could not read the session ${key}: ${error instanceof Error ? error.message : error}`);
     } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   }
-  return { stores: id => byId.get(id), ids: () => [...byId.keys()], keys };
+  return { stores: id => byId.get(id), ids: () => [...byId.keys()], keys, version: id => versions.get(id) };
 }

@@ -13,8 +13,8 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, listRefs, readFile, recordRefs, refSafe, teamCommit } from '../team/gitrefs.js';
-import { readLink, type CommitLink } from '../team/links.js';
+import { catFiles, git, listRefs, POLICY_FILE, recordRefs, refSafe } from '../team/gitrefs.js';
+import { loadLinks, type CommitLink } from '../team/links.js';
 import { agentWork, type CommitRecord, type RecordStep } from '../team/commits.js';
 import { CONTRACT_VERSION, sessionPath } from './contract.js';
 import type * as C from './contract.js';
@@ -33,6 +33,14 @@ export interface Evidence {
   guide(text: string, record: CommitRecord): string[];
   /** A session's turns in recorded order; each turn's items are assembled only when written. */
   turns?(id: string): { turn: number; at: string; request: string; items: () => TurnItem[] }[];
+  /** A session's version, when known: while it is the same, its turn files are reused. */
+  version?(id: string): string | undefined;
+}
+
+/** A file made only when written; with `session`, copied from the previous build instead while
+ * that session's version is the same. */
+export class Later {
+  constructor(readonly make: () => unknown, readonly session?: { key: string; version: string }) {}
 }
 
 export interface BuildInput {
@@ -106,15 +114,24 @@ export function buildData(input: BuildInput): Map<string, unknown> {
 
   // Every record in the snapshot, by commit and by its Wisdom-Record ID. A record that names
   // another commit than the one it is kept under is not shown, as `glance --commit` does.
+  // All read in one git process each: records, then links.
   const byCommit = new Map<string, CommitRecord>(), byId = new Map<string, CommitRecord>();
-  for (const [commit, ref] of recordRefs(project)) {
+  const kept = [...recordRefs(project)];
+  const recordBytes = catFiles(project, kept.map(([, ref]) => `${ref}:record.json`));
+  kept.forEach(([commit], k) => {
     try {
-      const record = JSON.parse(readFile(project, ref, 'record.json')?.toString('utf8') ?? 'null') as CommitRecord | null;
-      if (record?.kind !== 'wisdom-commit-record' || record.commit.sha !== commit) continue;
+      const record = JSON.parse(recordBytes[k]?.toString('utf8') ?? 'null') as CommitRecord | null;
+      if (record?.kind !== 'wisdom-commit-record' || record.commit.sha !== commit) return;
       byCommit.set(commit, record);
       if (record.recordId) byId.set(record.recordId, record);
     } catch { /* an unreadable record is no record */ }
-  }
+  });
+  const links = loadLinks(project);
+  const linkOf = (sha: string) => links.get(sha);
+  // Commits links name that this clone does not have (squashed away): read from their records, never asked of git.
+  const linkedFrom = [...new Set([...links.values()].flatMap(link => link.from))];
+  const inGit = catFiles(project, linkedFrom.map(sha => `${sha}^{commit}`), true);
+  const absent = new Set(linkedFrom.filter((_, k) => !inGit[k]));
 
   const github = input.github;
   /** Usernames only: GitHub's for the commit, else the one its email was seen with, else a
@@ -128,7 +145,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
   };
   /** A commit from git, or, for one this clone does not have (squashed away), from its record. */
   const gitCommit = (sha: string, fallbackAuthor = ''): GitCommit => {
-    const found = known.get(sha) ?? learn(logCommits(project, ['-1', sha]))[0];
+    const found = known.get(sha) ?? (absent.has(sha) ? undefined : learn(logCommits(project, ['-1', sha]))[0]);
     if (found) return found;
     const record = byCommit.get(sha);
     return { sha, parents: record?.commit.parent ? [record.commit.parent] : [], author: username(sha, '', fallbackAuthor), email: '',
@@ -145,7 +162,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     if (cached) return cached;
     const info = gitCommit(sha, fallbackAuthor);
     const own = byCommit.get(sha);
-    const link = readLink(project, sha);
+    const link = linkOf(sha);
     const origin = link ? originOf(link) : undefined;
     const reasons: C.Reason[] = [];
     let records: CommitRecord[] = [];
@@ -248,11 +265,11 @@ export function buildData(input: BuildInput): Map<string, unknown> {
         seen.add(from);
         const record = byCommit.get(from);
         if (record) { out.push({ commit: from, record }); continue; }
-        const next = left > 0 ? readLink(project, from) : undefined;
+        const next = left > 0 ? linkOf(from) : undefined;
         if (next) walk(next, left - 1); else out.push({ commit: from });
       }
     };
-    const top = readLink(project, sha);
+    const top = linkOf(sha);
     if (top) walk(top, 20);
     return out;
   };
@@ -275,16 +292,18 @@ export function buildData(input: BuildInput): Map<string, unknown> {
   // ----- main's first-parent line -----
   const line = learn(logCommits(project, ['--first-parent', input.main.ref]));
   // In team mode, commits from before the team file was committed can never have records: they fold into one line.
+  // One git process asks every commit of the line whether it has the team file.
+  const hasPolicy = catFiles(project, line.map(commit => `${commit.sha}:${POLICY_FILE}`), true);
   let teamFrom = line.length;
-  if (line.length && teamCommit(project, line[0].sha)) {
-    teamFrom = line.findIndex(commit => !teamCommit(project, commit.sha));
+  if (line.length && hasPolicy[0]) {
+    teamFrom = hasPolicy.findIndex(found => !found);
     if (teamFrom < 0) teamFrom = line.length;
   }
   const landed = line.slice(0, teamFrom), earlier = line.slice(teamFrom);
   const entries: C.MainEntry[] = [];
   for (let i = 0; i < landed.length; i++) {
     const top = landed[i];
-    const link = readLink(project, top.sha);
+    const link = linkOf(top.sha);
     if (top.parents.length > 1) {
       // A merge commit: its branch's own commits are on main themselves.
       const pr = /^Merge pull request #(\d+) from \S+?\/(\S+)/.exec(top.subject);
@@ -304,27 +323,27 @@ export function buildData(input: BuildInput): Map<string, unknown> {
       const run = [top];
       if (link.how === 'rebase-merge') {
         while (i + 1 < landed.length) {
-          const next = readLink(project, landed[i + 1].sha);
+          const next = linkOf(landed[i + 1].sha);
           if (next?.how !== 'rebase-merge' || next.pr !== link.pr) break;
           run.push(landed[++i]);
         }
       }
       run.reverse();
-      const from = run.flatMap(c => readLink(project, c.sha)?.from ?? []);
+      const from = run.flatMap(c => linkOf(c.sha)?.from ?? []);
       const list = from.map(sha => summary(analyse(sha, top.author)));
       const linkReasons = run.flatMap(c => commitsLinkReasons(c.sha));
       const how: C.LandHow = link.how === 'squash-merge' ? 'squash' : 'rebase';
       const about = github?.pulls.get(link.pr);
       const change = changeOf(String(link.pr), { pr: link.pr, title: about?.title || top.subject.replace(/\s*\(#\d+\)$/, ''), state: 'merged',
         author: about?.author || list[0]?.author || top.author, branch: about?.branch ?? '', base: run[0].parents[0] ?? '', commits: list,
-        landed: { how, at: top.committedAt, onMain: run.map(c => { const l = readLink(project, c.sha)!; return { sha: c.sha, from: originOf(l) }; }) } }, linkReasons);
+        landed: { how, at: top.committedAt, onMain: run.map(c => { const l = linkOf(c.sha)!; return { sha: c.sha, from: originOf(l) }; }) } }, linkReasons);
       entries.push(mainChange(change, top, run.map(c => c.sha), how));
       continue;
     }
     entries.push({ kind: 'direct', commit: summary(analyse(top.sha)) });
   }
   function commitsLinkReasons(sha: string): C.Reason[] {
-    const link = readLink(project, sha);
+    const link = linkOf(sha);
     return link?.basis === 'order' ? [{ code: 'order-link', commit: sha }] : [];
   }
   function mainChange(change: C.Change, top: GitCommit, onMain: string[], how: C.LandHow): C.MainEntry {
@@ -399,7 +418,9 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     const citedBy = (turn: number) => [...cited.get(s.key)?.get(turn) ?? []];
     const listing: C.SessionTurns = { ...s, turnList: turns.map(t => ({ turn: t.turn, request: t.request, at: t.at, cited: citedBy(t.turn) })) };
     files.set(`${base}/index.json`, listing);
-    for (const t of turns) files.set(`${base}/t${t.turn}.json`, (): C.Turn => ({ session: s.key, turn: t.turn, at: t.at, request: t.request, items: t.items(), cited: citedBy(t.turn) }));
+    const version = evidence.version?.(s.id);
+    for (const t of turns) files.set(`${base}/t${t.turn}.json`, new Later((): C.Turn => ({ session: s.key, turn: t.turn, at: t.at, request: t.request, items: t.items() }),
+      version ? { key: s.key, version } : undefined));
   }
   return files;
 }
@@ -414,31 +435,50 @@ const json = (value: unknown) => JSON.stringify(value);
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /** Write the files and their manifest into `dir`, replacing what was there. Built beside it
- * and moved in, so a reader never sees half a build. The manifest is written last. */
-export function writeData(dir: string, input: BuildInput, files: Map<string, unknown>): C.Manifest {
+ * and moved in, so a reader never sees half a build. The manifest is written last. A turn
+ * whose session has the same version as in the build already in `dir` is copied from it;
+ * `reused` counts those, `made` the files made now. */
+export function writeData(dir: string, input: BuildInput, files: Map<string, unknown>): { manifest: C.Manifest; made: number; reused: number } {
   const head = git(input.project, ['rev-parse', input.main.ref]).toString('utf8').trim();
   const inputs: Record<string, string> = {};
   for (const [ref, sha] of listRefs(input.project, 'refs/wisdom/')) inputs[ref] = sha;
-  for (const branch of [input.main, ...input.branches]) {
-    try { inputs[branch.ref] = git(input.project, ['rev-parse', branch.ref]).toString('utf8').trim(); } catch { /* gone since listed */ }
-  }
+  const tips = new Map([...listRefs(input.project, 'refs/heads/'), ...listRefs(input.project, 'refs/remotes/')]);
+  for (const branch of [input.main, ...input.branches]) { const sha = tips.get(branch.ref); if (sha) inputs[branch.ref] = sha; }
+
+  let previous: C.Manifest | undefined;
+  try { previous = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as C.Manifest; } catch { previous = undefined; }
+  // A build by another contract version is never reused.
+  if (previous?.contract !== CONTRACT_VERSION) previous = undefined;
+
   const building = `${dir}.building`;
   fs.rmSync(building, { recursive: true, force: true });
-  const written: Record<string, string> = {};
+  const written: Record<string, string> = {}, sessions: Record<string, string> = {};
+  let made = 0, reused = 0;
   for (const [name, value] of files) {
-    // A turn is assembled only now, so a big build never holds every transcript at once.
-    const text = json(typeof value === 'function' ? value() : value);
     const out = path.join(building, ...name.split('/'));
     fs.mkdirSync(path.dirname(out), { recursive: true });
+    if (value instanceof Later && value.session) {
+      sessions[value.session.key] = value.session.version;
+      const old = path.join(dir, ...name.split('/'));
+      if (previous?.sessions?.[value.session.key] === value.session.version && previous.files[name] && fs.existsSync(old)) {
+        fs.copyFileSync(old, out);
+        written[name] = previous.files[name];
+        reused++;
+        continue;
+      }
+    }
+    // A turn is assembled only now, so a big build never holds every transcript at once.
+    const text = json(value instanceof Later ? value.make() : value);
     fs.writeFileSync(out, text);
     written[name] = sha256(text);
+    made++;
   }
   const manifest: C.Manifest = { contract: CONTRACT_VERSION, wisdomVersion: input.wisdomVersion, mode: input.mode,
     ...(input.repository ? { repository: input.repository } : {}), builtAt: (input.now ?? new Date()).toISOString(),
-    snapshot: { ...(input.remote ? { remote: input.remote } : {}), readAt: (input.now ?? new Date()).toISOString(), head }, inputs, files: written };
+    snapshot: { ...(input.remote ? { remote: input.remote } : {}), readAt: (input.now ?? new Date()).toISOString(), head }, inputs, sessions, files: written };
   fs.mkdirSync(building, { recursive: true });
   fs.writeFileSync(path.join(building, 'manifest.json'), json(manifest));
   fs.rmSync(dir, { recursive: true, force: true });
   fs.renameSync(building, dir);
-  return manifest;
+  return { manifest, made, reused };
 }

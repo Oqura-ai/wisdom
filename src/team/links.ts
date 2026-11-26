@@ -1,4 +1,4 @@
-import { commitFiles, FETCHED_LINKS, readFile, recordText, resolve, setRef } from './gitrefs.js';
+import { catFiles, commitFiles, FETCHED_LINKS, listRefs, readFile, recordText, resolve, setRef } from './gitrefs.js';
 import type { CommitRecord } from './commits.js';
 
 /** Commit links: how a commit that git or GitHub rewrote finds the records of the commits it
@@ -60,6 +60,22 @@ export function readLink(cwd: string, commit: string): CommitLink | undefined {
   const fetched = parse(readFile(cwd, `${FETCHED_LINKS}${commit}`, 'link.json'));
   if (!own || !fetched) return own ?? fetched;
   return STRENGTH[fetched.basis] > STRENGTH[own.basis] ? fetched : own;
+}
+
+/** Every link here, by commit, read in one git process: the same choice as `readLink` makes
+ * for each (the stronger of this clone's own and a fetched copy, its own when as strong). */
+export function loadLinks(cwd: string): Map<string, CommitLink> {
+  const read = (prefix: string) => {
+    const refs = [...listRefs(cwd, prefix).keys()];
+    const bytes = catFiles(cwd, refs.map(ref => `${ref}:link.json`));
+    return new Map(refs.flatMap((ref, k) => { const link = parse(bytes[k]); return link ? [[ref.slice(prefix.length), link] as const] : []; }));
+  };
+  const links = read('refs/wisdom/links/');
+  for (const [commit, fetched] of read(FETCHED_LINKS)) {
+    const own = links.get(commit);
+    if (!own || STRENGTH[fetched.basis] > STRENGTH[own.basis]) links.set(commit, fetched);
+  }
+  return links;
 }
 
 export type LinkWrite = 'written' | 'kept' | 'joined' | 'replaced';

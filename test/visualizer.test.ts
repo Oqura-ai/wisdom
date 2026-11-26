@@ -126,7 +126,7 @@ test('local mode gives every branch its own page, and the build is written whole
   assert.equal((files.get('change/b-feat_x.json') as C.Change).pr, undefined);
 
   const out = path.join(f.dir, '..', `${path.basename(f.dir)}-out`);
-  const manifest = writeData(out, build, files);
+  const { manifest } = writeData(out, build, files);
   assert.equal(manifest.mode, 'local');
   assert.equal(manifest.snapshot.head, git(f.dir, ['rev-parse', 'main']).toString('utf8').trim());
   assert.ok(manifest.files['index.json']);
@@ -225,7 +225,7 @@ test('real sessions: a fetched share file is read, its turns written one per fil
 
     const sessions = remoteSessions(dir, path.join(dir, '..', `${path.basename(dir)}-cache`));
     const build: BuildInput = { project: dir, mode: 'team', main: { name: 'main', ref: 'refs/heads/main' }, branches: [],
-      evidence: storeEvidence(sessions.stores, sessions.ids), wisdomVersion: 'test' };
+      evidence: storeEvidence(sessions.stores, sessions.ids, sessions.version), wisdomVersion: 'test' };
     const files = buildData(build);
     const commit = files.get(`commit/${sha}.json`) as C.Commit;
     assert.ok(commit.sessionsNamed[0].present, 'the fetched session is here');
@@ -239,9 +239,26 @@ test('real sessions: a fetched share file is read, its turns written one per fil
     assert.deepEqual(listing.turnList.map(t => [t.turn, t.request, t.cited]), [[1, 'Add a lockout counter', []], [2, 'Run the tests', [sha]]]);
 
     const out = path.join(dir, '..', `${path.basename(dir)}-out`);
-    writeData(out, build, files);
-    const turn = JSON.parse(fs.readFileSync(path.join(out, ...`${base}/t2.json`.split('/')), 'utf8')) as C.Turn;
+    const first = writeData(out, build, files);
+    const turnFile = path.join(out, ...`${base}/t2.json`.split('/'));
+    const turn = JSON.parse(fs.readFileSync(turnFile, 'utf8')) as C.Turn;
     assert.equal(turn.request, 'Run the tests');
     assert.ok(turn.items.some(item => item.kind === 'tool' && item.name === 'Bash'), 'the turn is assembled as the Usage dashboard shows it');
+    assert.equal(first.reused, 0);
+
+    // The same snapshot again: every turn is copied from the last build, none assembled.
+    let assembled = 0;
+    const counting: BuildInput = { ...build, evidence: { ...build.evidence, turns: id => build.evidence.turns!(id).map(t => ({ ...t, items: () => { assembled++; return t.items(); } })) } };
+    const second = writeData(out, counting, buildData(counting));
+    assert.equal(second.reused, 2);
+    assert.equal(assembled, 0);
+    assert.deepEqual(second.manifest.files[`${base}/t2.json`], first.manifest.files[`${base}/t2.json`]);
+    assert.ok(fs.existsSync(turnFile));
+
+    // A new version of the session (a later push): its turns are assembled again.
+    const changed: BuildInput = { ...counting, evidence: { ...counting.evidence, version: () => 'a-new-version' } };
+    const third = writeData(out, changed, buildData(changed));
+    assert.equal(third.reused, 0);
+    assert.equal(assembled, 2);
   } finally { await daemon.close(); }
 });

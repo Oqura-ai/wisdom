@@ -77,8 +77,11 @@ export interface Manifest {
     /** The default branch's tip at that moment. */
     head: string;
   };
-  /** Every input ref and its object id: the builder compares these to rebuild only what changed. */
+  /** Every input ref and its object id. */
   inputs: Record<string, string>;
+  /** Each session's version (a team session's ref): a turn file is copied from the previous
+   * build while its session's version is the same, never assembled again. */
+  sessions: Record<string, string>;
   /** Every file written (path relative to the data folder) and its sha256: the app compares
    * these with what it has open to say "new data, reload". */
   files: Record<string, string>;
@@ -272,11 +275,11 @@ export interface SessionTurns extends SessionSummary {
 /** Where a session's files are: `session/<recorder>/<id>/` (key parts made safe for a path). */
 export const sessionPath = (key: string) => `session/${key.split('/').map(part => part.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_') || '_').join('/')}`;
 
-/** One turn as the Usage dashboard shows it: the same items, assembled in recorded order. */
+/** One turn as the Usage dashboard shows it: the same items, assembled in recorded order. It
+ * depends on its session only (which commits cite it is in the session's turn list), so a turn
+ * file is reused as long as its session has not changed. */
 export interface Turn {
   session: string; turn: number; at: string;
   request: string;
   items: TurnItem[];
-  /** The commits that cite a step in this turn. */
-  cited: string[];
 }
