@@ -160,6 +160,7 @@ th { text-align: left; font: 500 12px var(--sans); color: var(--muted); padding:
 td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
 tr.click { cursor: pointer; } tr.click:hover td { background: var(--surface-2); }
+tr.click.on td { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 tr.folded td { color: var(--muted); background: var(--well); }
 td .note { color: var(--muted); font-size: 12px; margin-top: 2px; }
 td.num { font-variant-numeric: tabular-nums; }

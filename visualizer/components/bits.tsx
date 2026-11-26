@@ -1,5 +1,6 @@
 'use client';
 
+import { Fragment } from 'react';
 import type { Status } from '@contract';
 import { STATUS, TONE, initials } from '@/lib/words';
 
@@ -35,7 +36,34 @@ export function StateNote({ title, children }: { title: string; children?: React
   return <div className="card state-note"><b>{title}</b>{children}</div>;
 }
 
-export const Legend = ({ children }: { children: React.ReactNode }) => (
+/** Where the page sits: each part but the last is a link back up. `nav` goes on the right. */
+export function Crumbs({ parts, nav }: { parts: { label: React.ReactNode; open?: () => void }[]; nav?: React.ReactNode }) {
+  return (
+    <div className="crumbs">
+      {parts.map((part, k) => <span key={k} className="row" style={{ gap: 6 }}>{k > 0 && '›'}{part.open ? <button onClick={part.open}>{part.label}</button> : <span>{part.label}</span>}</span>)}
+      {nav && <><span className="spacer" />{nav}</>}
+    </div>
+  );
+}
+
+/** A small switch between a few ways of showing one thing. */
+export function Seg<T extends string | number>({ value, options, label, onChange }: { value: T; options: [T, string][]; label: string; onChange: (value: T) => void }) {
+  return (
+    <span className="seg" role="radiogroup" aria-label={label}>
+      {options.map(([v, words]) => <button key={v} role="radio" aria-checked={value === v} className={value === v ? 'on' : ''} onClick={() => onChange(v)}>{words}</button>)}
+    </span>
+  );
+}
+
+/** How the reader found a commit's record, in its order (policy 5.13), the one used marked. */
+const FOUND: [string, string][] = [['record', 'own record'], ['link', 'link'], ['line', 'Wisdom-Record line'], ['unlinked', 'unlinked']];
+export const FoundPath = ({ used }: { used: string }) => (
+  <div className="path"><em>Record found through</em>
+    {FOUND.map(([key, words], k) => <Fragment key={key}>{k > 0 && <i>›</i>}<span className={key === used ? `used ${key === 'unlinked' ? 'none' : key}` : ''}>{words}</span></Fragment>)}
+  </div>
+);
+
+export const Legend =({ children }: { children: React.ReactNode }) => (
   <div className="legend">
     <span><Dot status="good" /> all good</span><span><Dot status="look" /> look closer</span><span><Dot status="attention" /> needs attention</span>
     <span><Dot status="none" /> no record</span>{children}

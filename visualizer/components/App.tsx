@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { Change, Commit, Index } from '@contract';
+import { useEffect, useRef, useState } from 'react';
+import type { Change, Commit, Index, Manifest } from '@contract';
 import { useData, useManifest } from '@/lib/data';
 import { go, useRoute, type Route } from '@/lib/route';
 import { STATUS, TONE, ago, plural, reasonWords, short } from '@/lib/words';
 import { Dot, StateNote } from './bits';
+import { BranchesView } from './BranchesView';
+import { ChangeView } from './ChangeView';
 import { MainView } from './MainView';
 
 const THEMES = ['light', 'dark', 'night'] as const;
@@ -14,9 +16,12 @@ export function App() {
   const route = useRoute();
   const { manifest, newer, error } = useManifest();
   const index = useData<Index>(manifest ? 'index.json' : undefined);
-  // What the panel previews: a card picked on a canvas. Going elsewhere clears it.
+  // What the panel previews: a card picked on a canvas. Going elsewhere clears it, unless the
+  // move was made to show something there ("See it on main's canvas").
   const [selected, setSelected] = useState<string>();
-  useEffect(() => setSelected(undefined), [route]);
+  const pending = useRef<string>(undefined);
+  useEffect(() => { setSelected(pending.current); pending.current = undefined; }, [route]);
+  const pickOnMain = (key: string) => { pending.current = key; go({ view: 'main' }); };
 
   return (
     <div className="shell">
@@ -27,17 +32,20 @@ export function App() {
           {error ? <StateNote title="No Commits data here yet">{error} The Commits build writes it (wisdom commits deploy, or wisdom commits on this machine).</StateNote>
             : index.error ? <StateNote title="This build could not be read">{index.error}</StateNote>
             : !index.data ? <StateNote title="Reading…" />
-            : <View route={route} index={index.data} selected={selected} onSelect={setSelected} />}
+            : <View route={route} index={index.data} manifest={manifest!} selected={selected} onSelect={setSelected} onMainPick={pickOnMain} />}
         </main>
-        <aside className="inspector"><Panel selected={selected} /></aside>
+        <aside className="inspector"><Panel route={route} index={index.data} selected={selected} /></aside>
       </div>
     </div>
   );
 }
 
-function View({ route, index, selected, onSelect }: { route: Route; index: Index; selected?: string; onSelect: (key?: string) => void }) {
+function View({ route, index, manifest, selected, onSelect, onMainPick }: { route: Route; index: Index; manifest: Manifest; selected?: string;
+  onSelect: (key?: string) => void; onMainPick: (key: string) => void }) {
   switch (route.view) {
     case 'main': return <MainView index={index} selected={selected} onSelect={onSelect} />;
+    case 'branches': return <BranchesView index={index} mode={manifest.mode} selected={selected} onSelect={onSelect} />;
+    case 'change': return <ChangeView key={route.id} id={route.id} index={index} manifest={manifest} selected={selected} onSelect={onSelect} onMainPick={onMainPick} />;
     default: return <StateNote title="Not built yet">This page comes in the next part of the Commits app.</StateNote>;
   }
 }
@@ -73,11 +81,13 @@ function Nav({ route, index }: { route: Route; index?: Index }) {
   const item = (to: Route, label: string, count: number | undefined, on: boolean) => (
     <button className={on ? 'on' : ''} onClick={() => go(to)}><span className="text">{label}</span>{count !== undefined && <span className="count">{count}</span>}</button>
   );
-  const onBranches = route.view === 'branches';
+  // A change page belongs under Active branches while its branch is active, under main once landed.
+  const onBranches = route.view === 'branches' || route.view === 'change' && !!index?.branches.some(b => b.change === route.id);
+  const onMain = route.view === 'main' || route.view === 'change' && !onBranches || route.view === 'commit';
   return (
     <nav className="nav">
       <div className="group">Project</div>
-      {item({ view: 'main' }, index?.main ?? 'main', index?.changes.entries.length, route.view === 'main')}
+      {item({ view: 'main' }, index?.main ?? 'main', index?.changes.entries.length, onMain)}
       {item({ view: 'branches' }, 'Active branches', recent, onBranches)}
       <div className="group">Explore</div>
       {item({ view: 'people' }, 'People', index?.people.length, route.view === 'people')}
@@ -87,10 +97,37 @@ function Nav({ route, index }: { route: Route; index?: Index }) {
 }
 
 /** The right panel: a preview of what was picked on a canvas, one click from its page. */
-function Panel({ selected }: { selected?: string }) {
+function Panel({ route, index, selected }: { route: Route; index?: Index; selected?: string }) {
   const [kind, key] = selected ? [selected.slice(0, selected.indexOf(':')), selected.slice(selected.indexOf(':') + 1)] : [];
   const change = useData<Change>(kind === 'change' ? `change/${key}.json` : undefined).data;
   const commit = useData<Commit>(kind === 'commit' ? `commit/${key}.json` : undefined).data;
+  const branch = kind === 'branch' ? index?.branches.find(b => b.name === key) : undefined;
+  const session = kind === 'session' ? index?.sessions.find(s => s.key === key) : undefined;
+  if (branch) return (
+    <>
+      <span className="kicker">Branch · no pull request yet</span>
+      <h3><code style={{ fontSize: 14 }}>{branch.name}</code></h3>
+      <p className={`small t-${TONE[branch.status]}`} style={{ marginTop: 6 }}><Dot status={branch.status} /> {STATUS[branch.status]} <span className="muted">· {ago(branch.lastActiveAt)}</span></p>
+      {branch.reasons.length > 0 && <ul className="helptext">{branch.reasons.slice(0, 3).map((r, k) => <li key={k}>{reasonWords(r)}{r.commit ? ` (${short(r.commit)})` : ''}</li>)}</ul>}
+      <span className="kicker" style={{ marginTop: 12 }}>Commits{branch.commits > branch.recent.length ? `, the newest ${branch.recent.length} of ${branch.commits}` : ''}</span>
+      {branch.recent.map(c => (
+        <div key={c.sha} className="row small" style={{ margin: '4px 0' }}>
+          <Dot status={c.status} /><button className="pos" onClick={() => go({ view: 'commit', sha: c.sha })}>{short(c.sha)}</button> {c.subject}
+        </div>
+      ))}
+      <p className="small muted" style={{ marginTop: 12 }}>{plural(branch.sessions, 'session')} behind it, by <b>{branch.author}</b>. It gets a full page, with its canvas, once a pull request is opened.</p>
+    </>
+  );
+  if (session) return (
+    <>
+      <span className="kicker">Session · {session.harness}</span>
+      <h3><code style={{ fontSize: 14 }}>{short(session.id)}</code> {session.title}</h3>
+      <div className="facts"><span><b>{plural(session.turns, 'turn')}</b></span><span>by <b>{session.person}</b></span><span>last active {ago(session.lastActiveAt)}</span></div>
+      {!session.turns && <p className="small t-bad" style={{ marginTop: 8 }}>Not on the remote: a record names it, but its turns can&apos;t be read here.</p>}
+      <span className="kicker" style={{ marginTop: 12 }}>Commits pointing here</span>
+      <div className="row">{session.commits.map(sha => <button key={sha} className="pos" onClick={() => go({ view: 'commit', sha })}>{short(sha)}</button>)}</div>
+    </>
+  );
   if (selected === 'earlier') return <div className="helptext"><span className="kicker">Before team mode</span><h3>Earlier commits</h3>
     <p>Commits from before the team file was committed can never have records. git log has them.</p></div>;
   if (change) return (
@@ -112,6 +149,21 @@ function Panel({ selected }: { selected?: string }) {
       {commit.reasons.length > 0 && <ul className="helptext">{commit.reasons.slice(0, 3).map((r, k) => <li key={k}>{reasonWords(r)}</li>)}</ul>}
       <p style={{ marginTop: 12 }}><button className="pos big" onClick={() => go({ view: 'commit', sha: commit.sha })}>Open the commit ›</button></p>
     </>
+  );
+  if (route.view === 'change') return (
+    <div className="helptext">
+      <span className="kicker">How to read it</span><h3>Drag the canvas, click anything</h3>
+      <p>Commit cards sit on the branch. Below, each session is a row of snippets: one per stretch of turns a commit points to, at most five boxes, with ⋯ when there are more.
+        A straight wire runs from a commit to its snippet: that pointer is what a commit&apos;s record stores.</p>
+      <p>Click a commit card to preview it here, then open its page. Click a session to see it here.</p>
+      <p>Faded boxes are turns another change&apos;s commit points to; dashed ones, turns no commit points to.</p>
+    </div>
+  );
+  if (route.view === 'branches') return (
+    <div className="helptext">
+      <span className="kicker">Active branches</span><h3>Work not on main yet</h3>
+      <p>Branches with commits not on main, by when they were last active. One with an open pull request opens to its page; one without shows a preview here.</p>
+    </div>
   );
   return (
     <div className="helptext">
