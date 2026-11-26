@@ -8,6 +8,7 @@ import { STATUS, TONE, ago, plural, reasonWords, short } from '@/lib/words';
 import { Dot, StateNote } from './bits';
 import { BranchesView } from './BranchesView';
 import { ChangeView } from './ChangeView';
+import { CommitView } from './CommitView';
 import { MainView } from './MainView';
 
 const THEMES = ['light', 'dark', 'night'] as const;
@@ -45,6 +46,7 @@ function View({ route, index, manifest, selected, onSelect, onMainPick }: { rout
   switch (route.view) {
     case 'main': return <MainView index={index} selected={selected} onSelect={onSelect} />;
     case 'branches': return <BranchesView index={index} mode={manifest.mode} selected={selected} onSelect={onSelect} />;
+    case 'commit': return <CommitView key={route.sha} sha={route.sha} via={route.change} index={index} manifest={manifest} onSelect={onSelect} />;
     case 'change': return <ChangeView key={route.id} id={route.id} index={index} manifest={manifest} selected={selected} onSelect={onSelect} onMainPick={onMainPick} />;
     default: return <StateNote title="Not built yet">This page comes in the next part of the Commits app.</StateNote>;
   }
@@ -82,8 +84,10 @@ function Nav({ route, index }: { route: Route; index?: Index }) {
     <button className={on ? 'on' : ''} onClick={() => go(to)}><span className="text">{label}</span>{count !== undefined && <span className="count">{count}</span>}</button>
   );
   // A change page belongs under Active branches while its branch is active, under main once landed.
-  const onBranches = route.view === 'branches' || route.view === 'change' && !!index?.branches.some(b => b.change === route.id);
-  const onMain = route.view === 'main' || route.view === 'change' && !onBranches || route.view === 'commit';
+  const activeChange = route.view === 'change' ? route.id : route.view === 'commit' ? route.change : undefined;
+  const onBranches = route.view === 'branches' || !!activeChange && !!index?.branches.some(b => b.change === activeChange)
+    || route.view === 'commit' && !!index?.branches.some(b => b.recent.some(c => c.sha === route.sha));
+  const onMain = !onBranches && (route.view === 'main' || route.view === 'change' || route.view === 'commit');
   return (
     <nav className="nav">
       <div className="group">Project</div>

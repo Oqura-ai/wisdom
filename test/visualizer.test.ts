@@ -32,6 +32,15 @@ test('main shows each landed change once, newest first, with what the snapshot c
   assert.equal(squash.status, 'attention');
   assert.deepEqual(squash.needs.map(r => r.code), ['session-missing']);
 
+  // What a change put on main has its own page, standing for the commits it came from, never counted twice.
+  const onMain = files.get(`commit/${f.s124}.json`) as C.Commit;
+  assert.equal(onMain.found.by, 'link');
+  assert.equal(onMain.change, '124');
+  assert.deepEqual(onMain.files.map(x => x.path).sort(), ['g1.txt', 'g2.txt']);
+  assert.ok(onMain.reasons.some(r => r.code === 'session-missing'));
+  assert.equal((files.get(`commit/${f.r2}.json`) as C.Commit).status, 'attention', 'a position-only link');
+  assert.ok(!index.sessions.some(s => s.commits.includes(f.s124)));
+  assert.equal(index.people.find(p => p.username === 'maya')?.commits, 8);
   assert.equal((files.get('change/121.json') as C.Change).status, 'good');
   assert.equal((files.get(`commit/${f.x1}.json`) as C.Commit).change, '121');
 

@@ -162,7 +162,11 @@ export function buildData(input: BuildInput): Map<string, unknown> {
 
   // ----- one commit -----
   const commits = new Map<string, C.Commit>();
-  const analyse = (sha: string, fallbackAuthor?: string): C.Commit => {
+  /** Commits a change put on main (a squash's commit, a rebase's new shas, a merge commit): they
+   * get their own page, standing for the commits they came from, but they are not counted again
+   * (a session's commits, a person's commits, a turn's citing commits name the originals). */
+  const standIns = new Set<string>();
+  const analyse = (sha: string, fallbackAuthor?: string, standIn = false): C.Commit => {
     const cached = commits.get(sha);
     if (cached) return cached;
     const info = gitCommit(sha, fallbackAuthor);
@@ -201,6 +205,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
         const key = keyOf(s);
         if (!here) reasons.push({ code: 'session-missing', session: key });
         if (!named.some(n => n.key === key)) named.push({ key, id: s.id, harness: here?.harness ?? s.harness, person: info.author, present: !!here, ...(s.turns ? { turns: s.turns } : {}) });
+        if (standIn) continue;
         const summary = sessions.get(key) ?? { key, id: s.id, harness: here?.harness ?? s.harness, person: info.author, title: here?.title ?? '',
           turns: here?.turns ?? 0, commits: [], lastActiveAt: here?.lastActiveAt ?? info.committedAt, path: sessionPath(key) };
         if (!summary.commits.includes(sha)) summary.commits.push(sha);
@@ -347,6 +352,12 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     }
     entries.push({ kind: 'direct', commit: summary(analyse(top.sha)) });
   }
+  for (const change of changes.values()) for (const m of change.landed?.onMain ?? []) {
+    if (commits.has(m.sha)) continue;
+    const page = analyse(m.sha, change.author, true);
+    page.change = change.id;
+    standIns.add(m.sha);
+  }
   function commitsLinkReasons(sha: string): C.Reason[] {
     const link = linkOf(sha);
     return link?.basis === 'order' ? [{ code: 'order-link', commit: sha }] : [];
@@ -388,7 +399,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
     people.set(name, person);
     return person;
   };
-  for (const commit of commits.values()) { const p = touch(commit.author, commit.committedAt); if (p) p.commits++; }
+  for (const commit of commits.values()) { if (standIns.has(commit.sha)) continue; const p = touch(commit.author, commit.committedAt); if (p) p.commits++; }
   for (const change of changes.values()) { const p = touch(change.author, change.landed?.at ?? ''); if (p) p.changes++; }
   for (const s of sessions.values()) { const p = touch(s.person, s.lastActiveAt); if (p) p.sessions++; }
 
@@ -412,7 +423,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
   // ----- sessions, one file per turn -----
   const cited = new Map<string, Map<number, Set<string>>>();
   for (const commit of commits.values()) for (const file of commit.files) for (const piece of file.pieces) for (const step of piece.steps) {
-    if (step.turn === undefined) continue;
+    if (step.turn === undefined || standIns.has(commit.sha)) continue;
     const turns = cited.get(step.session) ?? cited.set(step.session, new Map()).get(step.session)!;
     (turns.get(step.turn) ?? turns.set(step.turn, new Set()).get(step.turn)!).add(commit.sha);
   }
