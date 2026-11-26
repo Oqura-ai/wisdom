@@ -57,6 +57,8 @@ Read a session
   wisdom dashboard                Print the address of the live dashboard
   wisdom commits                  Print the address of Commits on this machine: main and your
                                   branches, each commit's record and the sessions behind it, live
+  wisdom commits deploy           Set up the team's Commits dashboard: Vercel, a GitHub sign-in
+                                  app, the CI file (--public: no sign-in, on purpose)
   wisdom commits build            In CI: the team's Commits dashboard from the remote, ready to
                                   deploy (behind a GitHub sign-in; --public: none, on purpose)
   wisdom commits prune            In CI: remove the dashboard's older Vercel deployments
@@ -172,10 +174,23 @@ async function main(): Promise<void> {
     const cwd = path.resolve(values.cwd ?? process.cwd());
     const { file, policy, created } = writePolicy(cwd);
     console.log(created ? `Wrote ${file} (repo ID ${policy.repoId}). Commit it to turn team mode on for everyone; remove it to go back to local mode.` : `${POLICY_FILE} is already there: ${file}`);
+    // The team's dashboard writes the one CI file that relinks too, so it is offered first.
+    const dashboard = await askYes('Set up the team\'s Commits dashboard now? It runs on Vercel (a company needs Vercel Pro) with a GitHub sign-in, and writes the CI file. Later: wisdom commits deploy');
+    if (dashboard) {
+      const { deployCommits, terminalIO } = await import('./visualizer/deploy.js');
+      await deployCommits(cwd, terminalIO());
+      return;
+    }
     await offerWorkflow(cwd);
     return;
   }
   // The team's Commits dashboard, in CI: no data folder either.
+  if (command === 'commits' && first === 'deploy') {
+    if (values.main || values.out || values.remote) throw new Error('Use: wisdom commits deploy [--public]');
+    const { deployCommits, terminalIO } = await import('./visualizer/deploy.js');
+    await deployCommits(path.resolve(values.cwd ?? process.cwd()), terminalIO(), { public: values.public });
+    return;
+  }
   if (command === 'commits' && (first === 'build' || first === 'prune')) {
     // Loaded only here: the builder is large, and git hooks run this file too.
     const { buildTeam } = await import('./visualizer/ci.js');
@@ -191,7 +206,7 @@ async function main(): Promise<void> {
     console.log(kept.length ? `Kept ${kept.join(', ')}; removed ${removed.length} older deployment${removed.length === 1 ? '' : 's'}${removed.length ? `: ${removed.join(', ')}` : ''}` : 'No finished production deployment yet, so nothing was removed.');
     return;
   }
-  if (command === 'commits' && (values.public || values.main || values.out || values.remote)) throw new Error('--public, --main, --out and --remote apply only to wisdom commits build');
+  if (command === 'commits' && (values.public || values.main || values.out || values.remote)) throw new Error('--public applies to wisdom commits build and deploy; --main, --out and --remote to build only');
   if ((command === 'team') && (first === 'relink' || first === 'sync')) {
     const cwd = path.resolve(values.cwd ?? process.cwd());
     if (first === 'relink') {
