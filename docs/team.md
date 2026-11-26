@@ -65,11 +65,15 @@ as it would in any Claude Code session.
    that it falls inside that session's window, and keeps what that check found. It cannot
    check that the explanation is right, so a guide is always shown as derived, never as
    evidence.
-4. **Push.** Your own `git push` carries everything. Wisdom's `pre-push` hook waits for any
+4. **Push.** Your own `git push` carries it all, for what you push: the commits the pushed
+   branches reach, whichever branch is checked out (`git push origin main` from `feat/x`
+   sends `main`'s records, not `feat/x`'s), and of those only the record versions the remote
+   lacks, so a guide finished after one push goes with the next. Wisdom's `pre-push` hook waits for any
    guide still being written, writes any that is missing, then sends the commit links first
    (a few hundred bytes each, so a long session upload cannot take them down), then the
    sessions the records name, then the records. A record of a commit you amended or rebased
-   away goes too, since a link points at it. Each session goes through the same export as
+   away goes too, since a link points at it. When git names nothing to push (an up-to-date
+   push), and for `wisdom team push` by hand, Wisdom goes by the branch checked out. Each session goes through the same export as
    `wisdom share`, with every possible secret redacted automatically. Each record is scanned
    with the same patterns, since its guide can quote a request (the plain guide does, word for
    word): when a version not yet on the remote holds one, those versions are replaced by one
@@ -81,10 +85,18 @@ as it would in any Claude Code session.
    their sessions, their guides) stays on your machine, and no guide is written for it at push.
 5. **Review.** A reviewer runs `wisdom team fetch`, then `wisdom glance --commit <commit>`.
    Each piece points to the step that made it, checked against the fetched session, with
-   the guide below. They open steps with `wisdom open t3/c2 --capture <session>`.
+   the guide below. They open steps with `wisdom open t3/c2 --capture <session>`. The fetch
+   brings only what the reviewer's own branches reach (not their copies of the remote's,
+   `origin/*`): those commits' records and links, the records the links lead to, and the
+   sessions those records name. To review a pull request, check out its branch first; a merged
+   one's records come once you pull `main`. The deletion list always comes whole.
 6. **CI.** `wisdom check --range <base>..<head>` checks the pull request: every commit with
    agent work has a guide that passed its check, and every session its record names is on
-   the remote. This is the one check nobody can skip on their own machine.
+   the remote. This is the one check nobody can skip on their own machine. It fetches only
+   the records and links of the range's commits (and those their links lead to), never a
+   session: the remote's list says whether each is there. Only when a commit with no link
+   names its records by `Wisdom-Record:` line alone does it fetch every record, still no
+   session, since a line gives a record's ID, not its commit.
 
 A model writes guides by default. `wisdom guide off` stops calling a model for your own
 commits: Wisdom writes a plain guide from the record instead, naming the step that made
@@ -106,7 +118,7 @@ the model back on.
 | `wisdom glance --commit <commit>` | A commit's pieces, the steps that made them, and its guide. |
 | `wisdom check --range A..B` | For CI: needs no data folder. Exit code 1 when a commit needs attention. |
 | `wisdom team push` | Sends your links, sessions and records now, without a `git push`. |
-| `wisdom team fetch` | Brings teammates' sessions, records and links here, read-only, and applies the deletion list. |
+| `wisdom team fetch` | Brings here, read-only, the records and links of the commits your own branches reach, and the teammates' sessions those records name; applies the whole deletion list. |
 | `wisdom team sync on\|off` | Whether `git fetch` and `git pull` also bring the team's commit links and records. On adds two lines to the remote's fetch list in `.git/config`; off takes out exactly those. `wisdom init`, `wisdom connect` and `team hooks on` ask first; `team hooks off` undoes it. With no argument it says whether it is on. |
 | `wisdom team relink --range A..B` | Links each commit in the range that has neither a record nor a link, from the merged pull request GitHub says made it, or else by its patch-id. Run by the [CI job](#ci) after each merge; anyone can run it later. Needs no data folder. |
 | `wisdom team relink --commit-map FILE` | After `git filter-repo`: links each rewritten commit from filter-repo's own `.git/filter-repo/commit-map`. |
@@ -332,7 +344,10 @@ jobs:
 `relink` asks GitHub through `GITHUB_API_URL` (set by Actions, GitHub Enterprise's included; not tested there),
 for `GITHUB_REPOSITORY`, with `GITHUB_TOKEN`. Outside Actions it reads the repository from the
 remote's URL. On a new branch or after a force push, `github.event.before` is not a commit there,
-so it looks at the newest commit only, and says so.
+so it looks at the newest commit only, and says so. Like `check`, it fetches only the records
+and links of the commits it looks at, never a session. When GitHub cannot say where a commit
+came from, the patch-id step compares it with every record, so then every record is fetched
+(still no session).
 
 ## Limits
 
@@ -343,6 +358,9 @@ so it looks at the newest commit only, and says so.
   gives them Wisdom's plain guide instead.
 - `git push --mirror` sends every ref, `refs/wisdom/*` included, in either mode. A normal
   push does not.
+- A `pre-push` hook installed by 0.6.0-beta.2 or earlier is not given git's list of what is pushed,
+  so it goes by the branch checked out. `wisdom team hooks on` writes the current one.
+- A push looks at up to 2,000 commits of what it pushes, as it did of the branch checked out.
 - `wisdom guide <commit>` cannot write a guide once a session its record names was deleted.
   If you delete sessions often, `wisdom guide on` writes guides while they still exist.
 - The window starts at your previous commit on the branch that this machine recorded. A
