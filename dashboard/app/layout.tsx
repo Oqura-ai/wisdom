@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import './globals.css';
 
-export const metadata: Metadata = { title: 'Wisdom', description: 'Live view of recorded coding-agent sessions' };
+export const metadata: Metadata = { title: 'Wisdom Usage', description: 'Live view of recorded coding-agent sessions' };
 
 // Fetched once at build time and served from the bundle: the page never reaches the internet for them.
 const sans = IBM_Plex_Sans({ subsets: ['latin'], weight: ['400', '500', '600'], variable: '--font-sans', display: 'swap' });

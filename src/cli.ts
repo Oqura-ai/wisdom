@@ -54,14 +54,10 @@ Run an agent
                                   later with wisdom resume
 
 Read a session
-  wisdom dashboard                Print the address of the live dashboard
+  wisdom usage                    Print the address of Usage, the live view of your sessions
+                                  (wisdom dashboard does the same)
   wisdom commits                  Print the address of Commits on this machine: main and your
                                   branches, each commit's record and the sessions behind it, live
-  wisdom commits deploy           Set up the team's Commits dashboard: Vercel, a GitHub sign-in
-                                  app, the CI file (--public: no sign-in, on purpose)
-  wisdom commits build            In CI: the team's Commits dashboard from the remote, ready to
-                                  deploy (behind a GitHub sign-in; --public: none, on purpose)
-  wisdom commits prune            In CI: remove the dashboard's older Vercel deployments
   wisdom glance                   List recorded sessions, newest first
   wisdom glance <session>         Show one session's shape and every turn
   wisdom glance --commit <commit> Show which recorded steps made each piece of a git commit
@@ -92,6 +88,10 @@ Team mode (a repository with wisdom-team.yaml)
   wisdom team push|fetch          Send your sessions and commit records now, or read teammates'
   wisdom team delete <session>    Remove a pushed session for everyone
   wisdom team prune               Remove pushed sessions older than the policy keeps them
+  wisdom commits deploy           Set up Commits for the whole team: Vercel, a GitHub sign-in app,
+                                  the CI file (--public: no sign-in, on purpose)
+  wisdom commits build            In CI: the team's Commits from the remote, ready to deploy
+  wisdom commits prune            In CI: remove its older Vercel deployments
 
 Share a session
   wisdom share <session>...       Write a file to send a teammate, after a check for secrets
@@ -115,7 +115,7 @@ Options
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
   --remote NAME, --range A..B     team, check: another remote than the policy's; the PR's commits
   --from <session-id>             handoff: the session to read (default: the one running it, or the newest other one)
-  --port N, --no-dashboard        daemon: choose a port, or skip the dashboard and Commits
+  --port N, --no-dashboard        daemon: choose a port, or start it without Usage and Commits
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
   --trust-all-hooks               track codex: skip the review, for every hook in that run
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
   if (command === 'handoff-run') { if (first) await runBackgroundHarness(first); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
-    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], commits: ['cwd', 'port', 'public', 'main', 'out', 'remote'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
+    daemon: ['cwd', 'port', 'no-dashboard'], usage: ['cwd'], dashboard: ['cwd'], commits: ['cwd', 'port', 'public', 'main', 'out', 'remote'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'emit', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
@@ -241,7 +241,7 @@ async function main(): Promise<void> {
   }
   if (command === 'doctor') {
     const checks = await diagnose(dataDir);
-    // --json: for the dashboard's health strip, which the daemon fills by running this.
+    // --json: for Usage's health strip, which the daemon fills by running this.
     if (values.json) console.log(JSON.stringify({ version: wisdomVersion(), project: path.dirname(dataDir),
       checks: checks.map(({ level, name, detail, fix }) => ({ level, name, detail, fix })) }));
     else console.log(formatChecks(path.dirname(dataDir), checks));
@@ -259,7 +259,7 @@ async function main(): Promise<void> {
       const daemon = await runDaemon(dataDir, port, !values['no-dashboard'] && chosen?.dashboard !== false, chosen?.port);
       console.error(`Wisdom listening at ${daemon.connection.url}; data: ${dataDir}`);
       const viewer = (await call(daemon.connection, '/health')).dashboard;
-      console.error(viewer.url ? `Dashboard: ${viewer.url}` : `Dashboard not started: ${viewer.reason}`);
+      console.error(viewer.url ? `Usage: ${viewer.url}` : `Usage not started: ${viewer.reason}`);
       const commits = (await call(daemon.connection, '/health')).commits;
       if (commits.status === 'unavailable') console.error(`Commits not started: ${commits.reason}`);
       const stop = () => void daemon.close();
@@ -273,13 +273,14 @@ async function main(): Promise<void> {
     else throw new Error('Use: wisdom daemon start|stop|status|run');
     return;
   }
-  if (command === 'dashboard') {
+  // `wisdom dashboard`: Usage's earlier name, kept so nothing anyone learned breaks.
+  if (command === 'usage' || command === 'dashboard') {
     const viewer = (await call(connectionAt(dataDir), '/health')).dashboard;
-    if (!viewer.url) throw new Error(`Dashboard not running: ${viewer.reason}`);
+    if (!viewer.url) throw new Error(`Usage is not running: ${viewer.reason}`);
     console.log(viewer.url); return;
   }
   if (command === 'commits') {
-    // Like the dashboard, it runs with the daemon: started here if it is not running yet.
+    // Like Usage, it runs with the daemon: started here if it is not running yet.
     const connection = await ensureDaemon(dataDir, port);
     let state = (await call(connection, '/health')).commits;
     for (let attempt = 0; attempt < 50 && state?.status === 'running' && !state.url; attempt++) {
@@ -323,7 +324,7 @@ async function showRunning(connection: Connection): Promise<void> {
   const viewer = health.dashboard;
   console.log('Wisdom is running.');
   console.log(`  Address    ${connection.url} (PID ${connection.pid})`);
-  console.log(`  Dashboard  ${dashboardLine(viewer)}`);
+  console.log(`  Usage      ${dashboardLine(viewer)}`);
   console.log(`  Commits    ${commitsLine(health.commits)}`);
   console.log(`  Sessions   ${health.captures}`);
 }
@@ -391,7 +392,7 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   installed('pi', () => installPi(dataDir), 'wisdom track pi');
   const connection = await ensureDaemon(dataDir, port);
   const health = await call(connection, '/health');
-  console.log(`\nDashboard: ${dashboardLine(health.dashboard)}`);
+  console.log(`\nUsage:     ${dashboardLine(health.dashboard)}`);
   console.log(`Commits:   ${health.commits?.status === 'unavailable' ? commitsLine(health.commits) : 'wisdom commits prints its address'}`);
   console.log('\nEach agent asks you to log in once for this project. Your global agent settings are not touched.');
   console.log('Keep .wisdom/ private: it holds your sessions and agent logins, unredacted. Git ignores it, but leave it out of zips and synced folders.');

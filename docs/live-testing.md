@@ -26,7 +26,7 @@ step by step: what to do, how to see the result, and what you should see.
 | A real git host | Hidden refs, the host's secret scanning, CI, squash, rebase and merge buttons | `src/team/`, `docs/team.md` workflow |
 | Two people | A teammate's view: fetched copies, wording, windows that ignore pulled commits | `src/team/team.ts`, `src/read/discovery.ts`, `src/share/` |
 | Windows | File locks, shells, CRLF, hook processes and detached jobs | anything that starts processes or deletes files |
-| Size | Thousands of files, long sessions, many pushed versions | `src/record/workspace.ts`, `src/team/`, the dashboard |
+| Size | Thousands of files, long sessions, many pushed versions | `src/record/workspace.ts`, `src/team/`, Usage and Commits |
 | The team's Commits dashboard | GitHub Actions, the GitHub App and Vercel run only on their own services, with real accounts | `src/visualizer/` (gate, site, ci, vercel, deploy), `.github/workflows/wisdom.yml` |
 
 ## Setting up a live run
@@ -75,7 +75,7 @@ Each row is one scenario, with the plan section that has its steps. "Passes if" 
 ## Still open
 
 - A huge commit (thousands of files) takes minutes to record, and its model guide runs out of time.
-- The dashboard's project page hangs on a turn that changed thousands of files.
+- Usage's project page hangs on a turn that changed thousands of files.
 - `wisdom team fetch` can time out in the terminal when it has much to import; the daemon finishes the work.
 - There is no command to delete a commit record, and a record removed from the remote stays in clones that fetched it.
 - `wisdom doctor` does not yet check that a team's own `check` command can run on this machine.

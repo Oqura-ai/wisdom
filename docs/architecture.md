@@ -4,9 +4,9 @@
 Pi extension ─────┐
 Claude Code hooks ┼ local HTTP ── daemon ── SQLite
 Codex hooks ──────┘                │
-                 ledger (glance/open) · dashboard views
+                 ledger (glance/open) · Usage views
                                  │
-                  CLI / MCP (agents) · live dashboard (people)
+                  CLI / MCP (agents) · Usage and Commits (people)
 ```
 
 Harness adapters send events to a local daemon, which stores them in SQLite beside byte-preserved copies of each harness's own session files. Agents and people read the same evidence through different views. Sessions imported from share files are kept as separate read-only stores, and each read goes to the store that holds the session. To read the code in order, start with [development](development.md#reading-the-code).
@@ -23,9 +23,9 @@ Harness adapters (Pi extension, Claude Code/Codex hooks) + native JSONL + worksp
                      |
           .wisdom/ledger.sqlite
                      |
-   ledger (glance/open)   dashboard views
+   ledger (glance/open)   Usage views
                      |
-     HTTP /ledger: CLI, MCP    HTTP /view: dashboard
+     HTTP /ledger: CLI, MCP    HTTP /view: Usage
 
 .wisdom/wisdom.json                                           (marks the project; written by wisdom init)
 .wisdom/spool/<harness>/<session>/<event>.json                (events a hook kept while the daemon was down)
@@ -98,8 +98,8 @@ the others; `record` writes evidence; `read` only reads it; `service` ties them 
 | [core/](../src/core/) | Shared types and small helpers. | [schema.ts](../src/core/schema.ts) wire validation and record/manifest types; [paths.ts](../src/core/paths.ts) data folders, harness homes, worktrees; [settings.ts](../src/core/settings.ts) `wisdom.yaml`, its defaults and checks; [content.ts](../src/core/content.ts) surface text extraction. |
 | [storage/](../src/storage/) | Where evidence lives. | [database.ts](../src/storage/database.ts) DDL, indexed lookups, request links; [ledger.ts](../src/storage/ledger.ts) payloads, native byte copying; [store.ts](../src/storage/store.ts) `SessionStore`, what the read layer needs; [evidence.ts](../src/storage/evidence.ts) body cache and the version boundary. |
 | [record/](../src/record/) | Turning hook events into records. | [captures.ts](../src/record/captures.ts) recording lifecycle and hook/file coordination; [workspace.ts](../src/record/workspace.ts) file baselines and patches. |
-| [read/](../src/read/) | What agents and the dashboard read. Changes here follow [policy](policy.md). | [discovery.ts](../src/read/discovery.ts) the ledger (glance, open, commits, positions, the ceiling); [conversation.ts](../src/read/conversation.ts) one turn in recorded order; [views.ts](../src/read/views.ts) the dashboard's `/view`; [stats.ts](../src/read/stats.ts) counts and token usage; [markdown.ts](../src/read/markdown.ts) `wisdom export`; [prices.ts](../src/read/prices.ts) cost estimates. |
-| [service/](../src/service/) | The background service and talking to it. | [daemon.ts](../src/service/daemon.ts) local HTTP and lifecycle; [client.ts](../src/service/client.ts) finding, calling and starting it; [mcp.ts](../src/service/mcp.ts) the MCP tool; [dashboard.ts](../src/service/dashboard.ts) starts the viewer in [dashboard/](../dashboard/); [commits.ts](../src/service/commits.ts) starts Commits on this machine. |
+| [read/](../src/read/) | What agents, Usage and Commits read. Changes here follow [policy](policy.md). | [discovery.ts](../src/read/discovery.ts) the ledger (glance, open, commits, positions, the ceiling); [conversation.ts](../src/read/conversation.ts) one turn in recorded order; [views.ts](../src/read/views.ts) the dashboard's `/view`; [stats.ts](../src/read/stats.ts) counts and token usage; [markdown.ts](../src/read/markdown.ts) `wisdom export`; [prices.ts](../src/read/prices.ts) cost estimates. |
+| [service/](../src/service/) | The background service and talking to it. | [daemon.ts](../src/service/daemon.ts) local HTTP and lifecycle; [client.ts](../src/service/client.ts) finding, calling and starting it; [mcp.ts](../src/service/mcp.ts) the MCP tool; [dashboard.ts](../src/service/dashboard.ts) starts Usage, the session viewer in [dashboard/](../dashboard/); [commits.ts](../src/service/commits.ts) starts Commits on this machine. |
 | [setup/](../src/setup/) | Installing, checking and repairing. | [connect.ts](../src/setup/connect.ts) `connect`/`disconnect` and keeping `.wisdom/` out of git; [doctor.ts](../src/setup/doctor.ts) the health check; [repair.ts](../src/setup/repair.ts) repair with backups. |
 | [sessions/](../src/sessions/) | Operations on one session. | [handoff.ts](../src/sessions/handoff.ts) `wisdom handoff`; [clone.ts](../src/sessions/clone.ts) `wisdom clone`. |
 | [share/](../src/share/) | Sessions leaving or arriving as files. | [share.ts](../src/share/share.ts) the share file format; [secrets.ts](../src/share/secrets.ts) secret patterns and redaction; [shared.ts](../src/share/shared.ts) imported copies and routing reads to them. |

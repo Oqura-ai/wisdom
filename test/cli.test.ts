@@ -28,7 +28,7 @@ test('a person reads plain sentences from init, status and stop, never JSON', ()
       '  Codex        not installed. Run wisdom init again after installing it.',
       '  Pi           not installed. Run wisdom init again after installing it.',
       '',
-      'Dashboard: not started. Not started with this daemon.',
+      'Usage:     not started. Not started with this daemon.',
       'Commits:   not started. Not started with this daemon.',
       '',
       'Each agent asks you to log in once for this project. Your global agent settings are not touched.',
@@ -39,7 +39,7 @@ test('a person reads plain sentences from init, status and stop, never JSON', ()
     assert.match(run(project, 'init', '--port', '0', ...none).stdout, /^Wisdom was already set up in .*\. Its hooks and skills are refreshed\.\n/);
 
     const status = run(project, 'daemon', 'status').stdout;
-    assert.match(status, /^Wisdom is running\.\n {2}Address {4}http:\/\/127\.0\.0\.1:\d+ \(PID \d+\)\n {2}Dashboard {2}not started\. Not started with this daemon\.\n {2}Commits {4}not started\. Not started with this daemon\.\n {2}Sessions {3}0\n$/);
+    assert.match(status, /^Wisdom is running\.\n {2}Address {4}http:\/\/127\.0\.0\.1:\d+ \(PID \d+\)\n {2}Usage {6}not started\. Not started with this daemon\.\n {2}Commits {4}not started\. Not started with this daemon\.\n {2}Sessions {3}0\n$/);
     assert.equal(run(project, 'daemon', 'start').stdout, status);
 
     const glance = run(project, 'glance').stdout;
@@ -68,7 +68,7 @@ test('the daemon starts from wisdom.yaml\'s port and leaves the dashboard out wh
     const { url } = JSON.parse(fs.readFileSync(path.join(project, '.wisdom', 'daemon.json'), 'utf8'));
     const port = Number(new URL(url).port);
     assert(port >= first && port <= first + 40 && (port - first) % 2 === 0, `${port} is ${first} or a pair after it`);
-    assert.match(run(project, 'daemon', 'status').stdout, /Dashboard {2}not started/);
+    assert.match(run(project, 'daemon', 'status').stdout, /Usage {6}not started/);
     run(project, 'daemon', 'stop');
 
     fs.writeFileSync(path.join(project, 'wisdom.yaml'), 'version: 1\ndaemon:\n  prot: 1\n');

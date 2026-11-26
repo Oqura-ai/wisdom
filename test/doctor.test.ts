@@ -113,7 +113,9 @@ test('the installed command prints its version, and --cwd works on every project
     const status = run('daemon', 'status', '--cwd', root);
     assert.match(status.stderr, /Wisdom daemon is not running/);
     assert.doesNotMatch(status.stderr, /not valid/);
-    assert.match(run('dashboard', '--cwd', root).stderr, /Wisdom daemon is not running/);
+    assert.match(run('usage', '--cwd', root).stderr, /Wisdom daemon is not running/);
+    assert.match(run('dashboard', '--cwd', root).stderr, /Wisdom daemon is not running/, 'Usage\'s earlier name still works');
+    assert.match(help, /wisdom usage/);
     assert.match(run('open', '--cwd', root).stderr, /Use: wisdom open POSITION/);
     assert.match(run('resume', '--cwd', root).stderr, /Use: wisdom resume SESSION-ID/);
     // These would start a daemon inside a project, so aim them at a folder that is not one:

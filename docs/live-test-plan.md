@@ -50,7 +50,7 @@ npm install -g ./oqura-wisdom-<version>.tgz
 wisdom --version              # your version, from the global install path
 ```
 
-An `EBUSY` error during install means a daemon or dashboard is still running: stop it and
+An `EBUSY` error during install means a daemon, Usage or Commits is still running: stop it and
 install again. After installing a new build, run `wisdom connect` again in each clone so the
 agents' reading skill is current, and restart open agent sessions.
 
@@ -73,7 +73,7 @@ On Windows PowerShell with scripts blocked, use `wisdom.cmd` and `npm.cmd`.
 | A pushed session | `git fetch origin <ref>:refs/proof/s`, then `git show refs/proof/s:meta.json`; the share file is gzip, so search it after unpacking. Delete the ref afterwards: `git update-ref -d refs/proof/s` |
 | Hooks | `ls .git/hooks` (Wisdom's start with `# wisdom`; your own become `<name>.pre-wisdom`) |
 | Commit jobs | `.wisdom/jobs/` while one runs; `.wisdom/jobs.log`, one line per job (in PowerShell 5.1 read it with `Get-Content -Encoding utf8`) |
-| Health | `wisdom doctor`; the health button in `wisdom dashboard` |
+| Health | `wisdom doctor`; the health button in Usage (`wisdom usage`) |
 
 Read the proof yourself rather than trusting a summary line. For secrets, check the unpacked
 share file and also count the `[redacted …]` markers: zero findings in an empty or wrong file
@@ -109,7 +109,7 @@ proves nothing.
 | 1.3 | `wisdom track claude`, `track codex`, `track pi`; one small edit each | `wisdom glance` | Three sessions, three harnesses. Codex's first `/hooks` review session may appear as an empty fourth: expected |
 | 1.4 | `wisdom glance <id>`; `wisdom open t1/c1 --capture <id>` | Output | The turn, the call, its patch |
 | 1.5 | Ask an agent to read the last session with `wisdom glance` | `wisdom glance <that agent's session>` | `read Wisdom · N calls · C characters returned, about T tokens` |
-| 1.6 | `wisdom doctor`; the dashboard's health button | Output; the popup | No problems |
+| 1.6 | `wisdom doctor`; Usage's health button | Output; the popup | No problems |
 
 ## 2. Commits in local mode (no policy file)
 
@@ -241,7 +241,7 @@ Run these on a throwaway branch you do not merge.
 
 | # | Do | Proof | You should see |
 | --- | --- | --- | --- |
-| 8.1 | An agent runs `git checkout origin/stress -- vendor` (2,000 files); commit | `jobs.log` timing; the dashboard meanwhile | Every piece matched to that one step; write down the minutes. Known open: the record takes minutes and the model guide can time out |
+| 8.1 | An agent runs `git checkout origin/stress -- vendor` (2,000 files); commit | `jobs.log` timing; Usage meanwhile | Every piece matched to that one step; write down the minutes. Known open: the record takes minutes and the model guide can time out |
 | 8.2 | An agent runs an `npm install` that rewrites the lockfile; commit | `jobs.log`; glance | A short guide in seconds |
 | 8.3 | An agent edits; `wisdom daemon stop` in another terminal; the agent edits again; commit | The record; the session | Both edits matched; the session states `not-recording-between-visits` and `delivered-late` |
 | 8.4 | Commit, kill the job (its pid is in `.wisdom/jobs/<sha>.json`), push | `jobs.log`; output | `job (attempt 2) · record kept · guide …` |

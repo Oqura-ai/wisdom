@@ -32,7 +32,7 @@ Run one file after building with `node --test dist/test/ledger.test.js`, and fil
 
 Real agents, model guides, a git host, two people at once and Windows file handling need a live run. [Live testing](live-testing.md) says which changes need which checks.
 
-## Dashboard
+## Usage, the session viewer
 
 ```sh
 npm run dashboard:install   # once
@@ -75,7 +75,7 @@ To publish, you need to be a member of the `oqura` organization on npm:
 npm publish
 ```
 
-`prepublishOnly` runs the tests first. The dashboard bundle has only been built on Windows so far. It holds no native binaries, but run it on macOS and Linux before promising them.
+`prepublishOnly` runs the tests first. The Usage bundle has only been built on Windows so far. It holds no native binaries, but run it on macOS and Linux before promising them.
 
 ### A release that carries the team's Commits dashboard
 
@@ -84,7 +84,7 @@ A team's CI takes two things from here, so both must be out before a team can us
 - **The reusable workflow**, [.github/workflows/wisdom.yml](../.github/workflows/wisdom.yml), at the tag `v1`, which every team's file names (`…/wisdom.yml@v1`). `v1` is a moving tag: after a release that changes the workflow compatibly, move it (`git tag -f v1 <commit>`, `git push -f origin v1`). A change a team's file must follow is `v2`, and `wisdom commits deploy` then writes `@v2`.
 - **The package**, which the workflow installs from npm (`wisdom-version`, `latest` by default).
 
-The first release that carries the dashboard also needs its end-to-end run, which no test can make: on a scratch repository, `wisdom commits deploy`, push the CI file, watch the first build deploy, then sign in as someone who can read the repository and as someone who can't. Each part was checked live on its own before (pushes of Wisdom's refs start no workflow, a GitHub App made from a manifest, Vercel keeping the data inside the function); see [live testing](live-testing.md).
+The first release that carries the team's dashboard also needs its end-to-end run, which no test can make: on a scratch repository, `wisdom commits deploy`, push the CI file, watch the first build deploy, then sign in as someone who can read the repository and as someone who can't. Each part was checked live on its own before (pushes of Wisdom's refs start no workflow, a GitHub App made from a manifest, Vercel keeping the data inside the function); see [live testing](live-testing.md).
 
 ## Reading the code
 
