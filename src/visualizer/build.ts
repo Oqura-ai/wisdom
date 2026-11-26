@@ -305,9 +305,16 @@ export function buildData(input: BuildInput): Map<string, unknown> {
   // One git process asks every commit of the line whether it has the team file.
   const hasPolicy = catFiles(project, line.map(commit => `${commit.sha}:${POLICY_FILE}`), true);
   let teamFrom = line.length;
-  if (line.length && hasPolicy[0]) {
+  const teamMode = line.length > 0 && !!hasPolicy[0];
+  if (teamMode) {
     teamFrom = hasPolicy.findIndex(found => !found);
     if (teamFrom < 0) teamFrom = line.length;
+  } else {
+    // Without team mode (local, no team file), history before Wisdom first recorded a commit on
+    // this line folds the same way: nothing older can have a record, and a long history would
+    // otherwise be a page per commit, rebuilt live.
+    const recorded = line.map(commit => byCommit.has(commit.sha) || !!linkOf(commit.sha) || recordLines(commit.body).length > 0);
+    teamFrom = recorded.lastIndexOf(true) + 1;
   }
   const landed = line.slice(0, teamFrom), earlier = line.slice(teamFrom);
   const entries: C.MainEntry[] = [];
@@ -409,7 +416,7 @@ export function buildData(input: BuildInput): Map<string, unknown> {
   pages.forEach((page, k) => { if (k + 1 < pages.length) page.next = `main/${k + 2}.json`; });
   if (earlier.length) pages[pages.length - 1].earlier = { commits: earlier.length, oldest: earlier[earlier.length - 1].sha, newest: earlier[0].sha };
 
-  const index: C.Index = { main: input.main.name, changes: pages[0], branches: branchList, branchDays: BRANCH_DAYS,
+  const index: C.Index = { main: input.main.name, since: teamMode ? 'team-mode' : 'recording', changes: pages[0], branches: branchList, branchDays: BRANCH_DAYS,
     people: [...people.values()].sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)),
     sessions: [...sessions.values()].sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)) };
   files.set('index.json', index);
@@ -494,7 +501,8 @@ export function writeData(dir: string, input: BuildInput, files: Map<string, unk
     snapshot: { ...(input.remote ? { remote: input.remote } : {}), readAt: (input.now ?? new Date()).toISOString(), head }, inputs, sessions, files: written };
   fs.mkdirSync(building, { recursive: true });
   fs.writeFileSync(path.join(building, 'manifest.json'), json(manifest));
-  fs.rmSync(dir, { recursive: true, force: true });
+  // A file the server is sending can hold the old folder for a moment on Windows: retry briefly.
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   fs.renameSync(building, dir);
   return { manifest, made, reused };
 }

@@ -20,6 +20,7 @@
 | `wisdom team …`, `wisdom check --range` | Team mode: git hooks, commit guides written by a cheap model, sharing sessions through your git remote, the CI check. See [Team mode](team.md). |
 | `wisdom open <position> --capture <session\|latest>` | Read one turn, tool call or subagent, whole. |
 | `wisdom dashboard` | Print the address of the live dashboard. |
+| `wisdom commits` | Print the address of Commits on this machine: main and your branches, each commit's record and the sessions behind it, live. See [Commits on this machine](#commits-on-this-machine). |
 | `wisdom doctor` | Check that everything is working. See [installation](installation.md#check-a-project). |
 | `wisdom daemon start\|run\|status\|stop` | Control the background service. `run` stays in the foreground. |
 | `wisdom mcp` | Serve the optional `ledger` tool over MCP. See [agents](agents.md). |
@@ -245,9 +246,20 @@ When the daemon sees you make a commit, it keeps that answer as a record in your
 
 A kept record with agent work also shows a **guide** at the end, `guide · plain, built from the record now, no model`: each piece's step and the request of its turn, quoted. It is built each time you read it and never stored. For an account of what the change does and why, `wisdom guide <commit>` has a model (Claude Haiku 5.5, through your Claude Code) read the commit's sessions since your previous commit and write one, kept in that commit's record on this machine. `wisdom guide on` has one written after every commit, through a single `post-commit` hook that changes no commit message and pushes nothing; it is off by default. See [Guides in local mode](team.md#guides-in-local-mode). A normal `git push` never sends `refs/wisdom/*`; `git push --mirror` does.
 
+### Commits on this machine
+
+`wisdom commits` prints the address of Commits (`http://127.0.0.1:7436` for the first project), a page of its own beside the dashboard. It starts from git rather than from a session: what landed on main, your other branches, each commit with how its record was found, its pieces, its guide and its sessions, and a session's turns down to the chat view. The same app shows a team its remote once deployed; here it shows this machine only.
+
+- **Only this machine.** Your branches (main included), the records the daemon keeps for your commits, and your recordings. Nothing is fetched or compared with a remote, and it needs neither team mode nor a remote.
+- **Live.** It looks every two seconds at your branch tips, Wisdom's refs and each session's newest record, builds again when one moved, and the open page shows the new build in place.
+- **Checked here, not trusted.** Each status is worked out again from this machine's recordings: a step's change must still be in its session, and a guide must pass its check. A session a record names that is not here (deleted, or recorded elsewhere) is *needs attention*.
+- **History before Wisdom.** Without a team file, main's commits from before the first one Wisdom recorded fold into one line: none of them can have a record. With `wisdom-team.yaml`, the line starts at team mode instead.
+
+It runs as its own process, started by the daemon like the dashboard, and reads the recordings the way any other reader does, so a build never holds up recording. Its build lives in `.wisdom/commits/`, and `--no-dashboard` or `daemon.dashboard: false` leaves it out too.
+
 ## The background service
 
-The daemon listens on `127.0.0.1:7434` by default, or from `daemon.port` in [`wisdom.yaml`](#settings). When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
+The daemon listens on `127.0.0.1:7434` by default, or from `daemon.port` in [`wisdom.yaml`](#settings), with the dashboard on the next port and Commits on the one after. When another project's daemon holds that port, it takes the next free three (7437, 7440, …); Commits moves up further if its own port is taken, and `wisdom commits` says where it is. `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
 
 A recording capture becomes interrupted when the daemon restarts. It does not silently resume with a missing file baseline. The session's next event continues it, with a gap for the time in between. A turn that had not settled stays open, so its calls and reply stay in it.
 
@@ -261,8 +273,8 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
 | `paths.claude`, `.codex`, `.pi` | the installed one | Another installation, as `--claude-bin`, `--codex-bin` and `--pi-entry` do, for setup, `track`, `doctor` and the guide writer. A name is looked up on PATH; a path is taken from the project's folder. Pi's is its CLI's `.js` file. |
 | `skill` | `true` | `false`: Wisdom's reading skill is taken out of each place it went, and no command puts it back. |
 | `mcp` | `true` | `false`: tracked Claude Code and Codex sessions start without the read-only `ledger` tool. Connected sessions never get it. |
-| `daemon.port` | `7434` | The first port the daemon tries; when another project holds it, the next free pair. `--port` still asks for one port exactly. |
-| `daemon.dashboard` | `true` | `false` starts the daemon without the dashboard, as `--no-dashboard` does. |
+| `daemon.port` | `7434` | The first port the daemon tries; when another project holds it, the next free three. `--port` still asks for one port exactly. |
+| `daemon.dashboard` | `true` | `false` starts the daemon without the dashboard and Commits, as `--no-dashboard` does. |
 | `recording.idleMinutes` | `10` | A session with no event this long, and no tool running, is closed; its next event continues it. Read when a session starts being watched. |
 | `recording.maxFileMB` | `1` | A file bigger than this, 1 to 16, has its change recorded as a gap, without its contents. |
 | `recording.ignore` | none | Files or folders, from the project's top, never recorded: as `.wisdomignore` (still read too) takes them, with no `*` or `..`. |
@@ -296,6 +308,8 @@ wisdom.yaml                    # Your settings for this project (see Settings); 
   daemon.json                  # Local connection details; do not commit
   daemon.log
   dashboard.log
+  commits.json, commits.log    # Where Commits listens, and what its builds said
+  commits/data/                # Commits' latest build of this machine (rebuilt live)
   ledger.sqlite                # Authoritative capture/record metadata and SQL indexes
   ledger.sqlite-wal            # SQLite may keep sidecar files while running
   ledger.sqlite-shm

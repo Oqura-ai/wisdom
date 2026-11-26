@@ -5,7 +5,7 @@ import type { Change, Commit, CommitSummary, Index, Manifest, SessionSummary, Se
 import { sessionPath } from '@contract';
 import { useData, useMany } from '@/lib/data';
 import { go } from '@/lib/route';
-import { BASIS, COLOR, HOW, LINE, RANK, STATUS, TONE, plural, reasonWords, short } from '@/lib/words';
+import { BASIS, COLOR, HOW, LINE, PLACE, RANK, STATUS, TONE, plural, reasonWords, short } from '@/lib/words';
 import { Avatar, Crumbs, Dot, FoundPath, Head, Legend, Needs, Seg, StateNote, type NeedItem } from './bits';
 import { Canvas } from './Canvas';
 
@@ -263,7 +263,7 @@ function ChangeCanvas({ change, commits, sessions, manifest, selected, onSelect 
           const dim = kind === 'commit' && !cites(key!, s.key) || kind === 'session' && key !== s.key;
           return (
             <g key={s.key} className={dim ? 'dim' : ''}>
-              <g className="slabel" data-pick={`session:${s.key}`}><title>{`${s.title || s.id} · ${s.person} · ${plural(s.turns, 'turn')}${r.missing ? ' · not on the remote' : ''}`}</title>
+              <g className="slabel" data-pick={`session:${s.key}`}><title>{`${s.title || s.id} · ${s.person} · ${plural(s.turns, 'turn')}${r.missing ? ` · not ${PLACE.on}` : ''}`}</title>
                 <rect className="box" x={20} y={y - 6} width={164} height={26} rx={6} fill="var(--surface)" stroke="var(--line)" />
                 <text x={30} y={y + 11} className="id" style={{ fill: 'var(--ink)' }}>{short(s.id)}</text>
                 <text x={100} y={y + 11} style={{ fill: 'var(--muted)' }}>{s.person.slice(0, 8)}</text>

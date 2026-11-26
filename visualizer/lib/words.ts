@@ -13,14 +13,20 @@ export const BASIS: Record<string, string> = { git: 'git reported the rewrite', 
 /** A link line's style says how we know: solid, dashed, dotted red. */
 export const LINE: Record<string, string> = { git: '', github: '', 'commit-map': '', 'patch-id': 'patch', order: 'order' };
 
+/** Where this build's evidence is, in words: the team's remote, or this machine (set once from the manifest). */
+export const PLACE = { on: 'on the remote', name: 'the remote' };
+export function setPlace(mode: 'team' | 'local') {
+  Object.assign(PLACE, mode === 'local' ? { on: 'on this machine', name: 'this machine' } : { on: 'on the remote', name: 'the remote' });
+}
+
 /** One reason in plain words, as a reviewer reads it. */
 export function reasonWords(reason: Reason): string {
   const where = reason.path ? ` in ${reason.path}` : '';
   switch (reason.code) {
     case 'outside-step': return `a change outside any recorded step${where}`;
     case 'two-sessions': return `a piece two sessions both made${where}`;
-    case 'session-missing': return `session ${short(reason.session?.split('/').pop() ?? '')} is not on the remote`;
-    case 'record-missing': return reason.detail ?? 'its record is not on the remote';
+    case 'session-missing': return `session ${short(reason.session?.split('/').pop() ?? '')} is not ${PLACE.on}`;
+    case 'record-missing': return reason.detail ?? `its record is not ${PLACE.on}`;
     case 'order-link': return 'tied to its commit by position only';
     case 'no-guide': return reason.detail ? `no guide: ${reason.detail}` : 'no guide';
     case 'guide-problems': return `the guide did not pass its check${reason.detail ? `: ${reason.detail}` : ''}`;
@@ -29,7 +35,10 @@ export function reasonWords(reason: Reason): string {
   }
 }
 
-export const short = (sha: string) => sha.slice(0, 7);
+/** Where main's recorded history starts, in words: "since team mode", "before Wisdom recorded here". */
+export const SINCE: Record<'team-mode' | 'recording', string> = { 'team-mode': 'team mode', recording: 'Wisdom recorded here' };
+
+export const short =(sha: string) => sha.slice(0, 7);
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export const trunc = (text: string, n: number) => text.length > n ? `${text.slice(0, n - 1)}…` : text;
 

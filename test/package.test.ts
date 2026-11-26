@@ -19,6 +19,8 @@ test('the npm package holds what an install runs, and nothing else', () => {
     'dist/src/harnesses/pi/extension.js', 'integrations/claude-code/hook.mjs', 'integrations/codex/hook.mjs', 'skills/wisdom-ledger/SKILL.md']) {
     assert(files.includes(needed), `${needed} is in the package`);
   }
-  const unwanted = /^(?:src|test|docs|notes|experiment|private|scripts|dashboard|\.claude|\.wisdom|dist\/test)\/|^(?:CLAUDE|AGENTS)\.md$|\.map$/;
-  assert.deepEqual(files.filter(file => !file.startsWith('dist-dashboard/') && unwanted.test(file)), []);
+  const unwanted = /^(?:src|test|docs|notes|experiment|private|scripts|dashboard|visualizer|\.claude|\.wisdom|dist\/test)\/|^(?:CLAUDE|AGENTS)\.md$|\.map$/;
+  assert.deepEqual(files.filter(file => !file.startsWith('dist-dashboard/') && !file.startsWith('dist-commits/') && unwanted.test(file)), []);
+  // Commits ships its app only: the data it shows is built on each machine, never packed.
+  assert.deepEqual(files.filter(file => file.startsWith('dist-commits/data/')), []);
 });

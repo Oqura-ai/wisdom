@@ -5,6 +5,7 @@ private
 node_modules/
 dist/
 dist-dashboard/
+dist-commits/
 *.tgz
 *.tsbuildinfo
 dashboard/.next/

@@ -29,6 +29,7 @@
     "dist/src",
     "!dist/src/**/*.map",
     "dist-dashboard",
+    "dist-commits",
     "integrations",
     "skills",
     "NOTICE"
@@ -47,10 +48,10 @@
     "dashboard:build": "npm --prefix dashboard run build && node scripts/bundle-dashboard.mjs",
     "dashboard:dev": "npm --prefix dashboard run dev",
     "commits:install": "npm --prefix visualizer ci",
-    "commits:build": "npm --prefix visualizer run build",
+    "commits:build": "npm --prefix visualizer run build && node scripts/bundle-commits.mjs",
     "commits:dev": "npm --prefix visualizer run dev",
     "commits:sample": "npm run build && node scripts/commits-sample.mjs",
-    "prepack": "npm run build && npm run dashboard:build",
+    "prepack": "npm run build && npm run dashboard:build && npm run commits:build",
     "prepublishOnly": "npm test"
   },
   "dependencies": {

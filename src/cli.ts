@@ -55,6 +55,8 @@ Run an agent
 
 Read a session
   wisdom dashboard                Print the address of the live dashboard
+  wisdom commits                  Print the address of Commits on this machine: main and your
+                                  branches, each commit's record and the sessions behind it, live
   wisdom glance                   List recorded sessions, newest first
   wisdom glance <session>         Show one session's shape and every turn
   wisdom glance --commit <commit> Show which recorded steps made each piece of a git commit
@@ -108,7 +110,7 @@ Options
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
   --remote NAME, --range A..B     team, check: another remote than the policy's; the PR's commits
   --from <session-id>             handoff: the session to read (default: the one running it, or the newest other one)
-  --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
+  --port N, --no-dashboard        daemon: choose a port, or skip the dashboard and Commits
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
   --trust-all-hooks               track codex: skip the review, for every hook in that run
@@ -138,7 +140,7 @@ async function main(): Promise<void> {
   if (command === 'handoff-run') { if (first) await runBackgroundHarness(first); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
-    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
+    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], commits: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'emit', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
@@ -222,6 +224,8 @@ async function main(): Promise<void> {
       console.error(`Wisdom listening at ${daemon.connection.url}; data: ${dataDir}`);
       const viewer = (await call(daemon.connection, '/health')).dashboard;
       console.error(viewer.url ? `Dashboard: ${viewer.url}` : `Dashboard not started: ${viewer.reason}`);
+      const commits = (await call(daemon.connection, '/health')).commits;
+      if (commits.status === 'unavailable') console.error(`Commits not started: ${commits.reason}`);
       const stop = () => void daemon.close();
       process.once('SIGINT', stop); process.once('SIGTERM', stop);
       await daemon.closed;
@@ -237,6 +241,17 @@ async function main(): Promise<void> {
     const viewer = (await call(connectionAt(dataDir), '/health')).dashboard;
     if (!viewer.url) throw new Error(`Dashboard not running: ${viewer.reason}`);
     console.log(viewer.url); return;
+  }
+  if (command === 'commits') {
+    // Like the dashboard, it runs with the daemon: started here if it is not running yet.
+    const connection = await ensureDaemon(dataDir, port);
+    let state = (await call(connection, '/health')).commits;
+    for (let attempt = 0; attempt < 50 && state?.status === 'running' && !state.url; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      state = (await call(connection, '/health')).commits;
+    }
+    if (!state?.url) throw new Error(`Commits is not running: ${commitsLine(state)}`);
+    console.log(state.url); return;
   }
   if (command === 'track') { process.exitCode = await track(first, values, harnessArgs, dataDir, port); return; }
   if (command === 'resume') {
@@ -273,12 +288,21 @@ async function showRunning(connection: Connection): Promise<void> {
   console.log('Wisdom is running.');
   console.log(`  Address    ${connection.url} (PID ${connection.pid})`);
   console.log(`  Dashboard  ${dashboardLine(viewer)}`);
+  console.log(`  Commits    ${commitsLine(health.commits)}`);
   console.log(`  Sessions   ${health.captures}`);
 }
 
 function dashboardLine(viewer: any): string {
   if (!viewer.url) return `not started. ${viewer.reason}`;
   return viewer.status === 'exited' ? `stopped unexpectedly. Read ${viewer.log}` : viewer.url;
+}
+
+/** Commits writes its address once listening, so just after a start it may have none yet. */
+function commitsLine(state: any): string {
+  if (!state) return 'not started: the running daemon is from before Commits.';
+  if (state.status === 'unavailable') return `not started. ${state.reason}`;
+  if (state.status === 'exited') return `stopped unexpectedly. Read ${state.log}`;
+  return state.url ?? 'starting';
 }
 
 /** Stopping something already stopped is not a failure, and "stopped" is only said once it is. */
@@ -294,13 +318,15 @@ async function stopDaemon(dataDir: string): Promise<void> {
   console.log(fs.existsSync(file) ? 'Wisdom is stopping.' : 'Wisdom stopped.');
 }
 
-/** The daemon's first port is 7434, or wisdom.yaml's daemon.port; when another project's daemon
- * holds it, the next free pair is used (daemon.json says which). An explicit --port is used as given.
+/** The daemon's first port is 7434, or wisdom.yaml's daemon.port, with Usage on the next and
+ * Commits on the one after; when another project's daemon holds it, the next free three are
+ * used (daemon.json says which). An explicit --port is used as given.
  */
-async function runDaemon(dataDir: string, port: number | undefined, dashboard: boolean, first = 7434) {
-  for (let candidate = port ?? first; ; candidate += 2) {
-    try { return await startDaemon(dataDir, candidate, { dashboardPort: dashboard && candidate ? candidate + 1 : undefined }); }
-    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= first + 40) throw error; }
+async function runDaemon(dataDir: string, port: number | undefined, viewers: boolean, first = 7434) {
+  for (let candidate = port ?? first; ; candidate += 3) {
+    const on = viewers && candidate > 0;
+    try { return await startDaemon(dataDir, candidate, { dashboardPort: on ? candidate + 1 : undefined, commitsPort: on ? candidate + 2 : undefined }); }
+    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= first + 60) throw error; }
   }
 }
 
@@ -328,7 +354,9 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   installed('codex', () => installCodex(dataDir), 'wisdom track codex --setup-hooks, trust its hooks in /hooks, then wisdom track codex');
   installed('pi', () => installPi(dataDir), 'wisdom track pi');
   const connection = await ensureDaemon(dataDir, port);
-  console.log(`\nDashboard: ${dashboardLine((await call(connection, '/health')).dashboard)}`);
+  const health = await call(connection, '/health');
+  console.log(`\nDashboard: ${dashboardLine(health.dashboard)}`);
+  console.log(`Commits:   ${health.commits?.status === 'unavailable' ? commitsLine(health.commits) : 'wisdom commits prints its address'}`);
   console.log('\nEach agent asks you to log in once for this project. Your global agent settings are not touched.');
   console.log('Keep .wisdom/ private: it holds your sessions and agent logins, unredacted. Git ignores it, but leave it out of zips and synced folders.');
 }

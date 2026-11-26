@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Change, Commit, Index, Manifest } from '@contract';
 import { useData, useManifest } from '@/lib/data';
 import { go, useRoute, type Route } from '@/lib/route';
-import { STATUS, TONE, ago, plural, reasonWords, short } from '@/lib/words';
+import { PLACE, SINCE, STATUS, TONE, ago, plural, reasonWords, setPlace, short } from '@/lib/words';
 import { Dot, StateNote } from './bits';
 import { BranchesView } from './BranchesView';
 import { ChangeView } from './ChangeView';
@@ -19,6 +19,8 @@ export function App() {
   const route = useRoute();
   const { manifest, newer, error } = useManifest();
   const index = useData<Index>(manifest ? 'index.json' : undefined);
+  // The words for where the evidence is follow the build: the remote, or this machine.
+  if (manifest) setPlace(manifest.mode);
   // What the panel previews: a card picked on a canvas. Going elsewhere clears it, unless the
   // move was made to show something there ("See it on main's canvas").
   const [selected, setSelected] = useState<string>();
@@ -136,8 +138,8 @@ function Panel({ route, index, manifest, selected }: { route: Route; index: Inde
       <p className="small muted" style={{ marginTop: 12 }}>{plural(branch.sessions, 'session')} behind it, by <b>{branch.author}</b>. It gets a full page, with its canvas, once a pull request is opened.</p>
     </>
   );
-  if (selected === 'earlier') return <div className="helptext"><span className="kicker">Before team mode</span><h3>Earlier commits</h3>
-    <p>Commits from before the team file was committed can never have records. git log has them.</p></div>;
+  if (selected === 'earlier') return <div className="helptext"><span className="kicker">Before {SINCE[index.since ?? 'team-mode']}</span><h3>Earlier commits</h3>
+    <p>{index.since === 'recording' ? 'Commits from before Wisdom first recorded a commit here' : 'Commits from before the team file was committed'} can never have records. git log has them.</p></div>;
   if (change) return (
     <>
       <span className="kicker">{change.pr ? `Pull request #${change.pr} · ${change.state}` : `Change · ${change.state}`}</span>
@@ -180,7 +182,7 @@ function Panel({ route, index, manifest, selected }: { route: Route; index: Inde
       <span className="kicker">How to read this</span><h3>Shallow to deep</h3>
       <p>main shows what landed. A change opens to its commits, a commit to its pieces and the sessions behind them, a session to its turns.</p>
       <p>Colour is a status only: <span className="t-good">all good</span>, <span className="t-warn">look closer</span>, <span className="t-bad">needs attention</span>, <span className="t-none">no record</span>.
-        Every status is what the remote can prove: Wisdom re-checks each step and guide against the sessions here.</p>
+        Every status is what {PLACE.name} can prove: Wisdom re-checks each step and guide against the sessions here.</p>
       <p>Click a card on a canvas to preview it here.</p>
     </div>
   );

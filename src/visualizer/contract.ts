@@ -129,6 +129,9 @@ export interface CommitOrigin {
 export interface Index {
   /** The default branch's name. */
   main: string;
+  /** Where main's history starts: at team mode (the team file's commit), or, with no team file,
+   * at the first commit Wisdom recorded here. What is older folds into `earlier`. */
+  since: 'team-mode' | 'recording';
   /** The first page of main, newest first. */
   changes: MainPage;
   /** Branches with work not on main, active within `branchDays` (the app filters 7/30/90 from these). */
@@ -144,7 +147,7 @@ export interface MainPage {
   entries: MainEntry[];
   /** The next page's path (`main/2.json`), absent on the last page. */
   next?: string;
-  /** On the last page: the commits from before team mode, folded into one line. */
+  /** On the last page: the commits from before `Index.since`, which can never have records, folded into one line. */
   earlier?: { commits: number; oldest: string; newest: string };
 }
 

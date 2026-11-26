@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { Change, Index, MainEntry, MainPage, Status } from '@contract';
 import { load, useMany } from '@/lib/data';
 import { go } from '@/lib/route';
-import { COLOR, HOW, LINE, BASIS, RANK, STATUS, plural, reasonWords, short, trunc } from '@/lib/words';
+import { COLOR, HOW, LINE, BASIS, RANK, SINCE, STATUS, plural, reasonWords, short, trunc } from '@/lib/words';
 import { Avatar, Dot, Head, Legend, Needs, type NeedItem } from './bits';
 import { Canvas } from './Canvas';
 
@@ -18,6 +18,7 @@ export function MainView({ index, selected, onSelect }: { index: Index; selected
   const [pages, setPages] = useState<MainPage[]>([index.changes]);
   const entries = pages.flatMap(page => page.entries);
   const last = pages[pages.length - 1];
+  const since = SINCE[index.since ?? 'team-mode'];
   const changes = useMany<Change>(entries.flatMap(e => e.kind === 'change' ? [`change/${e.change}.json`] : []));
   const byId = new Map((changes ?? []).flatMap(c => c ? [[c.id, c] as const] : []));
 
@@ -35,15 +36,15 @@ export function MainView({ index, selected, onSelect }: { index: Index; selected
       <div className="card">
         <span className="kicker">What has landed</span><h1>{index.main}</h1>
         <div className="facts">
-          <span><b>{entries.length}</b> {entries.length === 1 ? 'change' : 'changes'}{last.next ? ' shown' : ' since team mode'}</span>
+          <span><b>{entries.length}</b> {entries.length === 1 ? 'change' : 'changes'}{last.next ? ' shown' : ` since ${since}`}</span>
           <span><b>{index.sessions.length}</b> sessions recorded</span>
-          {last.earlier && <span><b>{last.earlier.commits}</b> earlier commits, before team mode</span>}
+          {last.earlier && <span><b>{last.earlier.commits}</b> earlier commits, before {since}</span>}
         </div>
         <p className="verdict">
           {entries.length ? <>{count('good')} of {entries.length} are explained by recorded sessions
             {count('attention') > 0 && <> · <span className="t-bad">{count('attention')} need{count('attention') === 1 ? 's' : ''} attention</span></>}
             {count('look') > 0 && <> · <span className="t-warn">{count('look')} need{count('look') === 1 ? 's' : ''} a closer look</span></>}
-            {count('none') > 0 && <> · {count('none')} {count('none') === 1 ? 'has' : 'have'} no record</>}.</> : 'Nothing has landed since team mode.'}
+            {count('none') > 0 && <> · {count('none')} {count('none') === 1 ? 'has' : 'have'} no record</>}.</> : `Nothing has landed since ${since}.`}
         </p>
         <Needs items={needs} />
       </div>
@@ -51,7 +52,7 @@ export function MainView({ index, selected, onSelect }: { index: Index; selected
       {entries.length > 0 && (
         <div className="card">
           <Head title="How each change landed" sub="Oldest on the left · click a card to preview it" />
-          <MainCanvas entries={entries} earlier={last.earlier?.commits} changes={byId} selected={selected} onSelect={onSelect} />
+          <MainCanvas entries={entries} earlier={last.earlier?.commits} since={since} changes={byId} selected={selected} onSelect={onSelect} />
         </div>
       )}
 
@@ -76,7 +77,7 @@ export function MainView({ index, selected, onSelect }: { index: Index; selected
               </tr>
             ))}
             {last.next && <tr className="click folded" onClick={more}><td colSpan={5}>Show older changes ›</td></tr>}
-            {last.earlier && <tr className="folded"><td colSpan={5}>{last.earlier.commits} earlier commits, before team mode <span className="small">· none can have a record</span></td></tr>}
+            {last.earlier && <tr className="folded"><td colSpan={5}>{last.earlier.commits} earlier commits, before {since} <span className="small">· none can have a record</span></td></tr>}
           </tbody>
         </table>
       </div>
@@ -87,7 +88,7 @@ export function MainView({ index, selected, onSelect }: { index: Index; selected
 /** main's canvas: one card per change that landed, and how it landed. A squash is a comb of the
  * commits it came from (not on main any more); a merge commit's branch dips under main and comes
  * back; a rebase ties each new commit to the one it came from. A link's line says how we know. */
-function MainCanvas({ entries, earlier, changes, selected, onSelect }: { entries: MainEntry[]; earlier?: number; changes: Map<string, Change>;
+function MainCanvas({ entries, earlier, since, changes, selected, onSelect }: { entries: MainEntry[]; earlier?: number; since: string; changes: Map<string, Change>;
   selected?: string; onSelect: (key?: string) => void }) {
   const LANE = 164, CH = 46, GY = 56, GAP = 64;
   type Item = { e?: MainEntry; x0: number; w: number; cx: number };
@@ -127,7 +128,7 @@ function MainCanvas({ entries, earlier, changes, selected, onSelect }: { entries
         {items.map(item => {
           const dim = selected && selected !== keyOf(item) ? 'dim' : '';
           const e = item.e;
-          if (!e) return <g key="earlier" className={dim}>{card(item, item.x0, item.w, `${earlier} earlier`, 'before team mode', undefined, `${earlier} commits from before team mode: none can have a record`)}</g>;
+          if (!e) return <g key="earlier" className={dim}>{card(item, item.x0, item.w, `${earlier} earlier`, since === 'team mode' ? 'before team mode' : 'before recording', undefined, `${earlier} commits from before ${since}: none can have a record`)}</g>;
           if (e.kind === 'direct') {
             const c = e.commit;
             return <g key={keyOf(item)} className={dim}>{card(item, item.x0, item.w, <tspan className="id">{short(c.sha)}</tspan>,

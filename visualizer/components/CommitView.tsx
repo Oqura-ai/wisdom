@@ -5,7 +5,7 @@ import type { Change, Commit, CommitSession, Index, Manifest, Piece, Reason, Ses
 import { sessionPath } from '@contract';
 import { useData, useMany } from '@/lib/data';
 import { go } from '@/lib/route';
-import { BASIS, HOW, STATUS, TONE, ago, plural, reasonWords, short } from '@/lib/words';
+import { BASIS, HOW, PLACE, STATUS, TONE, ago, plural, reasonWords, short } from '@/lib/words';
 import { Avatar, Crumbs, Dot, FoundPath, Seg, StateNote } from './bits';
 import { Markdown } from './Markdown';
 
@@ -18,7 +18,7 @@ export function CommitView({ sha, via, index, manifest, onSelect }: { sha: strin
   const changeId = via ?? commit?.change;
   const change = useData<Change>(changeId ? `change/${changeId}.json` : undefined).data;
   const [tab, setTab] = useState<Tab>('pieces');
-  if (missing) return <StateNote title="No such commit in this build">Only commits on main since team mode and on active branches have a page. git show has the rest.</StateNote>;
+  if (missing) return <StateNote title="No such commit in this build">Only commits on main since {index.since === 'recording' ? 'Wisdom first recorded here' : 'team mode'} and on active branches have a page. git show has the rest.</StateNote>;
   if (error) return <StateNote title="This commit could not be read">{error}</StateNote>;
   if (!commit) return <StateNote title="Reading…" />;
 
@@ -103,10 +103,10 @@ function Callouts({ commit }: { commit: Commit }) {
   const first = (code: Reason['code']) => commit.reasons.find(r => r.code === code);
   const out: React.ReactNode[] = [];
   const missing = commit.reasons.filter(r => r.code === 'session-missing');
-  if (missing.length) out.push(<div key="sm" className="callout bad"><b>{missing.length === 1 ? 'Session missing' : `${missing.length} sessions missing`} on the remote</b>
+  if (missing.length) out.push(<div key="sm" className="callout bad"><b>{missing.length === 1 ? 'Session missing' : `${missing.length} sessions missing`} {PLACE.on}</b>
     <div className="small">The record names {missing.map(r => short(r.session?.split('/').pop() ?? '')).join(', ')}; this build does not have {missing.length === 1 ? 'it' : 'them'}. Only the recorder&apos;s machine can say why.</div></div>);
   const rm = first('record-missing');
-  if (rm) out.push(<div key="rm" className="callout bad"><b>Record missing on the remote</b><div className="small">{cap(rm.detail ?? commit.found.cause ?? 'its record is not here')}.</div></div>);
+  if (rm) out.push(<div key="rm" className="callout bad"><b>Record missing {PLACE.on}</b><div className="small">{cap(rm.detail ?? commit.found.cause ?? 'its record is not here')}.</div></div>);
   const ng = first('no-guide');
   if (ng) out.push(<div key="ng" className="callout bad"><b>Guide missing</b><div className="small">{ng.detail ? `${cap(ng.detail)}. ` : ''}CI flags it until someone runs <code>wisdom guide {short(commit.sha)}</code>.</div></div>);
   const gp = first('guide-problems');
@@ -184,7 +184,7 @@ function SessionBlock({ s, commit, self, summary, listing, onSelect }: { s: Comm
     <div className="sess">
       <header>
         <code>{short(s.id)}</code> <Avatar name={s.person} /> <span style={{ fontWeight: 500 }}>{summary?.title || s.id}</span><span className="spacer" />
-        <span className={`small ${s.present ? 'muted' : 't-bad'}`}>{s.present ? `${s.harness} · ${plural(summary?.turns ?? 0, 'turn')}` : 'not on the remote'}</span>
+        <span className={`small ${s.present ? 'muted' : 't-bad'}`}>{s.present ? `${s.harness} · ${plural(summary?.turns ?? 0, 'turn')}` : `not ${PLACE.on}`}</span>
         <button className="pos" onClick={() => onSelect(`session:${s.key}`)}>In the panel ›</button>
       </header>
       {!s.present ? (

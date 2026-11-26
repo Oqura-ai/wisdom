@@ -5,7 +5,7 @@ import type { Commit, Index, Manifest, SessionSummary, SessionTurns, Turn, TurnI
 import { sessionPath } from '@contract';
 import { useData, useMany } from '@/lib/data';
 import { go } from '@/lib/route';
-import { plural, short } from '@/lib/words';
+import { PLACE, plural, short } from '@/lib/words';
 import { Markdown } from './Markdown';
 
 type Body = { text: string; truncated?: true; totalChars?: number };
@@ -63,7 +63,7 @@ export function SessionItem({ s, open, opening, here, manifest }: { s: SessionSu
       </summary>
       <div>
         <div className="sp-facts">{s.person} · {s.harness}{recorder && <> · recorder <code>{recorder}</code></>} · session <code>{s.id}</code>
-          {missing && <div className="t-bad">Not on the remote: a record names this session, but this build does not have it. Its turns can&apos;t be read here.</div>}</div>
+          {missing && <div className="t-bad">Not {PLACE.on}: a record names this session, but this build does not have it. Its turns can&apos;t be read here.</div>}</div>
         {!missing && shown && (listing ? listing.turnList.map(t => {
           const cited = t.cited.length > 0 && (!here || t.cited.some(isHere));
           const picked = opening?.from !== undefined && t.turn >= opening.from && t.turn <= opening.to!;
