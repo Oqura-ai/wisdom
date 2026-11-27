@@ -109,7 +109,9 @@ export function teamWorkflowText(main: string, commits?: { orgId: string; projec
   pull_request:
   push:
     branches: [${JSON.stringify(main)}]`;
-  const settings = [`      main: ${JSON.stringify(main)}`];
+  // Pinned to the Wisdom that wrote the file: the workflow's default, npm's latest, may be an
+  // older Wisdom without these jobs. Update it with the team's version.
+  const settings = [`      main: ${JSON.stringify(main)}`, `      wisdom-version: ${JSON.stringify(version())}`];
   if (commits) settings.push('      commits: true', `      vercel-org-id: ${JSON.stringify(commits.orgId)}`, `      vercel-project-id: ${JSON.stringify(commits.projectId)}`,
     ...(commits.public ? ['      public: true   # no sign-in: anyone with the link sees everything'] : []));
   return `# Wisdom in CI: checks pull requests, links what GitHub makes at a merge${commits ? ', and builds the team\'s Commits dashboard' : ''}.

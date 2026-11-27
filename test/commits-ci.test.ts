@@ -74,7 +74,9 @@ test('the workflows: the team\'s one file calls Wisdom\'s reusable one, which ch
   const full = parse(teamWorkflowText('trunk', { orgId: 'team_x', projectId: 'prj_y' }));
   assert.deepEqual(full.on.push.branches, ['trunk']);
   assert.ok(full.on.schedule[0].cron && 'workflow_dispatch' in full.on);
-  assert.deepEqual(full.jobs.wisdom.with, { main: 'trunk', commits: true, 'vercel-org-id': 'team_x', 'vercel-project-id': 'prj_y' });
+  const pinned = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+  assert.equal(plain.jobs.wisdom.with['wisdom-version'], pinned, 'npm\'s latest may be an older Wisdom: the file pins the one that wrote it');
+  assert.deepEqual(full.jobs.wisdom.with, { main: 'trunk', 'wisdom-version': pinned, commits: true, 'vercel-org-id': 'team_x', 'vercel-project-id': 'prj_y' });
   assert.equal(full.jobs.wisdom.secrets.VERCEL_TOKEN, '${{ secrets.WISDOM_VERCEL_TOKEN }}');
   assert.equal(full.permissions.contents, 'write', 'relink pushes link refs');
   assert.equal(full.permissions.checks, 'write', 'a called workflow gets no more than its caller grants: the check run needs it here too');

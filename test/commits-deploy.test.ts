@@ -124,7 +124,8 @@ test('commits deploy: Vercel, the sign-in app from a manifest, its secrets, the 
     // The CI file, the old relink job gone (the new one relinks), the team file kept as it was plus commits.
     const workflow = parse(fs.readFileSync(path.join(dir, '.github', 'workflows', 'wisdom.yml'), 'utf8'));
     assert.equal(workflow.jobs.wisdom.uses, REUSABLE);
-    assert.deepEqual(workflow.jobs.wisdom.with, { main: 'main', commits: true, 'vercel-org-id': 'team_1', 'vercel-project-id': 'prj_1' });
+    assert.deepEqual(workflow.jobs.wisdom.with, { main: 'main', 'wisdom-version': JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version,
+      commits: true, 'vercel-org-id': 'team_1', 'vercel-project-id': 'prj_1' });
     assert.ok(!fs.existsSync(workflowFile(dir)));
     const team = fs.readFileSync(path.join(dir, 'wisdom-team.yaml'), 'utf8');
     assert.match(team, /^# Wisdom team mode: committed/);

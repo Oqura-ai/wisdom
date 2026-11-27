@@ -397,6 +397,7 @@ jobs:
     uses: Oqura-ai/wisdom/.github/workflows/wisdom.yml@v1
     with:
       main: "main"
+      wisdom-version: "0.6.0-beta.4"
       commits: true
       vercel-org-id: "team_..."
       vercel-project-id: "prj_..."
@@ -404,6 +405,8 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.WISDOM_VERCEL_TOKEN }}
 ```
 
+`wisdom-version` is the Wisdom that wrote the file. Without it the workflow installs npm's
+`latest`, which may be an older Wisdom without these jobs; move it when the team updates.
 Without `commits: true` it only checks and relinks. Without the dashboard, the two jobs below do
 the same written out in full: GitHub Actions, as an example:
 
