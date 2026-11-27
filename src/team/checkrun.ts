@@ -1,8 +1,11 @@
 /**
  * `wisdom check` in GitHub Actions, on a pull request (design policy 5.26): the result as GitHub's
- * own check run, beside the job's pass or fail. One status line as its title, what needs
- * attention as its summary, and Details leading to the pull request's page on the team's
- * dashboard when there is one. The same summary goes on the job's own summary page, which needs
+ * own check run, beside the job's pass or fail. One status line as its title, and as its summary
+ * a link to the pull request's page on the team's dashboard when there is one, then what needs
+ * attention. details_url is sent too, but GitHub shows a check run posted with Actions'
+ * GITHUB_TOKEN with the run's own page as Details (seen on the first live run; GitHub's
+ * community answer: only a GitHub App's token sets it), so the summary's link is the way in.
+ * The same summary goes on the job's own summary page, which needs
  * no permission (a fork's pull request gets a read-only token, so its check run is refused).
  *
  * It only reports: pass or fail is the check's own (team.ts prCheck), and nothing here can change
@@ -26,12 +29,14 @@ export function checkRunText(result: { ok: boolean; text: string; commits: Check
       unrecorded.length ? `${unrecorded.length} without a record` : ''].filter(Boolean).join(' · ');
   const line = (c: CheckedCommit, why: string) => `- \`${c.sha.slice(0, 7)}\` ${c.subject.replace(/[\r\n]+/g, ' ')}: ${why}`;
   const parts: string[] = [];
+  // First, as the way in: GitHub shows a check run posted with Actions' GITHUB_TOKEN with its own
+  // run page as Details, whatever details_url says, so this link is what reaches the dashboard.
+  const detailsUrl = dashboard && pr ? `${dashboard.replace(/\/+$/, '')}/#/change/${pr}` : undefined;
+  if (detailsUrl) parts.push(`**[Open this pull request on the team's dashboard](${detailsUrl})**, with its commits and the sessions behind them. It updates a few minutes after each push.`, '');
   if (attention.length) parts.push('**Needs attention**', '', ...attention.map(c => line(c, c.problems.join('; '))), '');
   if (unrecorded.length) parts.push('**No record**: made without Wisdom, not linked yet, or its record not pushed. These fail nothing.', '',
     ...unrecorded.map(c => line(c, 'no record')), '');
   if (!attention.length && commits.length) parts.push('Every commit with a record passes: a guide where there is agent work, and every session it names is on the remote.', '');
-  const detailsUrl = dashboard && pr ? `${dashboard.replace(/\/+$/, '')}/#/change/${pr}` : undefined;
-  if (detailsUrl) parts.push(`[Open this pull request on the team's dashboard](${detailsUrl}), with its commits and the sessions behind them. It updates a few minutes after each push.`);
   return { ok: result.ok, title, summary: parts.join('\n').trim(), text: `\`\`\`text\n${result.text}\n\`\`\``, ...(detailsUrl ? { detailsUrl } : {}) };
 }
 

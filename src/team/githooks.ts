@@ -9,6 +9,7 @@ import { agentWork, readCommit, type CommitRecord } from './commits.js';
 import { commitFiles, git, gitText, listRefs, oldPolicyNote, patchId, readFile, readPolicy, recordIds, recordRef, recorderId, resolve, setRef, teamCommit, type Policy } from './gitrefs.js';
 import { writeGuide } from './writer.js';
 import { guidesOn } from './guides.js';
+import { problemSummary, writtenBy } from './plain.js';
 import { push, pushHistory, pushLinks, type PushResult } from './team.js';
 import { parseRewrites, writeLink } from './links.js';
 
@@ -186,7 +187,7 @@ function jobLine(dataDir: string, line: string): void {
 
 function jobSummary(record: CommitRecord, started: number, how: string): string {
   const guide = record.guide;
-  const written = guide ? `guide by ${guide.writer}, ${guide.problems.length ? `check: ${guide.problems.length} problem${guide.problems.length === 1 ? '' : 's'}` : 'check passed'}`
+  const written = guide ? `guide by ${writtenBy(guide)}, ${guide.problems.length ? `check: ${problemSummary(guide.problems)}` : 'check passed'}`
     + `${guide.seconds !== undefined ? `, writer ${guide.seconds} s` : ''}${guide.costUsd !== undefined ? `, $${guide.costUsd.toFixed(4)}` : ''}`
     : record.guideMissing ? `no guide: ${record.guideMissing}` : agentWork(record) ? 'no guide stored' : 'no guide (no agent work)';
   return `${record.commit.sha.slice(0, 12)} ${how} · record ${record.made === 'later' ? 'kept later' : 'kept'} · ${written} · ${Math.round((Date.now() - started) / 1000)} s`;

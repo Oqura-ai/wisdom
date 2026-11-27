@@ -16,6 +16,7 @@ import path from 'node:path';
 import { catFiles, git, listRefs, POLICY_FILE, recordRefs, refSafe } from '../team/gitrefs.js';
 import { loadLinks, type CommitLink, type LinkBasis, type LinkHow } from '../team/links.js';
 import { agentWork, type CommitRecord, type RecordStep } from '../team/commits.js';
+import { problemSummary } from '../team/plain.js';
 import { CONTRACT_VERSION, sessionPath } from './contract.js';
 import type * as C from './contract.js';
 import type { TurnItem } from '../read/conversation.js';
@@ -244,13 +245,14 @@ export function buildData(input: BuildInput): Map<string, unknown> {
         if (!record.guide) reasons.push({ code: 'no-guide', ...(record.guideMissing ? { detail: record.guideMissing } : {}) });
         else {
           const problems = evidence.guide(record.guide.text, record);
-          if (problems.length) reasons.push({ code: 'guide-problems', detail: problems.join('; ') });
+          if (problems.length) reasons.push({ code: 'guide-problems', detail: problemSummary(problems) });
         }
       }
       if (record.guide && !guide) {
         const g = record.guide;
         guide = { text: g.text, writer: g.writer, writtenAt: g.writtenAt, problems: evidence.guide(g.text, record),
-          ...(g.costUsd !== undefined ? { costUsd: g.costUsd } : {}), ...(g.seconds !== undefined ? { seconds: g.seconds } : {}) };
+          ...(g.costUsd !== undefined ? { costUsd: g.costUsd } : {}), ...(g.seconds !== undefined ? { seconds: g.seconds } : {}),
+          ...(g.filled ? { filled: g.filled, items: g.items } : {}) };
       }
       if (!record.guide && record.guideMissing && !guideMissing) guideMissing = record.guideMissing;
     }

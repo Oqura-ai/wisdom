@@ -5,6 +5,7 @@ import { execSync } from 'node:child_process';
 import { draftFrom, writeShare, type Exported } from '../share/share.js';
 import { view } from '../read/views.js';
 import { agentWork, projectOf, type CommitRecord } from './commits.js';
+import { problemSummary } from './plain.js';
 import { commitFiles, deleteRef, FETCHED_LINKS, git, gitError, gitIdentity, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, recordRefs, recordsWithIds, recordText, teamCommit,
   refExists, refSafe, remoteRef, resolve, sessionRef, setRef, trusted, type Policy } from './gitrefs.js';
 import { followLinks, linkWords, ownLink, readLink } from './links.js';
@@ -501,7 +502,7 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
       const missing = record.sessions.filter(s => s.recorder && !refs.has(remoteRef(policy.repoId, sessionRef(sessionKey(s.recorder, s.id))))).map(s => s.id);
       const found = [
         ...(agent && !record.guide && policy.requireGuides !== false ? [`agent work without a guide${record.guideMissing ? ` (${record.guideMissing})` : ''}`] : []),
-        ...(agent && record.guide?.problems.length ? [`the guide did not pass its check: ${record.guide.problems.join('; ')}`] : []),
+        ...(agent && record.guide?.problems.length ? [`the guide did not pass its check: ${problemSummary(record.guide.problems)}`] : []),
         ...missing.map(id => `session ${id.slice(0, 8)} is not on ${remote}`),
       ];
       problems += found.length;

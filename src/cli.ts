@@ -23,6 +23,7 @@ import { relink, setSync, syncOn, workflowFile, writeWorkflow } from './team/rel
 import { oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trustCommands, trusted, writePolicy } from './team/gitrefs.js';
 import { guideCommit, installHooks, LOCAL_HOOKS, removeHooks, runGitHook } from './team/githooks.js';
 import { guidesOn, setGuides } from './team/guides.js';
+import { problemSummary, writtenBy } from './team/plain.js';
 import { serveMcp } from './service/mcp.js';
 import { findDataDir, marker, movedFrom } from './core/paths.js';
 import { writeJson } from './storage/ledger.js';
@@ -872,7 +873,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     }
     const record = guideCommit(dataDir, action);
     const sha = record.commit.sha.slice(0, 12);
-    console.log(`Guide written by ${record.guide!.writer} for ${sha} · ${record.guide!.problems.length ? `did not pass Wisdom's check: ${record.guide!.problems.join('; ')}` : 'it passed Wisdom\'s check'}.`);
+    console.log(`Guide written by ${writtenBy(record.guide!)} for ${sha} · ${record.guide!.problems.length ? `did not pass Wisdom's check: ${problemSummary(record.guide!.problems)}` : 'it passed Wisdom\'s check.'}`);
     console.log(`Kept in refs/wisdom/records/${record.commit.sha}${team ? ', and sent with your next push' : ', on this machine only'}. Read it: wisdom glance --commit ${sha}`);
     return 0;
   }

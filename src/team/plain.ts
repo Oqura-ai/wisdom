@@ -85,6 +85,46 @@ const REQUEST_CHARS = 300;
  * the rest. `stores` finds the store that holds a session; a session not found here gets its
  * step cited without its request. */
 export function plainGuide(record: CommitRecord, stores: (id: string) => SessionStore | undefined): string {
+  const out = ['## Summary', plainSummary(record), '', '## Items'];
+  for (const lines of plainItems(record, stores).values()) out.push(...lines);
+  return out.join('\n') + '\n';
+}
+
+/** What a filled item's paragraph starts with (guides.ts fillFromPlain), so a reader tells it from the model's. */
+export const PLAIN_MARK = 'From the record, no model:';
+
+/** How a guide's writer is shown: its name, and how many items it left to the record. */
+export const writtenBy = (guide: { writer: string; filled?: number; items?: number }) =>
+  guide.filled ? `${guide.writer} for ${guide.items! - guide.filled} of ${guide.items} items; ${guide.filled} from the record, no model` : guide.writer;
+
+/** A guide's problems in one line: those of the same kind counted, with a few of their items
+ * named, then the others, a few at a time. The full list stays in the record. */
+export function problemSummary(problems: string[], examples = 3): string {
+  const kinds: [RegExp, (n: number) => string][] = [
+    [/^The item "- (.*)" is missing\.$/, n => `${n} ${n === 1 ? 'item' : 'items'} missing`],
+    [/^(.*): nothing is written for it\.$/, n => `${n} ${n === 1 ? 'item' : 'items'} empty`],
+    [/^(.*): made by a recorded step, but cites none\.$/, n => `${n} ${n === 1 ? 'item cites' : 'items cite'} no step`],
+  ];
+  const named = (keys: string[]) => keys.slice(0, examples).join(', ') + (keys.length > examples ? `, and ${keys.length - examples} more` : '');
+  const parts: string[] = [];
+  const counted = new Set<string>();
+  for (const [pattern, say] of kinds) {
+    const keys = problems.flatMap(problem => { const match = pattern.exec(problem); if (match) counted.add(problem); return match ? [match[1]] : []; });
+    if (keys.length) parts.push(`${say(keys.length)} (${named(keys)})`);
+  }
+  const others = problems.filter(problem => !counted.has(problem)).map(problem => problem.replace(/\.+$/, ''));
+  parts.push(...others.slice(0, examples));
+  if (others.length > examples) parts.push(`and ${others.length - examples} more`);
+  return parts.join('; ') + '.';
+}
+
+/** The plain guide's summary line. */
+export const plainSummary = (record: CommitRecord) => `${record.commit.subject.split('\n')[0]}. Written by Wisdom from the commit's record, without a model: `
+  + 'which recorded step made each piece and what was asked in that turn. It does not say why beyond those requests.';
+
+/** Each item of the plain guide by its key: its `- key · label` line and its paragraph. A model's
+ * guide that leaves items out has them filled from here (guides.ts fillFromPlain). */
+export function plainItems(record: CommitRecord, stores: (id: string) => SessionStore | undefined): Map<string, string[]> {
   const asked = new Map<string, string | undefined>();
   const request = (session: string, position: string) => {
     const turn = /^t\d+/.exec(position)?.[0];
@@ -97,11 +137,10 @@ export function plainGuide(record: CommitRecord, stores: (id: string) => Session
       ? `"${text.slice(0, REQUEST_CHARS)}" [… ${text.length - REQUEST_CHARS} more characters: open ${turn} to read it all]` : `"${text}"`;
     return `Asked in ${turn}: ${quoted}`;
   };
-  const out = ['## Summary', `${record.commit.subject.split('\n')[0]}. Written by Wisdom from the commit's record, without a model: `
-    + 'which recorded step made each piece and what was asked in that turn. It does not say why beyond those requests.', '', '## Items'];
+  const out = new Map<string, string[]>();
   for (const item of items(record)) {
-    out.push(`- ${item.key} · ${item.label}`);
-    if (!item.steps.length) { out.push(`  ${item.label === 'not recorded' ? 'No recording explains this change.' : `Not recorded: ${item.label}.`}`); continue; }
+    const head = `- ${item.key} · ${item.label}`;
+    if (!item.steps.length) { out.set(item.key, [head, `  ${item.label === 'not recorded' ? 'No recording explains this change.' : `Not recorded: ${item.label}.`}`]); continue; }
     const sentences: string[] = [];
     for (const k of item.steps) {
       const step = record.steps[k];
@@ -111,7 +150,7 @@ export function plainGuide(record: CommitRecord, stores: (id: string) => Session
       const said = request(step.session, step.position);
       if (said && !sentences.includes(`${said}.`)) sentences.push(`${said}.`);
     }
-    out.push(`  ${sentences.join(' ')}`);
+    out.set(item.key, [head, `  ${sentences.join(' ')}`]);
   }
-  return out.join('\n') + '\n';
+  return out;
 }

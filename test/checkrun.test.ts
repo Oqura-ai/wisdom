@@ -18,7 +18,8 @@ test('the check run says the check\'s result in one line, worst first, and leads
   assert.match(run.summary, /\*\*Needs attention\*\*\n\n- `2222222` Change 2: agent work without a guide/);
   assert.match(run.summary, /\*\*No record\*\*.*These fail nothing\.\n\n- `3333333` Change 3: no record/s);
   assert.equal(run.detailsUrl, 'https://wisdom-app.vercel.app/#/change/124');
-  assert.match(run.summary, /It updates a few minutes after each push/);
+  // First in the summary: GitHub shows Actions' own run page as Details, so this link is the way in.
+  assert.match(run.summary, /^\*\*\[Open this pull request on the team's dashboard\]\(https:\/\/wisdom-app\.vercel\.app\/#\/change\/124\)\*\*.*It updates a few minutes after each push\.\n\n\*\*Needs attention\*\*/s);
   assert.match(run.text!, /^```text\n3 commits/);
 
   const clean = checkRunText({ ok: true, text: '', commits: [commit(1, true), commit(2, true)] });

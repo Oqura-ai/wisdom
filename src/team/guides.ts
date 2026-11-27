@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { ledger } from '../read/discovery.js';
-import { items } from './plain.js';
+import { items, PLAIN_MARK, plainItems, plainSummary, type Item } from './plain.js';
 import type { CommitRecord } from './commits.js';
 import type { SessionStore } from '../storage/store.js';
 import { setSetting, settingsOrDefaults } from '../core/settings.js';
@@ -14,7 +14,7 @@ import { ignoreSettingsFile } from '../setup/connect.js';
  */
 
 export const citation = /\[((?:t|a)\d+(?:\/c\d+)?|outside) ([A-Za-z0-9._-]{8,})\]/g;
-export { items, type Item } from './plain.js';
+export { items, problemSummary, type Item } from './plain.js';
 
 /** Each item's paragraph: the lines under its `- key` line, up to the next item or heading. */
 function paragraphs(text: string, keys: string[]): Map<string, string> {
@@ -59,6 +59,46 @@ export function checkGuide(text: string, record: CommitRecord, stores: (id: stri
     }
   }
   return problems;
+}
+
+/** Whether a model's paragraph answers its item as the check asks: something written, and a
+ * citation when a recorded step made it, unless it skips the item on purpose. */
+const answers = (item: Item, answer: string | undefined) =>
+  !!answer && (!item.recorded || /^skip:/i.test(answer) || !!answer.match(citation));
+
+/** A model's guide with every item it left out, left empty or left without a citation filled
+ * from the plain guide, each marked PLAIN_MARK. The model's own items, summary and closing
+ * sections stay as written; a summary it left out is the plain one. A big commit's writer runs
+ * out of room before the end of the list, and its guide then covers every piece instead of
+ * failing for the ones it never reached. `filled` 0: the text is returned as it was. */
+export function fillFromPlain(text: string, record: CommitRecord, stores: (id: string) => SessionStore | undefined): { text: string; filled: number; items: number } {
+  const list = items(record);
+  const lines = text.replace(/\s+$/, '').split(/\r?\n/);
+  const written = paragraphs(text, list.map(item => item.key));
+  const missing = list.filter(item => !answers(item, written.get(item.key)));
+  if (!missing.length) return { text, filled: 0, items: list.length };
+  const itemsAt = lines.findIndex(line => /^## Items\s*$/.test(line));
+  const restAt = lines.findIndex((line, k) => /^## /.test(line) && (itemsAt >= 0 ? k > itemsAt : !/^## Summary\s*$/.test(line)));
+  let head = itemsAt >= 0 ? lines.slice(0, itemsAt) : restAt >= 0 ? lines.slice(0, restAt) : lines;
+  if (!/## Summary\r?\n\s*\S/.test(head.join('\n'))) head = ['## Summary', plainSummary(record), ''];
+  // The model's own lines for an item: its `- key` line and the paragraph under it, as written.
+  const own = (key: string) => {
+    const start = lines.findIndex((line, k) => (itemsAt < 0 || k > itemsAt) && (line === `- ${key}` || line.startsWith(`- ${key} · `)));
+    let end = start + 1;
+    while (end < lines.length && !/^(- |#)/.test(lines[end])) end++;
+    return lines.slice(start, end);
+  };
+  const plain = plainItems(record, stores);
+  const body: string[] = [];
+  for (const item of list) {
+    if (!missing.includes(item)) { body.push(...own(item.key)); continue; }
+    const [first, ...paragraph] = plain.get(item.key)!;
+    body.push(first, ...paragraph.map((line, k) => k ? line : `  ${PLAIN_MARK} ${line.trim()}`));
+  }
+  const rest = restAt >= 0 ? lines.slice(restAt) : [];
+  while (head.length && !head[head.length - 1].trim()) head = head.slice(0, -1);
+  return { text: [...head, '', '## Items', ...body, ...(rest.length ? ['', ...rest] : [])].join('\n') + '\n',
+    filled: missing.length, items: list.length };
 }
 
 // ---------- the person's own switch ----------

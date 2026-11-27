@@ -229,7 +229,8 @@ export interface Commit extends CommitSummary {
   /** Its files as its records describe them (all of them, for a squash standing for several). */
   files: FileChange[];
   /** Absent when there is none; then `guideMissing` or a `no-guide` reason says why. */
-  guide?: { text: string; writer: string; writtenAt: string; problems: string[]; costUsd?: number; seconds?: number };
+  /** `filled` of `items`: those the model left out, filled from the record (no model). */
+  guide?: { text: string; writer: string; writtenAt: string; problems: string[]; costUsd?: number; seconds?: number; filled?: number; items?: number };
   guideMissing?: string;
   /** The sessions its record names, present or not. */
   sessionsNamed: CommitSession[];

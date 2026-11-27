@@ -150,11 +150,15 @@ function Guide({ commit }: { commit: Commit }) {
   if (!g) return commit.guideMissing || commit.reasons.some(r => r.code === 'no-guide')
     ? <p className="small t-bad">No guide{commit.guideMissing ? `: ${commit.guideMissing}` : ''}. CI flags it until someone runs <code>wisdom guide {short(commit.sha)}</code>.</p>
     : <p className="small muted">No guide: {commit.files.length ? 'none was written for this commit.' : 'there is no record to build one from.'}</p>;
-  const facts = [g.writer, `written ${ago(g.writtenAt)}`, g.costUsd !== undefined && `$${g.costUsd.toFixed(3)}`, g.seconds !== undefined && `${Math.round(g.seconds)} s`].filter(Boolean).join(' · ');
+  const facts = [g.writer, g.filled && g.items && `the model wrote ${g.items - g.filled} of ${g.items} items, ${g.filled} are from the record`, `written ${ago(g.writtenAt)}`,
+    g.costUsd !== undefined && `$${g.costUsd.toFixed(3)}`, g.seconds !== undefined && `${Math.round(g.seconds)} s`].filter(Boolean).join(' · ');
+  // The builder's one-line account of the problems (counted by kind); every one is under it, folded.
+  const said = commit.reasons.find(r => r.code === 'guide-problems')?.detail;
   return (
     <>
-      <p className="small muted">Derived, not evidence. {g.problems.length ? <span className="t-bad">Its check found {plural(g.problems.length, 'problem')}:</span> : 'Its citations were checked against this build.'} · {facts}</p>
-      {g.problems.length > 0 && <ul className="small t-bad" style={{ margin: '0 0 10px' }}>{g.problems.map((p, k) => <li key={k}>{p}</li>)}</ul>}
+      <p className="small muted">Derived, not evidence. {g.problems.length ? <span className="t-bad">Its check found {plural(g.problems.length, 'problem')}{said ? `: ${said}` : '.'}</span> : 'Its citations were checked against this build.'} · {facts}</p>
+      {g.problems.length > 0 && <details className="small t-bad" style={{ margin: '0 0 10px' }}><summary>All {plural(g.problems.length, 'problem')}</summary>
+        <ul style={{ margin: '4px 0 0' }}>{g.problems.map((p, k) => <li key={k}>{p}</li>)}</ul></details>}
       <div className="guide"><Markdown text={g.text} /></div>
     </>
   );

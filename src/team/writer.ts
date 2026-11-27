@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ledger } from '../read/discovery.js';
 import { onPath, resolveCommand } from '../harnesses/launch.js';
 import { agentWork, type CommitRecord, type RecordGuide } from './commits.js';
-import { checkGuide, guidesOn } from './guides.js';
+import { checkGuide, fillFromPlain, guidesOn } from './guides.js';
 import { GUIDE_OPENING, items, plainGuide, turnRequest } from './plain.js';
 import { trusted, untrustedNote, type Policy } from './gitrefs.js';
 import { DEFAULT_MODEL, harnessPath, settingsOrDefaults } from '../core/settings.js';
@@ -219,17 +219,19 @@ export function writeGuide(store: SessionStore, record: CommitRecord, dataDir: s
   const writer = writerCommand(policy, dataDir);
   if (!writer) return { missing: 'no guide writer: Claude Code is not installed and wisdom-team.yaml names no guides.command' };
   let prompt = guidePrompt(store, record, writer.explore, guideSettings(policy, path.dirname(path.resolve(dataDir))).extra);
-  let text = '', problems: string[] = [], costUsd: number | undefined;
+  let text = '', problems: string[] = [], costUsd: number | undefined, filled = 0, count = 0;
   const started = Date.now();
   for (let attempt = 0; attempt < 2; attempt++) {
     const output = writer.run(prompt);
     if (output.costUsd !== undefined) costUsd = (costUsd ?? 0) + output.costUsd;
     if (output.failed || !output.text) return { missing: `the guide writer failed: ${output.failed ?? 'no output'}` };
-    text = clean(output.text);
+    // Items the model never reached are filled from the record, so a big commit's guide covers
+    // every piece; only what the model wrote wrong (a citation of no real step) is asked again.
+    ({ text, filled, items: count } = fillFromPlain(clean(output.text), record, stores));
     problems = checkGuide(text, record, stores, ids);
     if (!problems.length) break;
     prompt += `\n\nYour previous guide had these problems; write it again, fixing them:\n${problems.map(p => `- ${p}`).join('\n')}\n`;
   }
   return { guide: { text, writtenAt: new Date().toISOString(), writer: writer.name, problems, derived: true,
-    seconds: Math.round((Date.now() - started) / 100) / 10, ...(costUsd === undefined ? {} : { costUsd }) } };
+    seconds: Math.round((Date.now() - started) / 100) / 10, ...(costUsd === undefined ? {} : { costUsd }), ...(filled ? { filled, items: count } : {}) } };
 }

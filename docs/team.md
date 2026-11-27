@@ -60,9 +60,12 @@ as it would in any Claude Code session.
    and the tests or checks run in the window and what they reported. A commit with more than
    30 pieces gets one item per set of steps that made several of them (a tool call that wrote
    2,000 files is one item listing its files), so its guide stays short enough to write in
-   time. Wisdom checks that the guide covers
+   time. A piece the model left out (on a big commit it can run out of room before the end of
+   the list) is filled from the plain guide, marked "From the record, no model", and the guide
+   says how many: "for 5 of 95 items; 90 from the record, no model". Wisdom checks that the guide covers
    every piece, that every citation names a real step in one of the commit's sessions, and
-   that it falls inside that session's window, and keeps what that check found. It cannot
+   that it falls inside that session's window, and keeps what that check found. A guide that
+   still fails is asked for once more with what was wrong (a citation of no real step, say). It cannot
    check that the explanation is right, so a guide is always shown as derived, never as
    evidence.
 4. **Push.** Your own `git push` carries it all, for what you push: the commits the pushed
@@ -101,8 +104,10 @@ as it would in any Claude Code session.
    In GitHub Actions it also shows its result on the pull request as a check run named
    **Wisdom**. Its title is one line ("3 of 4 commits explained by recorded sessions · 1 needs
    attention"), and its summary lists each commit that needs attention and why. With the
-   [team's dashboard](#commits-for-your-team), **Details** opens the pull request there, with its
-   commits and the sessions behind them. The dashboard updates a few minutes after each push.
+   [team's dashboard](#commits-for-your-team), the summary starts with a link that opens the pull
+   request there, with its commits and the sessions behind them. GitHub's own **Details** button
+   opens the Actions run instead: GitHub shows a check run posted with Actions' `GITHUB_TOKEN`
+   that way, whatever link it is given. The dashboard updates a few minutes after each push.
    The check run only reports: pass or fail is the check's own. It needs `checks: write`. A
    pull request from a fork gets a read-only token, so there the check run is refused, and the
    job's own summary page shows the same.

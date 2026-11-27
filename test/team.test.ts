@@ -12,9 +12,9 @@ import { prCheck, prune } from '../src/team/team.js';
 import { commitFiles, oldPolicyNote, policyCommands, readFile, readPolicy, recordRef, refExists, setRef, trustCommands, trusted, writePolicy } from '../src/team/gitrefs.js';
 import { guideCommit, hooksDir, hooksInstalled, installHooks, jobs, LOCAL_HOOKS, parsePushed, removeHooks, runGitHook } from '../src/team/githooks.js';
 import { relink } from '../src/team/relink.js';
-import { checkGuide, setGuides } from '../src/team/guides.js';
+import { checkGuide, fillFromPlain, setGuides } from '../src/team/guides.js';
 import { claudeOutput, guidePrompt, guideSettings } from '../src/team/writer.js';
-import { GUIDE_OPENING, items, plainGuide } from '../src/team/plain.js';
+import { GUIDE_OPENING, items, PLAIN_MARK, plainGuide, problemSummary, writtenBy } from '../src/team/plain.js';
 import { guideWriterRun } from '../src/record/captures.js';
 import { startDetached } from '../src/service/client.js';
 import { observeSession, openSession } from './session.js';
@@ -659,6 +659,48 @@ test('a huge commit made by one step is one guide item, and a guide of the group
   const guide = ['## Summary', 'Generated files.', '', '## Items', ...list.flatMap(item => [`- ${item.key} · ${item.label}`, '  skip: test']), ''].join('\n');
   assert.deepEqual(checkGuide(guide, big, () => undefined, () => []), []);
   assert(plainGuide(big, () => undefined).split('\n').length < 20, 'the plain guide is short too');
+});
+
+test('a model guide that stops early is filled from the record: every piece is answered, the model\'s own items stay, and the check passes on coverage', () => {
+  const step = (n: number) => ({ session: 'fill-session-1', position: `t1/c${n}`, attribution: 'observed-during-tool', before: null, after: `h${n}` });
+  const files = Array.from({ length: 6 }, (_, n) => ({ path: `src/f${n}.ts`, operation: 'create', added: 1, removed: 0, complete: true, chain: [n],
+    pieces: [{ header: '@@ -0,0 +1,1 @@', steps: [n], unexplained: 0 }] }));
+  const rec = { kind: 'wisdom-commit-record', version: 1, commit: { sha: 'e'.repeat(40), subject: 'six files', committedAt: new Date().toISOString(), tree: '' },
+    made: 'commit', madeAt: new Date().toISOString(), wisdomVersion: 'test', steps: files.map((_, n) => step(n + 1)), files,
+    sessions: [{ id: 'fill-session-1', harness: 'claude-code', positions: files.map((_, n) => `t1/c${n + 1}`) }] } as any;
+  const list = items(rec);
+  // As on a 95-piece commit: two items written, one with no citation, the rest never reached.
+  const model = ['## Summary', 'Adds six files.', '', '## Items',
+    `- ${list[0].key} · ${list[0].label}`, '  The first file [t1/c1 fill-ses].',
+    `- ${list[1].key} · ${list[1].label}`, '  The second file, no citation.',
+    '', '## Beyond the edits', 'Not covered: the other four files.', ''].join('\n');
+  const coverage = (text: string) => checkGuide(text, rec, () => undefined, () => []).filter(p => /is missing|cites none|nothing is written/.test(p));
+  assert.equal(coverage(model).length, 5, '4 missing, 1 without a citation');
+  const filled = fillFromPlain(model, rec, () => undefined);
+  assert.deepEqual([filled.filled, filled.items], [5, 6]);
+  assert.deepEqual(coverage(filled.text), [], 'every item answered');
+  assert.match(filled.text, /^## Summary\nAdds six files\.\n\n## Items\n/, 'the model\'s summary stays');
+  assert.match(filled.text, /The first file \[t1\/c1 fill-ses\]\./, 'the model\'s own item stays as written');
+  assert.doesNotMatch(filled.text, /no citation/, 'an item with no citation is replaced');
+  assert.equal(filled.text.split(PLAIN_MARK).length - 1, 5, 'each filled item says it is from the record');
+  assert.match(filled.text, /\n## Beyond the edits\nNot covered: the other four files\.\n$/, 'its closing sections stay, at the end');
+  assert.deepEqual(list.map(item => filled.text.indexOf(`- ${item.key}`) >= 0), list.map(() => true));
+  // A guide that answers everything is left exactly as it was; one with no summary gets the plain one.
+  const whole = plainGuide(rec, () => undefined);
+  assert.deepEqual(fillFromPlain(whole, rec, () => undefined), { text: whole, filled: 0, items: 6 });
+  assert.match(fillFromPlain('nothing useful', rec, () => undefined).text, /^## Summary\nsix files\. Written by Wisdom from the commit's record/);
+  // How readers name it.
+  assert.equal(writtenBy({ writer: 'claude-haiku-5-5', filled: 5, items: 6 }), 'claude-haiku-5-5 for 1 of 6 items; 5 from the record, no model');
+  assert.equal(writtenBy({ writer: 'claude-haiku-5-5' }), 'claude-haiku-5-5');
+});
+
+test('a guide\'s problems read as one line: counted by kind, a few named, the rest said as a number', () => {
+  const problems = [...Array.from({ length: 90 }, (_, n) => `The item "- src/f${n}.ts @@ -0,0 +1,1 @@" is missing.`),
+    'group 1: 2 pieces in 1 files: made by a recorded step, but cites none.', '[t9/c1 abcdefgh]: no session starts with abcdefgh.'];
+  assert.equal(problemSummary(problems),
+    '90 items missing (src/f0.ts @@ -0,0 +1,1 @@, src/f1.ts @@ -0,0 +1,1 @@, src/f2.ts @@ -0,0 +1,1 @@, and 87 more); 1 item cites no step (group 1: 2 pieces in 1 files); [t9/c1 abcdefgh]: no session starts with abcdefgh.');
+  assert.doesNotMatch(problemSummary(problems), /\.;|\.\./, 'no doubled punctuation');
+  assert.equal(problemSummary(['a.', 'b.', 'c.', 'd.', 'e.']), 'a; b; c; and 2 more.');
 });
 
 test('two background jobs started a second apart both run (a shared cmd log once stopped the second)', async () => {
