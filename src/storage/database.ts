@@ -95,6 +95,14 @@ export class LedgerDatabase {
       .map(row => JSON.parse(String(row.body)) as LedgerRecord);
   }
 
+  /** Each session's newest revision: it moves whenever the session gains or changes a record,
+   * so a reader can tell which sessions changed since it last looked (the Commits builder's
+   * session versions). A deleted session is simply absent. */
+  sessionVersions(): Map<string, number> {
+    return new Map(this.sql.prepare('SELECT capture_id AS id, max(revision) AS n FROM records GROUP BY capture_id').all()
+      .map(row => [String(row.id), Number(row.n)] as const));
+  }
+
   /** The newest revision ever written. Read from SQLite's own counter, not the rows, so deleting
    * the newest session never moves the version back and a version once given stays readable. */
   get revision(): number {

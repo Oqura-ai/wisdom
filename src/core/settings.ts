@@ -109,7 +109,7 @@ version: 1
 # skill: true           # teach your agents how to read past sessions (false: they won't know the commands)
 # mcp: true             # also give them a tool for it, in sessions started by wisdom track
 
-# daemon: { port: 7434, dashboard: true }   # the dashboard opens on port + 1
+# daemon: { port: 7434, dashboard: true }   # Usage opens on port + 1, Commits on port + 2; dashboard: false starts neither
 
 # recording:
 #   idleMinutes: 10     # no activity this long: the session is paused, and continues when you're back

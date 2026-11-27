@@ -23,6 +23,7 @@ import { relink, setSync, syncOn, workflowFile, writeWorkflow } from './team/rel
 import { oldPolicyNote, POLICY_FILE, policyCommands, readPolicy, trustCommands, trusted, writePolicy } from './team/gitrefs.js';
 import { guideCommit, installHooks, LOCAL_HOOKS, removeHooks, runGitHook } from './team/githooks.js';
 import { guidesOn, setGuides } from './team/guides.js';
+import { problemSummary, writtenBy } from './team/plain.js';
 import { serveMcp } from './service/mcp.js';
 import { findDataDir, marker, movedFrom } from './core/paths.js';
 import { writeJson } from './storage/ledger.js';
@@ -54,7 +55,10 @@ Run an agent
                                   later with wisdom resume
 
 Read a session
-  wisdom dashboard                Print the address of the live dashboard
+  wisdom usage                    Print the address of Usage, the live view of your sessions
+                                  (wisdom dashboard does the same)
+  wisdom commits                  Print the address of Commits on this machine: main and your
+                                  branches, each commit's record and the sessions behind it, live
   wisdom glance                   List recorded sessions, newest first
   wisdom glance <session>         Show one session's shape and every turn
   wisdom glance --commit <commit> Show which recorded steps made each piece of a git commit
@@ -85,6 +89,10 @@ Team mode (a repository with wisdom-team.yaml)
   wisdom team push|fetch          Send your sessions and commit records now, or read teammates'
   wisdom team delete <session>    Remove a pushed session for everyone
   wisdom team prune               Remove pushed sessions older than the policy keeps them
+  wisdom commits deploy           Set up Commits for the whole team: Vercel, a GitHub sign-in app,
+                                  the CI file (--public: no sign-in, on purpose)
+  wisdom commits build            In CI: the team's Commits from the remote, ready to deploy
+  wisdom commits prune            In CI: remove its older Vercel deployments
 
 Share a session
   wisdom share <session>...       Write a file to send a teammate, after a check for secrets
@@ -108,7 +116,7 @@ Options
   --from N, --at VERSION          glance, open: read from a line, at a fixed version
   --remote NAME, --range A..B     team, check: another remote than the policy's; the PR's commits
   --from <session-id>             handoff: the session to read (default: the one running it, or the newest other one)
-  --port N, --no-dashboard        daemon: choose a port, or skip the dashboard
+  --port N, --no-dashboard        daemon: choose a port, or start it without Usage and Commits
   --claude-bin, --codex-bin FILE  track: use another installation (Pi: --pi-entry FILE)
   --setup-hooks                   track codex: review Wisdom's hooks, first time only
   --trust-all-hooks               track codex: skip the review, for every hook in that run
@@ -128,6 +136,7 @@ async function main(): Promise<void> {
       data: { type: 'string' }, port: { type: 'string' }, cwd: { type: 'string' }, 'pi-entry': { type: 'string' },
       help: { type: 'boolean' }, version: { type: 'boolean' }, capture: { type: 'string' }, commit: { type: 'string' }, remote: { type: 'string' }, range: { type: 'string' }, from: { type: 'string' }, at: { type: 'string' },
       'claude-bin': { type: 'string' }, 'no-dashboard': { type: 'boolean' }, 'commit-map': { type: 'string' }, out: { type: 'string' }, redact: { type: 'boolean' }, 'keep-secrets': { type: 'boolean' }, json: { type: 'boolean' }, 'codex-bin': { type: 'string' }, 'setup-hooks': { type: 'boolean' }, 'trust-all-hooks': { type: 'boolean' }, emit: { type: 'boolean' },
+      public: { type: 'boolean' }, main: { type: 'string' },
     } });
   const [command, first] = positionals;
   if (values.version) { console.log(wisdomVersion()); return; }
@@ -138,7 +147,7 @@ async function main(): Promise<void> {
   if (command === 'handoff-run') { if (first) await runBackgroundHarness(first); return; }
   const options: Record<string, string[]> = {
     init: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], connect: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin'], disconnect: ['cwd'],
-    daemon: ['cwd', 'port', 'no-dashboard'], dashboard: ['cwd'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
+    daemon: ['cwd', 'port', 'no-dashboard'], usage: ['cwd'], dashboard: ['cwd'], commits: ['cwd', 'port', 'public', 'main', 'out', 'remote'], doctor: ['cwd', 'json'], track: ['port', 'cwd', 'pi-entry', 'claude-bin', 'codex-bin', 'setup-hooks', 'trust-all-hooks'], mcp: ['cwd', 'port'],
     resume: ['cwd', 'port', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     handoff: ['cwd', 'port', 'from', 'emit', 'pi-entry', 'claude-bin', 'codex-bin', 'trust-all-hooks'],
     share: ['cwd', 'port', 'out', 'redact', 'keep-secrets'], import: ['cwd', 'port'], export: ['cwd', 'port', 'out', 'redact', 'keep-secrets'],
@@ -151,7 +160,7 @@ async function main(): Promise<void> {
   for (const key of Object.keys(values)) if (key !== 'data' && !allowed.includes(key)) throw new Error(`--${key} is not valid for ${command}`);
   if (separator >= 0 && !['track', 'handoff'].includes(command)) throw new Error('Arguments after -- are only supported by track and handoff');
   // A handoff's words may follow its target without `--`: PowerShell drops a `--` it is given.
-  if (!['share', 'handoff'].includes(command) && positionals.length >(['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
+  if (!['share', 'handoff'].includes(command) && positionals.length >(['guide', 'team'].includes(command) ? 3 : ['daemon', 'track', 'resume', 'handoff', 'import', 'export', 'clone', 'glance', 'open', 'commits'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments');
 
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('--port needs a number from 0 to 65535.');
@@ -159,16 +168,51 @@ async function main(): Promise<void> {
   if (command === 'connect') { await connectProject(path.resolve(values.cwd ?? process.cwd()), values, port); return; }
   // These two work in any git checkout, with no data folder: an admin's first step, and CI.
   if (command === 'check' && values.range) {
-    const result = prCheck(path.resolve(values.cwd ?? process.cwd()), values.range, values.remote);
-    console.log(result.text); if (!result.ok) process.exitCode = 1; return;
+    const cwd = path.resolve(values.cwd ?? process.cwd());
+    const result = prCheck(cwd, values.range, values.remote);
+    console.log(result.text);
+    // In GitHub Actions: also as a check run on the pull request. It only reports.
+    const { reportCheck } = await import('./team/checkrun.js');
+    for (const line of await reportCheck(cwd, values.remote ?? readPolicy(cwd)?.remote ?? 'origin', result)) console.log(line);
+    if (!result.ok) process.exitCode = 1; return;
   }
   if (command === 'team' && first === 'init') {
     const cwd = path.resolve(values.cwd ?? process.cwd());
     const { file, policy, created } = writePolicy(cwd);
     console.log(created ? `Wrote ${file} (repo ID ${policy.repoId}). Commit it to turn team mode on for everyone; remove it to go back to local mode.` : `${POLICY_FILE} is already there: ${file}`);
+    // The team's dashboard writes the one CI file that relinks too, so it is offered first.
+    const dashboard = await askYes('Set up the team\'s Commits dashboard now? It runs on Vercel (a company needs Vercel Pro) with a GitHub sign-in, and writes the CI file. Later: wisdom commits deploy');
+    if (dashboard) {
+      const { deployCommits, terminalIO } = await import('./visualizer/deploy.js');
+      await deployCommits(cwd, terminalIO());
+      return;
+    }
     await offerWorkflow(cwd);
     return;
   }
+  // The team's Commits dashboard, in CI: no data folder either.
+  if (command === 'commits' && first === 'deploy') {
+    if (values.main || values.out || values.remote) throw new Error('Use: wisdom commits deploy [--public]');
+    const { deployCommits, terminalIO } = await import('./visualizer/deploy.js');
+    await deployCommits(path.resolve(values.cwd ?? process.cwd()), terminalIO(), { public: values.public });
+    return;
+  }
+  if (command === 'commits' && (first === 'build' || first === 'prune')) {
+    // Loaded only here: the builder is large, and git hooks run this file too.
+    const { buildTeam } = await import('./visualizer/ci.js');
+    const { pruneDeployments } = await import('./visualizer/vercel.js');
+    if (first === 'build') {
+      const result = await buildTeam(path.resolve(values.cwd ?? process.cwd()), { out: values.out, public: values.public, main: values.main, remote: values.remote });
+      for (const line of result.lines) console.log(line);
+      return;
+    }
+    const token = process.env.VERCEL_TOKEN, projectId = process.env.VERCEL_PROJECT_ID;
+    if (!token || !projectId) throw new Error('wisdom commits prune needs VERCEL_TOKEN and VERCEL_PROJECT_ID (and VERCEL_ORG_ID for a team), as the CI job sets them.');
+    const { kept, removed } = await pruneDeployments({ token, projectId, orgId: process.env.VERCEL_ORG_ID, api: process.env.VERCEL_API });
+    console.log(kept.length ? `Kept ${kept.join(', ')}; removed ${removed.length} older deployment${removed.length === 1 ? '' : 's'}${removed.length ? `: ${removed.join(', ')}` : ''}` : 'No finished production deployment yet, so nothing was removed.');
+    return;
+  }
+  if (command === 'commits' && (values.public || values.main || values.out || values.remote)) throw new Error('--public applies to wisdom commits build and deploy; --main, --out and --remote to build only');
   if ((command === 'team') && (first === 'relink' || first === 'sync')) {
     const cwd = path.resolve(values.cwd ?? process.cwd());
     if (first === 'relink') {
@@ -203,7 +247,7 @@ async function main(): Promise<void> {
   }
   if (command === 'doctor') {
     const checks = await diagnose(dataDir);
-    // --json: for the dashboard's health strip, which the daemon fills by running this.
+    // --json: for Usage's health strip, which the daemon fills by running this.
     if (values.json) console.log(JSON.stringify({ version: wisdomVersion(), project: path.dirname(dataDir),
       checks: checks.map(({ level, name, detail, fix }) => ({ level, name, detail, fix })) }));
     else console.log(formatChecks(path.dirname(dataDir), checks));
@@ -221,7 +265,9 @@ async function main(): Promise<void> {
       const daemon = await runDaemon(dataDir, port, !values['no-dashboard'] && chosen?.dashboard !== false, chosen?.port);
       console.error(`Wisdom listening at ${daemon.connection.url}; data: ${dataDir}`);
       const viewer = (await call(daemon.connection, '/health')).dashboard;
-      console.error(viewer.url ? `Dashboard: ${viewer.url}` : `Dashboard not started: ${viewer.reason}`);
+      console.error(viewer.url ? `Usage: ${viewer.url}` : `Usage not started: ${viewer.reason}`);
+      const commits = (await call(daemon.connection, '/health')).commits;
+      if (commits.status === 'unavailable') console.error(`Commits not started: ${commits.reason}`);
       const stop = () => void daemon.close();
       process.once('SIGINT', stop); process.once('SIGTERM', stop);
       await daemon.closed;
@@ -233,10 +279,22 @@ async function main(): Promise<void> {
     else throw new Error('Use: wisdom daemon start|stop|status|run');
     return;
   }
-  if (command === 'dashboard') {
+  // `wisdom dashboard`: Usage's earlier name, kept so nothing anyone learned breaks.
+  if (command === 'usage' || command === 'dashboard') {
     const viewer = (await call(connectionAt(dataDir), '/health')).dashboard;
-    if (!viewer.url) throw new Error(`Dashboard not running: ${viewer.reason}`);
+    if (!viewer.url) throw new Error(`Usage is not running: ${viewer.reason}`);
     console.log(viewer.url); return;
+  }
+  if (command === 'commits') {
+    // Like Usage, it runs with the daemon: started here if it is not running yet.
+    const connection = await ensureDaemon(dataDir, port);
+    let state = (await call(connection, '/health')).commits;
+    for (let attempt = 0; attempt < 50 && state?.status === 'running' && !state.url; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      state = (await call(connection, '/health')).commits;
+    }
+    if (!state?.url) throw new Error(`Commits is not running: ${commitsLine(state)}`);
+    console.log(state.url); return;
   }
   if (command === 'track') { process.exitCode = await track(first, values, harnessArgs, dataDir, port); return; }
   if (command === 'resume') {
@@ -272,13 +330,22 @@ async function showRunning(connection: Connection): Promise<void> {
   const viewer = health.dashboard;
   console.log('Wisdom is running.');
   console.log(`  Address    ${connection.url} (PID ${connection.pid})`);
-  console.log(`  Dashboard  ${dashboardLine(viewer)}`);
+  console.log(`  Usage      ${dashboardLine(viewer)}`);
+  console.log(`  Commits    ${commitsLine(health.commits)}`);
   console.log(`  Sessions   ${health.captures}`);
 }
 
 function dashboardLine(viewer: any): string {
   if (!viewer.url) return `not started. ${viewer.reason}`;
   return viewer.status === 'exited' ? `stopped unexpectedly. Read ${viewer.log}` : viewer.url;
+}
+
+/** Commits writes its address once listening, so just after a start it may have none yet. */
+function commitsLine(state: any): string {
+  if (!state) return 'not started: the running daemon is from before Commits.';
+  if (state.status === 'unavailable') return `not started. ${state.reason}`;
+  if (state.status === 'exited') return `stopped unexpectedly. Read ${state.log}`;
+  return state.url ?? 'starting';
 }
 
 /** Stopping something already stopped is not a failure, and "stopped" is only said once it is. */
@@ -294,13 +361,15 @@ async function stopDaemon(dataDir: string): Promise<void> {
   console.log(fs.existsSync(file) ? 'Wisdom is stopping.' : 'Wisdom stopped.');
 }
 
-/** The daemon's first port is 7434, or wisdom.yaml's daemon.port; when another project's daemon
- * holds it, the next free pair is used (daemon.json says which). An explicit --port is used as given.
+/** The daemon's first port is 7434, or wisdom.yaml's daemon.port, with Usage on the next and
+ * Commits on the one after; when another project's daemon holds it, the next free three are
+ * used (daemon.json says which). An explicit --port is used as given.
  */
-async function runDaemon(dataDir: string, port: number | undefined, dashboard: boolean, first = 7434) {
-  for (let candidate = port ?? first; ; candidate += 2) {
-    try { return await startDaemon(dataDir, candidate, { dashboardPort: dashboard && candidate ? candidate + 1 : undefined }); }
-    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= first + 40) throw error; }
+async function runDaemon(dataDir: string, port: number | undefined, viewers: boolean, first = 7434) {
+  for (let candidate = port ?? first; ; candidate += 3) {
+    const on = viewers && candidate > 0;
+    try { return await startDaemon(dataDir, candidate, { dashboardPort: on ? candidate + 1 : undefined, commitsPort: on ? candidate + 2 : undefined }); }
+    catch (error: any) { if (port !== undefined || error?.code !== 'EADDRINUSE' || candidate >= first + 60) throw error; }
   }
 }
 
@@ -328,7 +397,9 @@ async function init(project: string, values: any, port?: number): Promise<void> 
   installed('codex', () => installCodex(dataDir), 'wisdom track codex --setup-hooks, trust its hooks in /hooks, then wisdom track codex');
   installed('pi', () => installPi(dataDir), 'wisdom track pi');
   const connection = await ensureDaemon(dataDir, port);
-  console.log(`\nDashboard: ${dashboardLine((await call(connection, '/health')).dashboard)}`);
+  const health = await call(connection, '/health');
+  console.log(`\nUsage:     ${dashboardLine(health.dashboard)}`);
+  console.log(`Commits:   ${health.commits?.status === 'unavailable' ? commitsLine(health.commits) : 'wisdom commits prints its address'}`);
   console.log('\nEach agent asks you to log in once for this project. Your global agent settings are not touched.');
   console.log('Keep .wisdom/ private: it holds your sessions and agent logins, unredacted. Git ignores it, but leave it out of zips and synced folders.');
 }
@@ -394,6 +465,17 @@ function teamHooks(project: string, dataDir: string): void {
     if (waiting.length) console.log(`${POLICY_FILE} asks to run ${waiting.map(command => `\`${command}\``).join(' and ')} on this machine. `
       + 'Nothing runs until you read it and trust it: wisdom team trust');
   } catch (error) { console.log(`Wisdom's git hooks are not installed. ${error instanceof Error ? error.message : error}`); }
+}
+
+/** Sessions removed for everyone: the team's dashboard, if there is one, drops them now (gh) or says when. */
+async function afterRemoval(project: string, remote?: string): Promise<void> {
+  try {
+    const { rebuildDashboard } = await import('./visualizer/rebuild.js');
+    const { terminalIO } = await import('./visualizer/deploy.js');
+    const io = terminalIO();
+    const line = rebuildDashboard(project, remote ?? readPolicy(project)?.remote ?? 'origin', args => io.gh(args));
+    if (line) console.log(line);
+  } catch { /* the removal itself is done; the dashboard catches up at its next build */ }
 }
 
 /** A yes/no question on the terminal. Undefined with no terminal to ask in (a script, CI):
@@ -791,7 +873,7 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     }
     const record = guideCommit(dataDir, action);
     const sha = record.commit.sha.slice(0, 12);
-    console.log(`Guide written by ${record.guide!.writer} for ${sha} · ${record.guide!.problems.length ? `did not pass Wisdom's check: ${record.guide!.problems.join('; ')}` : 'it passed Wisdom\'s check'}.`);
+    console.log(`Guide written by ${writtenBy(record.guide!)} for ${sha} · ${record.guide!.problems.length ? `did not pass Wisdom's check: ${problemSummary(record.guide!.problems)}` : 'it passed Wisdom\'s check.'}`);
     console.log(`Kept in refs/wisdom/records/${record.commit.sha}${team ? ', and sent with your next push' : ', on this machine only'}. Read it: wisdom glance --commit ${sha}`);
     return 0;
   }
@@ -832,11 +914,13 @@ async function teamCommand(command: string, args: string[], values: { remote?: s
     if (!session) throw new Error('Use: wisdom team delete <session>');
     const result = await call(connection, '/team', { action: 'delete', session, remote: values.remote });
     console.log(`Deleted ${result.key} from the team remote and added it to the deletion list, so no clone pushes it back. Your own recording here is kept.`);
+    await afterRemoval(project, values.remote);
     return 0;
   }
   if (action === 'prune') {
     const result = await call(connection, '/team', { action: 'prune', remote: values.remote });
     console.log(result.removed.length ? `Removed ${result.removed.length} pushed sessions older than the policy keeps them.` : 'Nothing is older than the policy keeps.');
+    if (result.removed.length) await afterRemoval(project, values.remote);
     return 0;
   }
   throw new Error('Use: wisdom team init|trust|hooks on|off|push|fetch|delete <session>|prune');

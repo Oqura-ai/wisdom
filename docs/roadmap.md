@@ -8,7 +8,7 @@ Where Wisdom is heading. These are plans, not promises, and the order can change
 
 | Work | What you get | Effort | Status |
 | --- | --- | --- | --- |
-| Health and controls in the dashboard | See problems, and repair hooks (backed up, restorable) from a project's own dashboard | M | Done |
+| Health and controls in Usage | See problems, and repair hooks (backed up, restorable) from a project's own Usage page | M | Done |
 | Storage and delete | See how much space sessions use, and delete one or many old ones with a confirmation | M | Done |
 | Search across sessions | Find a prompt, reply, command or file name, then jump to it | L | Planned |
 | Mark failed subagents, link forks to parents | Fewer sessions that look complete when they aren't | M | Planned |

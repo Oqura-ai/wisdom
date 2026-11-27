@@ -7,12 +7,12 @@ export type DashboardState = { url: string; status: 'starting' | 'running' | 'ex
 
 const bundled = fileURLToPath(new URL('../../../dist-dashboard/', import.meta.url));
 
-/** The viewer, built ahead of time into dist-dashboard/. The daemon starts it, and it never
+/** Usage, the session viewer, built ahead of time into dist-dashboard/. The daemon starts it, and it never
  * affects recording: if it is missing or cannot start, capture continues.
  */
 export function startDashboard(dataDir: string, port: number, root = bundled): { state: () => DashboardState; close: () => void } {
   const server = path.join(root, 'server.js');
-  if (!fs.existsSync(server)) return unavailable('The dashboard is missing from this copy of Wisdom. Reinstall the package; in a clone, run npm run dashboard:install, then npm run dashboard:build.');
+  if (!fs.existsSync(server)) return unavailable('Usage is missing from this copy of Wisdom. Reinstall the package; in a clone, run npm run dashboard:install, then npm run dashboard:build.');
   const log = path.join(dataDir, 'dashboard.log');
   const out = fs.openSync(log, 'a');
   let status: 'starting' | 'running' | 'exited' = 'starting';

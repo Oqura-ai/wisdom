@@ -15,7 +15,7 @@ function useLive(): Live {
   useEffect(() => {
     const source = new EventSource('/api/live');
     source.addEventListener('state', event => setLive(JSON.parse((event as MessageEvent).data)));
-    source.onerror = () => setLive(current => ({ ...current, status: 'offline', error: 'Dashboard server unreachable' }));
+    source.onerror = () => setLive(current => ({ ...current, status: 'offline', error: 'Usage server unreachable' }));
     return () => source.close();
   }, []);
   return live;
@@ -123,6 +123,7 @@ export function Dashboard() {
         <button className="drawer-toggle" aria-expanded={drawer} aria-controls="sessions-drawer" onClick={() => setDrawer(!drawer)}>
           <i className={`chevron ${drawer ? 'back' : ''}`} aria-hidden />Sessions</button>
         <button className="plain" title="Project overview" onClick={() => setView({ capture: undefined })}><Wordmark /></button>
+        <span className="app-name">Usage</span>
         {projects && projects.length > 1
           ? <span className="select-wrap"><select className="project" value={workspace ?? ''} onChange={e => setView({ workspace: e.target.value, capture: undefined })}>
               {projects.map(p => <option key={p.workspaceRoot} value={p.workspaceRoot}>{shortPath(p.workspaceRoot)}</option>)}

@@ -5,10 +5,16 @@ private
 node_modules/
 dist/
 dist-dashboard/
+dist-commits/
 *.tgz
 *.tsbuildinfo
 dashboard/.next/
 dashboard/next-env.d.ts
+visualizer/.next/
+visualizer/out/
+visualizer/next-env.d.ts
+visualizer/node_modules/
+visualizer/public/data/
 .npm-cache/
 
 # Wisdom recordings: unredacted transcripts, payloads and the daemon's access token

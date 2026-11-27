@@ -5,9 +5,10 @@ import { execSync } from 'node:child_process';
 import { draftFrom, writeShare, type Exported } from '../share/share.js';
 import { view } from '../read/views.js';
 import { agentWork, projectOf, type CommitRecord } from './commits.js';
-import { commitFiles, deleteRef, FETCHED_LINKS, git, gitError, gitIdentity, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, recordsWithIds, recordText, teamCommit,
-  refSafe, remoteRef, resolve, sessionRef, setRef, trusted, type Policy } from './gitrefs.js';
-import { followLinks, linkWords, ownLink } from './links.js';
+import { problemSummary } from './plain.js';
+import { commitFiles, deleteRef, FETCHED_LINKS, git, gitError, gitIdentity, gitText, listRefs, oldPolicyNote, readFile, readPolicy, recordIds, recordRef, recorderId, recordRefs, recordsWithIds, recordText, teamCommit,
+  refExists, refSafe, remoteRef, resolve, sessionRef, setRef, trusted, type Policy } from './gitrefs.js';
+import { followLinks, linkWords, ownLink, readLink } from './links.js';
 import { writeJson } from '../storage/ledger.js';
 import { redactSecrets, scanSecrets } from '../share/secrets.js';
 import type { SessionStore } from '../storage/store.js';
@@ -40,20 +41,63 @@ export function remoteRefs(project: string, remote: string, policy: Policy): Map
   return new Map(out ? out.split('\n').map(line => { const [sha, ref] = line.split('\t'); return [ref, sha] as [string, string]; }) : []);
 }
 
-function readDeleted(project: string): Deleted[] {
+export function readDeleted(project: string): Deleted[] {
   const bytes = readFile(project, DELETED, 'deleted.json');
   try { return bytes ? JSON.parse(bytes.toString('utf8')) : []; } catch { return []; }
 }
 
-/** Bring the deletion list and others' sessions, records and links here. Missing refs are fine.
- * Never pruned, even where the person set fetch.prune: a prune would delete every record of
- * this clone's that is not pushed yet, since the remote lacks it. */
+/** Bring the deletion list and all the team's sessions, records and links here: only for what
+ * is about the whole remote (`wisdom team delete`, `prune`). Everything else fetches only what
+ * is in question (fetchOnly). Missing refs are fine. Never pruned, even where the person set
+ * fetch.prune: a prune would delete every record of this clone's that is not pushed yet, since
+ * the remote lacks it. */
 export function fetchRefs(project: string, remote: string, policy: Policy, refs = remoteRefs(project, remote, policy)): Map<string, string> {
   const base = `refs/wisdom/${policy.repoId}/`;
   const specs = [`+${base}records/*:refs/wisdom/records/*`, `+${base}sessions/*:${FETCHED}*`, `+${base}links/*:${FETCHED_LINKS}*`];
   if (refs.has(`${base}deleted`)) specs.push(`+${base}deleted:${DELETED}`);
   if ([...refs.keys()].length) git(project, ['fetch', '--no-tags', '--no-prune', '--quiet', remote, ...specs]);
   return refs;
+}
+
+/** One ref of the remote's (`from`, as `ls-remote` names it) and where it goes here (`to`). */
+export type Spec = [from: string, to: string];
+
+/** Move only what is in question (policy 5.22): fetch these refs, those the remote has (asking
+ * for one it lacks would fail the whole fetch) and this clone does not have in that version.
+ * They go to git on stdin, so thousands of them never meet Windows' command-line limit. Never
+ * pruned (see fetchRefs). Returns how many were fetched. */
+export function fetchOnly(project: string, remote: string, refs: Map<string, string>, specs: Spec[]): number {
+  const here = listRefs(project, 'refs/wisdom/');
+  const wanted = [...new Map(specs.filter(([from, to]) => refs.has(from) && here.get(to) !== refs.get(from)).map(([from, to]) => [to, `+${from}:${to}`])).values()];
+  if (wanted.length) git(project, ['fetch', '--no-tags', '--no-prune', '--quiet', '--stdin', remote], { input: wanted.join('\n') + '\n' });
+  return wanted.length;
+}
+
+/** The records and links of these commits; then, for each with no record but a link, those of
+ * the commits it came from, as deep as followLinks goes, one fetch per step. `depth` 0 fetches
+ * only the commits' own. Returns every commit asked about. */
+export function fetchRecordsOf(project: string, remote: string, policy: Policy, refs: Map<string, string>, commits: Iterable<string>, depth = 20): Set<string> {
+  const base = `refs/wisdom/${policy.repoId}/`;
+  const seen = new Set<string>();
+  let todo = [...new Set(commits)];
+  for (let step = 0; todo.length; step++) {
+    for (const commit of todo) seen.add(commit);
+    fetchOnly(project, remote, refs, todo.flatMap((commit): Spec[] => [[`${base}records/${commit}`, recordRef(commit)], [`${base}links/${commit}`, `${FETCHED_LINKS}${commit}`]]));
+    if (step >= depth) break;
+    // Read a link only where there is one: a branch can reach many thousands of commits.
+    const records = recordRefs(project);
+    const linked = new Set([...listRefs(project, 'refs/wisdom/links/').keys(), ...listRefs(project, FETCHED_LINKS).keys()].map(ref => ref.slice(ref.lastIndexOf('/') + 1)));
+    todo = [...new Set(todo.filter(commit => !records.has(commit) && linked.has(commit)).flatMap(commit => readLink(project, commit)?.from ?? []))].filter(commit => !seen.has(commit));
+  }
+  return seen;
+}
+
+/** Every record on the remote, never a session: only for the two lookups that go by what is in a
+ * record, not by its commit (a Wisdom-Record line's ID, relink's patch-id), and only when the
+ * narrow fetch found nothing. Records are small; sessions are what is large. */
+export function fetchAllRecords(project: string, remote: string, policy: Policy, refs: Map<string, string>): void {
+  const base = `refs/wisdom/${policy.repoId}/records/`;
+  if ([...refs.keys()].some(ref => ref.startsWith(base))) git(project, ['fetch', '--no-tags', '--no-prune', '--quiet', remote, `+${base}*:refs/wisdom/records/*`]);
 }
 
 /** This clone's links of commits in `history` (team-mode commits only) that the remote lacks. A
@@ -80,13 +124,25 @@ function linkedCommits(project: string, history: Set<string>): Set<string> {
 
 const headHistory = (project: string) => new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
 
+/** The commits a push is about (policy 5.22): what the commits being pushed reach, as git's
+ * pre-push hook lists them (`tips`; empty for a push that only deletes). Without a list (`wisdom
+ * team push` by hand, an up-to-date push, a hook installed before the list was passed on),
+ * HEAD's history. Up to 2000 commits either way. */
+export function pushHistory(project: string, tips?: string[]): Set<string> {
+  if (!tips) return headHistory(project);
+  const commits = tips.filter(tip => refExists(project, tip));
+  if (!commits.length) return new Set();
+  return new Set(gitText(project, ['rev-list', '--max-count=2000', '--stdin'], { input: commits.join('\n') + '\n' }).split('\n').filter(Boolean));
+}
+
 /** Send this clone's links that the remote lacks, on their own: what the outbox retries when a
- * push could not send them. Returns how many went; throws when the push fails. */
-export function pushLinks(project: string, remoteName?: string): { remote: string; links: number } {
+ * push could not send them, for the commits of that push (`tips`, as in pushHistory). Returns
+ * how many went; throws when the push fails. */
+export function pushLinks(project: string, remoteName?: string, tips?: string[]): { remote: string; links: number } {
   const policy = policyOrThrow(project);
   const remote = remoteName ?? policy.remote ?? 'origin';
   const refs = remoteRefs(project, remote, policy);
-  const links = unpushedLinks(project, policy, refs, headHistory(project));
+  const links = unpushedLinks(project, policy, refs, pushHistory(project, tips));
   if (links.length) {
     try { git(project, ['push', '--quiet', '--no-verify', remote, ...links.map(ref => `${ref}:${remoteRef(policy.repoId, ref)}`)]); }
     catch (error) { throw new Error(`Commit links could not be pushed to ${remote}: ${gitError(error)}`); }
@@ -96,12 +152,10 @@ export function pushLinks(project: string, remoteName?: string): { remote: strin
 
 export const sessionKey = (recorder: string, id: string) => `${recorder}/${refSafe(id)}`;
 
-/** Records reachable from HEAD, or through this clone's links from a commit reachable from it,
- * that the remote does not have yet, of commits made in team mode (teamCommit): work recorded
- * before the policy file was committed is not sent. */
-function unpushedRecords(project: string, policy: Policy, refs: Map<string, string>): { ref: string; sha: string; record: CommitRecord }[] {
-  const history = headHistory(project);
-  const linked = linkedCommits(project, history);
+/** Records of the commits in `history`, or reached through this clone's links from one of them
+ * (`linked`), that the remote does not have in this version, of commits made in team mode
+ * (teamCommit): work recorded before the policy file was committed is not sent. */
+function unpushedRecords(project: string, policy: Policy, refs: Map<string, string>, history: Set<string>, linked: Set<string>): { ref: string; sha: string; record: CommitRecord }[] {
   return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref, sha]) => {
     const commit = ref.slice('refs/wisdom/records/'.length);
     if (!(history.has(commit) || linked.has(commit)) || refs.get(remoteRef(policy.repoId, ref)) === sha || !teamCommit(project, commit)) return [];
@@ -120,10 +174,8 @@ function checkFailure(error: unknown): string {
   return 'refused by the project\'s check';
 }
 
-/** Records reachable from HEAD (or through its links) that are on the remote already, as this clone has them. */
-function pushedRecords(project: string, policy: Policy, refs: Map<string, string>): CommitRecord[] {
-  const history = headHistory(project);
-  const linked = linkedCommits(project, history);
+/** Records of the commits in `history` (or through their links) that are on the remote already, as this clone has them. */
+function pushedRecords(project: string, policy: Policy, refs: Map<string, string>, history: Set<string>, linked: Set<string>): CommitRecord[] {
   return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref]) => {
     const commit = ref.slice('refs/wisdom/records/'.length);
     if (!(history.has(commit) || linked.has(commit)) || !refs.has(remoteRef(policy.repoId, ref))) return [];
@@ -209,28 +261,35 @@ export interface PushResult { remote: string;
 /** `wisdom team push`: links first, then sessions, then the records that name them, then a
  * check that the remote holds every session those records name. Links go first because they
  * are a few hundred bytes each: a long session upload that fails or runs out of time must not
- * take them down with it. A link that fails is kept here (the outbox) and does not stop the rest. */
-export function push(captures: SessionStore, dataDir: string, remoteName?: string): PushResult {
+ * take them down with it. A link that fails is kept here (the outbox) and does not stop the rest.
+ * `tips`: the commits being pushed, as pre-push's stdin lists them (pushHistory). */
+export function push(captures: SessionStore, dataDir: string, remoteName?: string, tips?: string[]): PushResult {
   const project = projectOf(captures);
   const policy = policyOrThrow(project);
   const remote = remoteName ?? policy.remote ?? 'origin';
   const me = recorderId(dataDir);
-  const refs = fetchRefs(project, remote, policy);
-  const linkRefs = unpushedLinks(project, policy, refs, headHistory(project));
+  const refs = remoteRefs(project, remote, policy);
+  const history = pushHistory(project, tips);
+  const linked = linkedCommits(project, history);
+  // Only what this push is about: the deletion list, and the remote's versions of these commits'
+  // records, so a version redacted here goes on top of the remote's.
+  const base = `refs/wisdom/${policy.repoId}/`;
+  fetchOnly(project, remote, refs, [[`${base}deleted`, DELETED], ...[...history, ...linked].map((commit): Spec => [`${base}records/${commit}`, recordRef(commit)])]);
+  const linkRefs = unpushedLinks(project, policy, refs, history);
   let linksFailed: string | undefined;
   if (linkRefs.length) {
     try { git(project, ['push', '--quiet', '--no-verify', remote, ...linkRefs.map(ref => `${ref}:${remoteRef(policy.repoId, ref)}`)]); }
     catch (error) { linksFailed = gitError(error); }
   }
   const deleted = new Set(readDeleted(project).map(d => d.key));
-  const records = unpushedRecords(project, policy, refs);
+  const records = unpushedRecords(project, policy, refs, history, linked);
   const own = new Set(captures.database.manifests().map(m => m.captureId));
   const mine = (record: CommitRecord) => record.sessions.filter(s => (s.recorder ?? me) === me && own.has(s.id)).map(s => s.id);
   // A session held back at an earlier push (the project's check refused it, or could not run)
   // while its record went: a record on the remote names it, the remote lacks it. Each push
   // tries it again, until it goes or the team deletes it.
   const onRemote = (id: string) => refs.has(remoteRef(policy.repoId, sessionRef(sessionKey(me, id))));
-  const heldBack = new Set(pushedRecords(project, policy, refs).flatMap(mine).filter(id => !onRemote(id) && !deleted.has(sessionKey(me, id))));
+  const heldBack = new Set(pushedRecords(project, policy, refs, history, linked).flatMap(mine).filter(id => !onRemote(id) && !deleted.has(sessionKey(me, id))));
   const wanted = [...new Set([...records.flatMap(({ record }) => mine(record)), ...heldBack])];
   const sessions: PushResult['sessions'] = [];
   const specs: string[] = [];
@@ -263,17 +322,36 @@ export function push(captures: SessionStore, dataDir: string, remoteName?: strin
 interface Imports { [key: string]: { commit: string; shareId: string } }
 const importsFile = (dataDir: string) => path.join(dataDir, 'team-imports.json');
 
-/** `wisdom team fetch`: teammates' sessions become read-only copies here (a newer version
- * replaces the older one), their records become readable, and the deletion list is applied. */
+/** `wisdom team fetch`: only what this clone's own branches reach (policy 5.22): their commits'
+ * records and links, the records those links lead to, and the teammates' sessions those records
+ * name, which become read-only copies here (a newer version replaces the older one). The
+ * deletion list comes whole and is applied whole, whatever the branches reach (policy 5.18). */
 export function fetchTeam(captures: SessionStore, library: SharedLibrary, dataDir: string, remoteName?: string): { imported: string[]; removed: string[]; notRemoved: number; records: number } {
   const project = projectOf(captures);
   const policy = policyOrThrow(project);
   const remote = remoteName ?? policy.remote ?? 'origin';
   const me = recorderId(dataDir);
   library.finishRemovals();
-  fetchRefs(project, remote, policy);
-  const imports: Imports = fs.existsSync(importsFile(dataDir)) ? JSON.parse(fs.readFileSync(importsFile(dataDir), 'utf8')) : {};
+  const refs = remoteRefs(project, remote, policy);
+  const base = `refs/wisdom/${policy.repoId}/`;
+  fetchOnly(project, remote, refs, [[`${base}deleted`, DELETED]]);
   const deleted = new Set(readDeleted(project).map(d => d.key));
+  // The person's own branches, not their copies of the remote's: a merged pull request's records
+  // come once they pull main, as git itself works.
+  let branches: string[] = [];
+  try { branches = gitText(project, ['rev-list', '--branches']).split('\n').filter(Boolean); } catch { /* no commit yet */ }
+  const reached = fetchRecordsOf(project, remote, policy, refs, branches);
+  const kept = recordRefs(project);
+  const keys = new Set<string>();
+  for (const commit of reached) {
+    const ref = kept.get(commit);
+    const bytes = ref ? readFile(project, ref, 'record.json') : undefined;
+    let record: CommitRecord | undefined;
+    try { record = bytes ? JSON.parse(bytes.toString('utf8')) as CommitRecord : undefined; } catch { record = undefined; }
+    for (const s of record?.sessions ?? []) if (s.recorder && s.recorder !== me) keys.add(sessionKey(s.recorder, s.id));
+  }
+  fetchOnly(project, remote, refs, [...keys].filter(key => !deleted.has(key)).map((key): Spec => [`${base}sessions/${key}`, `${FETCHED}${key}`]));
+  const imports: Imports = fs.existsSync(importsFile(dataDir)) ? JSON.parse(fs.readFileSync(importsFile(dataDir), 'utf8')) : {};
   const imported: string[] = [], removed: string[] = [];
   for (const [ref, sha] of listRefs(project, FETCHED)) {
     const key = ref.slice(FETCHED.length);
@@ -366,16 +444,36 @@ export function prune(captures: SessionStore, remoteName?: string, now = Date.no
 
 /** `wisdom check --range base..head`, for CI: every commit of the PR with agent work has a
  * checked guide, and every session its record names is on the remote. Needs no data folder. */
-export function prCheck(cwd: string, range: string, remoteName?: string): { ok: boolean; text: string } {
+/** One commit as the check found it: `problems` fail it (the check's own rules); `recorded`:
+ * whether any record stands for it (none fails nothing: made without Wisdom, or not linked yet). */
+export interface CheckedCommit { sha: string; subject: string; recorded: boolean; problems: string[] }
+
+export function prCheck(cwd: string, range: string, remoteName?: string): { ok: boolean; text: string; commits: CheckedCommit[] } {
   const policy = policyOrThrow(cwd);
   const remote = remoteName ?? policy.remote ?? 'origin';
-  const refs = fetchRefs(cwd, remote, policy);
   if (range.startsWith('-')) throw new Error(`"${range}" is not a range.`);
+  const refs = remoteRefs(cwd, remote, policy);
   const commits = gitText(cwd, ['rev-list', '--no-merges', '--reverse', range]).split('\n').filter(Boolean);
+  // Only what the range is about (policy 5.22): its commits' records and links, and the records
+  // those links lead to. Never a session: the remote's list says whether each one is there.
+  fetchRecordsOf(cwd, remote, policy, refs, commits);
+  // A commit with no link whose message names records not here (its Wisdom-Record lines, the
+  // backup) can find them only by reading every record: then every record comes, no session.
+  const carried = [...new Set(commits.flatMap(sha => {
+    if (readLink(cwd, sha)) return [];
+    const own = recordText(cwd, sha);
+    let ownId: string | undefined;
+    try { ownId = own ? (JSON.parse(own) as CommitRecord).recordId : undefined; } catch { ownId = undefined; }
+    return recordIds(cwd, sha).filter(id => id !== ownId);
+  }))];
+  if (carried.length && recordsWithIds(cwd, carried).length < carried.length) fetchAllRecords(cwd, remote, policy, refs);
   const lines: string[] = [];
+  const checked: CheckedCommit[] = [];
   let failed = 0;
   for (const sha of commits) {
     const subject = gitText(cwd, ['log', '-1', '--format=%s', sha]);
+    const entry: CheckedCommit = { sha, subject, recorded: false, problems: [] };
+    checked.push(entry);
     lines.push(`${sha.slice(0, 12)}  ${subject}`);
     // A commit rewritten where its record was not kept (a squash merge on the server) has no
     // record under its own hash. Its links lead to the records that stand for it; failing a
@@ -396,6 +494,7 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
       texts = [...texts, ...carried];
     }
     if (!texts.length) { lines.push(linked ? '    no record of the commits it came from is here' : '    no record or link: made without Wisdom, or not linked yet (wisdom team relink), or its record was not pushed (wisdom team push)'); continue; }
+    entry.recorded = true;
     let problems = 0;
     for (const text of texts) {
       const record = JSON.parse(text) as CommitRecord;
@@ -403,14 +502,15 @@ export function prCheck(cwd: string, range: string, remoteName?: string): { ok: 
       const missing = record.sessions.filter(s => s.recorder && !refs.has(remoteRef(policy.repoId, sessionRef(sessionKey(s.recorder, s.id))))).map(s => s.id);
       const found = [
         ...(agent && !record.guide && policy.requireGuides !== false ? [`agent work without a guide${record.guideMissing ? ` (${record.guideMissing})` : ''}`] : []),
-        ...(agent && record.guide?.problems.length ? [`the guide did not pass its check: ${record.guide.problems.join('; ')}`] : []),
+        ...(agent && record.guide?.problems.length ? [`the guide did not pass its check: ${problemSummary(record.guide.problems)}`] : []),
         ...missing.map(id => `session ${id.slice(0, 8)} is not on ${remote}`),
       ];
       problems += found.length;
+      entry.problems.push(...found);
       lines.push(`    ${found.length ? found.join(' · ') : [agent ? 'agent work' : 'no agent work recorded', record.guide ? `guide by ${record.guide.writer}` : '', `${record.sessions.length} sessions`].filter(Boolean).join(' · ')}`);
     }
     if (problems) failed++;
   }
   lines.unshift(`${commits.length} commits · ${failed ? `${failed} need attention` : 'all good'}`, '');
-  return { ok: !failed, text: lines.join('\n') };
+  return { ok: !failed, text: lines.join('\n'), commits: checked };
 }

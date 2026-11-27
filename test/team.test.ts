@@ -9,11 +9,12 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { startDaemon } from '../src/service/daemon.js';
 import { call } from '../src/service/client.js';
 import { prCheck, prune } from '../src/team/team.js';
-import { commitFiles, oldPolicyNote, policyCommands, readFile, readPolicy, recordRef, setRef, trustCommands, trusted, writePolicy } from '../src/team/gitrefs.js';
-import { guideCommit, hooksDir, hooksInstalled, installHooks, jobs, LOCAL_HOOKS, removeHooks, runGitHook } from '../src/team/githooks.js';
-import { checkGuide, setGuides } from '../src/team/guides.js';
+import { commitFiles, oldPolicyNote, policyCommands, readFile, readPolicy, recordRef, refExists, setRef, trustCommands, trusted, writePolicy } from '../src/team/gitrefs.js';
+import { guideCommit, hooksDir, hooksInstalled, installHooks, jobs, LOCAL_HOOKS, parsePushed, removeHooks, runGitHook } from '../src/team/githooks.js';
+import { relink } from '../src/team/relink.js';
+import { checkGuide, fillFromPlain, setGuides } from '../src/team/guides.js';
 import { claudeOutput, guidePrompt, guideSettings } from '../src/team/writer.js';
-import { GUIDE_OPENING, items, plainGuide } from '../src/team/plain.js';
+import { GUIDE_OPENING, items, PLAIN_MARK, plainGuide, problemSummary, writtenBy } from '../src/team/plain.js';
 import { guideWriterRun } from '../src/record/captures.js';
 import { startDetached } from '../src/service/client.js';
 import { observeSession, openSession } from './session.js';
@@ -193,6 +194,8 @@ test('team mode: every commit gets its link line, a model writes the guide after
     // Deleted for the team: Bob's copy goes, his read says so, and CI notices.
     const deleted = await call(daemon.connection, '/team', { action: 'delete', session: id });
     assert.match(deleted.key, /^[a-f0-9-]{36}\/alice-session-1$/);
+    // Bob's fetch brings what his own branches reach (policy 5.22), so he updates main first.
+    bob.git('fetch', '-q', 'origin', 'main:main');
     const firstFetch = await call(bobDaemon.connection, '/team', { action: 'fetch' });
     assert.deepEqual([firstFetch.removed, firstFetch.notRemoved], [[deleted.key], 0]);
     assert.deepEqual(fs.readdirSync(path.join(bob.data, 'shared')), [], 'the copy\'s folder is gone, not only hidden');
@@ -420,6 +423,96 @@ test('work recorded before team mode was turned on is not pushed and gets no gui
   } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
+test('only what is in question moves: a push sends what it pushes, a teammate fetches what their branches reach, CI fetches its range (policy 5.22)', { skip: !hasGit }, async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-narrow-')));
+  const origin = path.join(root, 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { windowsHide: true });
+  const alice = person(root, 'alice', origin, false);
+  let bobDaemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
+  try {
+    fs.writeFileSync(path.join(alice.dir, 'a.ts'), 'one\n');
+    writePolicy(alice.dir);
+    alice.git('add', '-A'); alice.git('commit', '-q', '-m', 'start'); alice.git('push', '-q', 'origin', 'main');
+    const base = alice.git('rev-parse', 'HEAD');
+    const repoId = readPolicy(alice.dir)!.repoId;
+    // Two branches, each commit with a record naming a session, made by hand (no recording here).
+    const recorder = 'alice-recorder-0001';
+    const made: Record<string, { sha: string; recordId: string; session: string }> = {};
+    for (const name of ['a', 'b']) {
+      alice.git('checkout', '-q', '-b', `feat/${name}`, base);
+      fs.writeFileSync(path.join(alice.dir, `${name}.ts`), `${name}\n`);
+      alice.git('add', '-A'); alice.git('commit', '-q', '-m', name);
+      const sha = alice.git('rev-parse', 'HEAD');
+      const recordId = `r-${name.repeat(12)}`, session = `session-${name}`;
+      const kept = { kind: 'wisdom-commit-record', version: 1, recordId, commit: { sha, subject: name, committedAt: new Date().toISOString(), tree: '' },
+        made: 'commit', madeAt: new Date().toISOString(), wisdomVersion: 'test', steps: [], files: [], sessions: [{ id: session, harness: 'pi', recorder, positions: [] }] };
+      setRef(alice.dir, recordRef(sha), commitFiles(alice.dir, { 'record.json': JSON.stringify(kept) }, 'test'));
+      setRef(alice.dir, `refs/wisdom/sessions/${recorder}/${session}`, commitFiles(alice.dir, { 'meta.json': '{}' }, 'test'));
+      alice.git('push', '-q', '--no-verify', 'origin', `refs/wisdom/sessions/${recorder}/${session}:refs/wisdom/${repoId}/sessions/${recorder}/${session}`);
+      made[name] = { sha, recordId, session };
+    }
+    fs.mkdirSync(alice.data, { recursive: true });
+    fs.writeFileSync(path.join(alice.data, 'wisdom.json'), '{}');
+    installHooks(alice.dir, alice.data);
+    const onRemote = () => execFileSync('git', ['ls-remote', origin, 'refs/wisdom/*'], { encoding: 'utf8' });
+
+    // 3. A push sends the records of what it pushes, not of the branch checked out (feat/b).
+    assert.deepEqual(parsePushed(`refs/heads/feat/a ${made.a.sha} refs/heads/feat/a ${'0'.repeat(40)}\n`), [made.a.sha]);
+    assert.deepEqual(parsePushed(`(delete) ${'0'.repeat(40)} refs/heads/old ${made.a.sha}\n`), [], 'a push that only deletes sends no records');
+    assert.equal(parsePushed('\n'), undefined, 'no list from git: the push goes by HEAD');
+    const pushedA = spawnSync('git', ['push', 'origin', 'feat/a'], { cwd: alice.dir, encoding: 'utf8', windowsHide: true });
+    assert.equal(pushedA.status, 0, pushedA.stderr);
+    assert.match(pushedA.stderr, /Wisdom: 1 commit record and 0 session version\(s\) sent to origin\./);
+    assert.match(onRemote(), new RegExp(`records/${made.a.sha}`));
+    assert.doesNotMatch(onRemote(), new RegExp(`records/${made.b.sha}`));
+    assert.equal(spawnSync('git', ['push', 'origin', 'feat/b'], { cwd: alice.dir, windowsHide: true }).status, 0);
+    assert.match(onRemote(), new RegExp(`records/${made.b.sha}`));
+    // The team deletes session b.
+    const deletedList = commitFiles(alice.dir, { 'deleted.json': JSON.stringify([{ key: `${recorder}/${made.b.session}`, deletedAt: new Date().toISOString(), reason: 'deleted' }]) }, 'test');
+    alice.git('push', '-q', '--no-verify', 'origin', `${deletedList}:refs/wisdom/${repoId}/deleted`);
+
+    // 2. Bob's fetch brings what his own branches reach; the deletion list comes whole.
+    const bob = person(root, 'bob', origin, true);
+    bobDaemon = await startDaemon(bob.data, 0);
+    const fetched = (key: string) => refExists(bob.dir, `refs/wisdom/fetched/sessions/${recorder}/${key}`);
+    await call(bobDaemon.connection, '/team', { action: 'fetch' });
+    assert.equal(refExists(bob.dir, 'refs/wisdom/deleted'), true);
+    assert.deepEqual([record(bob.dir, made.a.sha), record(bob.dir, made.b.sha), fetched(made.a.session)], [undefined, undefined, false], 'main reaches neither branch');
+    bob.git('branch', 'feat/a', 'origin/feat/a');
+    await call(bobDaemon.connection, '/team', { action: 'fetch' });
+    assert.equal(record(bob.dir, made.a.sha)?.recordId, made.a.recordId);
+    assert.equal(fetched(made.a.session), true);
+    assert.equal(record(bob.dir, made.b.sha), undefined, 'a branch Bob does not have brings nothing');
+    bob.git('branch', 'feat/b', 'origin/feat/b');
+    await call(bobDaemon.connection, '/team', { action: 'fetch' });
+    assert.equal(record(bob.dir, made.b.sha)?.recordId, made.b.recordId);
+    assert.equal(fetched(made.b.session), false, 'a deleted session is not fetched');
+
+    // 1. CI fetches the records of its range and never a session.
+    const carol = person(root, 'carol', origin, true);
+    const sessionsHere = (dir: string) => execFileSync('git', ['for-each-ref', 'refs/wisdom/fetched/sessions/'], { cwd: dir, encoding: 'utf8' }).trim();
+    const check = prCheck(carol.dir, `${base}..origin/feat/a`);
+    assert.equal(check.ok, true, check.text);
+    assert.equal(record(carol.dir, made.a.sha)?.recordId, made.a.recordId);
+    assert.equal(record(carol.dir, made.b.sha), undefined, 'a record outside the range is not fetched');
+    assert.equal(sessionsHere(carol.dir), '');
+    // A squash with no link names its records only by ID (the backup): then every record comes, still no session.
+    carol.git('checkout', '-q', '-b', 'squashed', base);
+    fs.writeFileSync(path.join(carol.dir, 'b.ts'), 'b\n');
+    carol.git('add', '-A'); carol.git('commit', '-q', '-m', `b (#2)\n\nWisdom-Record: ${made.b.recordId}`);
+    assert.match(prCheck(carol.dir, `${base}..HEAD`).text, /carries 1 recorded commit/);
+    assert.equal(sessionsHere(carol.dir), '');
+    // The relink job looks at its range only.
+    const dave = person(root, 'dave', origin, true);
+    const relinked = await relink(dave.dir, { range: `${base}..origin/feat/a`, env: {} });
+    assert.match(relinked.lines.join('\n'), /1 commit in .*, 0 with neither a record nor a link/);
+    assert.deepEqual([record(dave.dir, made.a.sha)?.recordId, record(dave.dir, made.b.sha), sessionsHere(dave.dir)], [made.a.recordId, undefined, '']);
+  } finally {
+    await bobDaemon?.close();
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
 test('a secret quoted in a commit record is redacted before push, in every version the remote gets (live test 5.4)', { skip: !hasGit }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wisdom-recsecret-')));
   const origin = path.join(root, 'origin.git');
@@ -566,6 +659,48 @@ test('a huge commit made by one step is one guide item, and a guide of the group
   const guide = ['## Summary', 'Generated files.', '', '## Items', ...list.flatMap(item => [`- ${item.key} · ${item.label}`, '  skip: test']), ''].join('\n');
   assert.deepEqual(checkGuide(guide, big, () => undefined, () => []), []);
   assert(plainGuide(big, () => undefined).split('\n').length < 20, 'the plain guide is short too');
+});
+
+test('a model guide that stops early is filled from the record: every piece is answered, the model\'s own items stay, and the check passes on coverage', () => {
+  const step = (n: number) => ({ session: 'fill-session-1', position: `t1/c${n}`, attribution: 'observed-during-tool', before: null, after: `h${n}` });
+  const files = Array.from({ length: 6 }, (_, n) => ({ path: `src/f${n}.ts`, operation: 'create', added: 1, removed: 0, complete: true, chain: [n],
+    pieces: [{ header: '@@ -0,0 +1,1 @@', steps: [n], unexplained: 0 }] }));
+  const rec = { kind: 'wisdom-commit-record', version: 1, commit: { sha: 'e'.repeat(40), subject: 'six files', committedAt: new Date().toISOString(), tree: '' },
+    made: 'commit', madeAt: new Date().toISOString(), wisdomVersion: 'test', steps: files.map((_, n) => step(n + 1)), files,
+    sessions: [{ id: 'fill-session-1', harness: 'claude-code', positions: files.map((_, n) => `t1/c${n + 1}`) }] } as any;
+  const list = items(rec);
+  // As on a 95-piece commit: two items written, one with no citation, the rest never reached.
+  const model = ['## Summary', 'Adds six files.', '', '## Items',
+    `- ${list[0].key} · ${list[0].label}`, '  The first file [t1/c1 fill-ses].',
+    `- ${list[1].key} · ${list[1].label}`, '  The second file, no citation.',
+    '', '## Beyond the edits', 'Not covered: the other four files.', ''].join('\n');
+  const coverage = (text: string) => checkGuide(text, rec, () => undefined, () => []).filter(p => /is missing|cites none|nothing is written/.test(p));
+  assert.equal(coverage(model).length, 5, '4 missing, 1 without a citation');
+  const filled = fillFromPlain(model, rec, () => undefined);
+  assert.deepEqual([filled.filled, filled.items], [5, 6]);
+  assert.deepEqual(coverage(filled.text), [], 'every item answered');
+  assert.match(filled.text, /^## Summary\nAdds six files\.\n\n## Items\n/, 'the model\'s summary stays');
+  assert.match(filled.text, /The first file \[t1\/c1 fill-ses\]\./, 'the model\'s own item stays as written');
+  assert.doesNotMatch(filled.text, /no citation/, 'an item with no citation is replaced');
+  assert.equal(filled.text.split(PLAIN_MARK).length - 1, 5, 'each filled item says it is from the record');
+  assert.match(filled.text, /\n## Beyond the edits\nNot covered: the other four files\.\n$/, 'its closing sections stay, at the end');
+  assert.deepEqual(list.map(item => filled.text.indexOf(`- ${item.key}`) >= 0), list.map(() => true));
+  // A guide that answers everything is left exactly as it was; one with no summary gets the plain one.
+  const whole = plainGuide(rec, () => undefined);
+  assert.deepEqual(fillFromPlain(whole, rec, () => undefined), { text: whole, filled: 0, items: 6 });
+  assert.match(fillFromPlain('nothing useful', rec, () => undefined).text, /^## Summary\nsix files\. Written by Wisdom from the commit's record/);
+  // How readers name it.
+  assert.equal(writtenBy({ writer: 'claude-haiku-5-5', filled: 5, items: 6 }), 'claude-haiku-5-5 for 1 of 6 items; 5 from the record, no model');
+  assert.equal(writtenBy({ writer: 'claude-haiku-5-5' }), 'claude-haiku-5-5');
+});
+
+test('a guide\'s problems read as one line: counted by kind, a few named, the rest said as a number', () => {
+  const problems = [...Array.from({ length: 90 }, (_, n) => `The item "- src/f${n}.ts @@ -0,0 +1,1 @@" is missing.`),
+    'group 1: 2 pieces in 1 files: made by a recorded step, but cites none.', '[t9/c1 abcdefgh]: no session starts with abcdefgh.'];
+  assert.equal(problemSummary(problems),
+    '90 items missing (src/f0.ts @@ -0,0 +1,1 @@, src/f1.ts @@ -0,0 +1,1 @@, src/f2.ts @@ -0,0 +1,1 @@, and 87 more); 1 item cites no step (group 1: 2 pieces in 1 files); [t9/c1 abcdefgh]: no session starts with abcdefgh.');
+  assert.doesNotMatch(problemSummary(problems), /\.;|\.\./, 'no doubled punctuation');
+  assert.equal(problemSummary(['a.', 'b.', 'c.', 'd.', 'e.']), 'a; b; c; and 2 more.');
 });
 
 test('two background jobs started a second apart both run (a shared cmd log once stopped the second)', async () => {

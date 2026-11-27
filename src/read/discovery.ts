@@ -8,7 +8,7 @@ import { adapter } from '../harnesses/index.js';
 import { agentWork, projectOf, readCommit, toRecord, windowStart, windowTurns, workFor, type CommitInfo, type CommitRecord, type RecordStep, type Target } from '../team/commits.js';
 import { gitText, patchId, readFile, readPolicy, recordIds, recordRef, recordsWithIds, recordText } from '../team/gitrefs.js';
 import { followLinks, linkWords, readLink, type CommitLink } from '../team/links.js';
-import { plainGuide } from '../team/plain.js';
+import { plainGuide, problemSummary, writtenBy } from '../team/plain.js';
 import { wisdomVersion } from '../setup/doctor.js';
 
 /** The agent-facing ledger. Two moves over one session: glance (its shape and one entry
@@ -401,8 +401,8 @@ export function buildRecord(captures: SessionStore, version: number, project: st
 }
 
 /** Has the session a step cites still got that exact change? Each step is checked on its own. */
-type StepState = 'ok' | 'changed' | 'missing';
-function checkStep(stores: (id: string) => SessionStore | undefined, step: RecordStep): StepState {
+export type StepState = 'ok' | 'changed' | 'missing';
+export function checkStep(stores: (id: string) => SessionStore | undefined, step: RecordStep): StepState {
   const store = stores(step.session);
   if (!store) return 'missing';
   const found = store.database.sql.prepare(`SELECT 1 FROM records WHERE capture_id=? AND type='file_change'
@@ -561,8 +561,8 @@ export function renderRecord(record: CommitRecord, version: number | undefined, 
   }
   if (record.guide) {
     const { guide } = record;
-    lines.push('', `guide · written by ${guide.writer}, ${minute(guide.writtenAt)} · derived, not evidence · ${guide.problems.length
-      ? `did not pass Wisdom's check: ${guide.problems.join('; ')}` : 'Wisdom checked that it covers every item and that its citations exist, not that it is right'}`);
+    lines.push('', `guide · written by ${writtenBy(guide)}, ${minute(guide.writtenAt)} · derived, not evidence · ${guide.problems.length
+      ? `did not pass Wisdom's check: ${problemSummary(guide.problems)}` : 'Wisdom checked that it covers every item and that its citations exist, not that it is right'}`);
     for (const line of guide.text.replace(/\s+$/, '').split(/\r?\n/)) lines.push(line ? INDENT + line : '');
   } else if (record.guideMissing) lines.push('', `guide · none: ${record.guideMissing}`);
   else if (local && stores && agentWork(record)) {

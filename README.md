@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/node-%3E%3D24-green.svg" alt="Node 24+">
 </p>
 
-Wisdom records Claude Code, Codex and Pi sessions on your machine and links every file change to the request, the reasoning and the commands that produced it. You browse sessions in a local dashboard, and any of your agents can query them through a skill, so the next agent starts from what was actually asked, tried and changed.
+Wisdom records Claude Code, Codex and Pi sessions on your machine and links every file change to the request, the reasoning and the commands that produced it. You browse sessions in Usage, a local viewer, and any of your agents can query them through a skill, so the next agent starts from what was actually asked, tried and changed.
 
 ## Why Wisdom
 
@@ -27,7 +27,7 @@ Wisdom keeps a local record you and your agents can read:
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/how-it-works.png" alt="Claude Code, Codex CLI and Pi send events through hooks or an extension to a local daemon on 127.0.0.1, which saves them in .wisdom/ (SQLite, diffs, transcript copies). At each commit, Wisdom keeps a record in your repository's .git that links each change to the step that made it. The dashboard, the CLI (glance, open, glance --commit) and the agent skill read it. In team mode, which is opt-in, git push sends records and sessions to your own git remote for teammates and CI." width="900">
+  <img src="docs/assets/how-it-works.png" alt="Claude Code, Codex CLI and Pi send events through hooks or an extension to a local daemon on 127.0.0.1, which saves them in .wisdom/ (SQLite, diffs, transcript copies). At each commit, Wisdom keeps a record in your repository's .git that links each change to the step that made it. Usage, the CLI (glance, open, glance --commit) and the agent skill read it. In team mode, which is opt-in, git push sends records and sessions to your own git remote for teammates and CI." width="900">
 </p>
 
 The agent's own hooks send each event to a small daemon on your machine. The daemon saves it in the project's `.wisdom/` folder, along with a byte-for-byte copy of the agent's transcript and the diffs of the files it watches. If the daemon is down, events are kept and recorded when it comes back; the agent is never blocked. When you commit, Wisdom keeps a record in your repository's `.git` that links each change to the step that made it.
@@ -56,12 +56,12 @@ claude      # or codex, or pi
 Sessions are recorded with your normal login. Open them with:
 
 ```sh
-wisdom dashboard
+wisdom usage
 ```
 
 The first time in a project, Codex asks you to trust it and to approve Wisdom's hooks in `/hooks`, and Pi asks you to trust it. On Windows PowerShell with scripts blocked, use `wisdom.cmd` and `npm.cmd`.
 
-Your settings for the project are in `wisdom.yaml`, which `wisdom connect` writes with every default shown: the guide model, the dashboard port and what to leave out of recordings. Git ignores it. See [settings](docs/usage.md#settings).
+Your settings for the project are in `wisdom.yaml`, which `wisdom connect` writes with every default shown: the guide model, the Usage port and what to leave out of recordings. Git ignores it. See [settings](docs/usage.md#settings).
 
 ## Supported agents
 
@@ -84,7 +84,8 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | --- | --- |
 | `wisdom glance [latest]` | List sessions, or show one session turn by turn |
 | `wisdom open t3 --capture latest` | One turn in full: replies, tool calls with output, diffs |
-| `wisdom dashboard` | Print the address of the local dashboard |
+| `wisdom usage` | Print the address of Usage, the local session viewer (`wisdom dashboard` too) |
+| `wisdom commits` | Print the address of Commits: main and your branches, each commit and the sessions behind it, live |
 | `wisdom resume <id>` | Continue a session, still recording |
 | `wisdom handoff codex` | Start another agent that reads the last session first (`--emit`: in the background, reading only) |
 | `wisdom share <id>` / `wisdom import <file>` | Send a session to a teammate, read one you received |
@@ -96,6 +97,7 @@ Details in [two ways to record](docs/usage.md#two-ways-to-record).
 | `wisdom team trust` | Read and allow the commands the team file runs on your machine |
 | `wisdom team fetch` / `push` | Read teammates' sessions, or send yours without a `git push` |
 | `wisdom team delete <id>` | Remove a pushed session for everyone |
+| `wisdom commits deploy` | Set up Commits for the whole team, from your git remote, behind a GitHub sign-in |
 | `wisdom check --range A..B` | In CI: each agent commit has a guide and its sessions are pushed |
 | `wisdom doctor` | Check the setup and print the fix for each problem |
 | `wisdom disconnect` | Stop recording a connected project; recordings are kept |
@@ -129,6 +131,8 @@ New in 0.6.0, in beta: `npm install -g @oqura/wisdom@beta`.
 
 Each commit with agent work can also get a short **guide**: what changed and why, citing the steps. Outside team mode, Wisdom builds a plain one from the record each time you read it; `wisdom guide on` has a cheap model (Claude Haiku through your own Claude Code) read the sessions since your last commit and write it.
 
+`wisdom commits` shows the same in the browser: what landed on main and how, your other branches, each commit with its pieces, guide and sessions, and a session's turns down to the chat view. Every status is checked again against your recordings, and the page follows along live as you or an agent commit, amend or rebase. More in [Commits on this machine](docs/usage.md#commits-on-this-machine).
+
 ## Team mode
 
 Team mode lets teammates read the sessions behind each other's commits. It's opt-in per repository, and everything travels through your own git remote as hidden refs, never on a branch and never to Wisdom.
@@ -151,12 +155,13 @@ wisdom glance --commit <commit>   # any commit, with the steps that made it and 
 - **On push**, your `git push` waits for any guide still being written, up to five minutes, then sends the commit links, the sessions and the records, every possible secret redacted. A failure here never stops your push.
 - **In CI**, `wisdom check --range origin/main..HEAD` fails a pull request whose agent commits have no guide, or whose sessions aren't on the remote.
 - **To remove** a pushed session for everyone, run `wisdom team delete <id>`. `wisdom team prune` removes sessions older than `retentionDays` in `wisdom-team.yaml`.
+- **For the whole team in the browser**, `wisdom commits deploy` sets up Commits from the remote, rebuilt by CI on each pull request and merge, behind a GitHub sign-in: only people who can read the repository see its data. It runs on Vercel; a company needs Vercel Pro. See [Commits for your team](docs/team.md#commits-for-your-team).
 
 Tested with GitHub so far, not yet GitLab, and a pull request from a fork can't push sessions. Details in [team mode](docs/team.md).
 
-## Dashboard
+## Usage, the session viewer
 
-`wisdom dashboard` opens a local viewer for every session in the project, live while the agent runs.
+`wisdom usage` prints the address of Usage, a local viewer for every session in the project, live while the agent runs.
 
 | Overview | Chat view |
 | --- | --- |
@@ -166,7 +171,7 @@ Tested with GitHub so far, not yet GitLab, and a pull request from a fork can't 
 | --- | --- |
 | ![Dev view: the tree of request, tool calls and file changes, with a diff in the inspector](https://raw.githubusercontent.com/Oqura-ai/wisdom/main/docs/assets/screenshots/dev.webp) | ![Claude Code answering from the record with wisdom glance and wisdom open](https://raw.githubusercontent.com/Oqura-ai/wisdom/main/docs/assets/screenshots/agent.webp) |
 
-More in [dashboard](docs/dashboard.md).
+More in [Usage](docs/dashboard.md).
 
 ## Privacy
 
@@ -178,7 +183,7 @@ Early. Tested on Windows, macOS and Linux. See [limitations](docs/limitations.md
 
 ## Documentation
 
-[Installation](docs/installation.md) · [Usage](docs/usage.md) · [Dashboard](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Team mode](docs/team.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)
+[Installation](docs/installation.md) · [Usage](docs/usage.md) · [Usage viewer](docs/dashboard.md) · [Agents](docs/agents.md) · [Harnesses](docs/harnesses.md) · [Team mode](docs/team.md) · [Architecture](docs/architecture.md) · [All docs](docs/index.md)
 
 The documentation site, with guides and examples: [oqura-ai.github.io/wisdom-docs](https://oqura-ai.github.io/wisdom-docs/).
 

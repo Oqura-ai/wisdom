@@ -37,7 +37,7 @@ export async function daemon(route: string, input?: unknown): Promise<any> {
 export function localOnly(request: Request): Response | undefined {
   const host = request.headers.get('host') ?? '';
   if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) {
-    return Response.json({ error: 'The Wisdom dashboard only serves localhost.' }, { status: 403 });
+    return Response.json({ error: 'Wisdom Usage only serves localhost.' }, { status: 403 });
   }
   const origin = request.headers.get('origin');
   if (origin && new URL(origin).host !== host) return Response.json({ error: 'Cross-origin request refused.' }, { status: 403 });
@@ -52,7 +52,7 @@ export function changeAllowed(request: Request): Response | undefined {
   const refused = localOnly(request);
   if (refused) return refused;
   if (!request.headers.get('origin') || !request.headers.get('content-type')?.startsWith('application/json')) {
-    return Response.json({ error: 'Changes take a JSON request from this dashboard only.' }, { status: 403 });
+    return Response.json({ error: 'Changes take a JSON request from Usage itself only.' }, { status: 403 });
   }
   return undefined;
 }

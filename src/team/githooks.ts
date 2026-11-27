@@ -9,7 +9,8 @@ import { agentWork, readCommit, type CommitRecord } from './commits.js';
 import { commitFiles, git, gitText, listRefs, oldPolicyNote, patchId, readFile, readPolicy, recordIds, recordRef, recorderId, resolve, setRef, teamCommit, type Policy } from './gitrefs.js';
 import { writeGuide } from './writer.js';
 import { guidesOn } from './guides.js';
-import { push, pushLinks, type PushResult } from './team.js';
+import { problemSummary, writtenBy } from './plain.js';
+import { push, pushHistory, pushLinks, type PushResult } from './team.js';
 import { parseRewrites, writeLink } from './links.js';
 
 /** What git gave the hook on stdin; empty when there is none. */
@@ -63,13 +64,14 @@ export function postCommitInstalled(project: string): boolean {
 
 function script(name: string, dataDir: string): string {
   const call = `"${unix(process.execPath)}" "${unix(bin)}" githook ${name} --data "${unix(dataDir)}" "$@"`;
-  // pre-push and post-rewrite read git's list on stdin; a chained hook gets it too. Only
-  // post-rewrite needs it itself (the old and new shas); every other call reads nothing.
+  // pre-push and post-rewrite read git's list on stdin; a chained hook gets it too, and so does
+  // Wisdom: post-rewrite the old and new shas, pre-push the commits being pushed (policy 5.22).
+  // Every other call reads nothing.
   const stdin = name === 'pre-push' || name === 'post-rewrite';
   const chain = stdin
     ? 'input=$(cat)\nif [ -x "$0.pre-wisdom" ]; then printf \'%s\\n\' "$input" | "$0.pre-wisdom" "$@" || exit $?; fi\n'
     : 'if [ -x "$0.pre-wisdom" ]; then "$0.pre-wisdom" "$@" || exit $?; fi\n';
-  const run = name === 'post-rewrite' ? `printf '%s\\n' "$input" | ${call} || true` : `${call} </dev/null || true`;
+  const run = stdin ? `printf '%s\\n' "$input" | ${call} || true` : `${call} </dev/null || true`;
   return `#!/bin/sh\n${MARK}: ${name}. Remove with: wisdom team hooks off (team mode) or wisdom guide off (local mode)\n${chain}${run}\nexit 0\n`;
 }
 
@@ -185,7 +187,7 @@ function jobLine(dataDir: string, line: string): void {
 
 function jobSummary(record: CommitRecord, started: number, how: string): string {
   const guide = record.guide;
-  const written = guide ? `guide by ${guide.writer}, ${guide.problems.length ? `check: ${guide.problems.length} problem${guide.problems.length === 1 ? '' : 's'}` : 'check passed'}`
+  const written = guide ? `guide by ${writtenBy(guide)}, ${guide.problems.length ? `check: ${problemSummary(guide.problems)}` : 'check passed'}`
     + `${guide.seconds !== undefined ? `, writer ${guide.seconds} s` : ''}${guide.costUsd !== undefined ? `, $${guide.costUsd.toFixed(4)}` : ''}`
     : record.guideMissing ? `no guide: ${record.guideMissing}` : agentWork(record) ? 'no guide stored' : 'no guide (no agent work)';
   return `${record.commit.sha.slice(0, 12)} ${how} · record ${record.made === 'later' ? 'kept later' : 'kept'} · ${written} · ${Math.round((Date.now() - started) / 1000)} s`;
@@ -284,8 +286,8 @@ function finishDeadJobs(dataDir: string, log: (line: string) => void): void {
 
 /** Records reachable from HEAD that have agent work and neither a guide nor a reason for none,
  * and no job still writing one. */
-function waitingForGuides(project: string, running: string[]): string[] {
-  const history = new Set(gitText(project, ['rev-list', '--max-count=2000', 'HEAD']).split('\n'));
+/** Commits of `history` (the push's, pushHistory) whose record still has no guide. */
+function waitingForGuides(project: string, running: string[], history: Set<string>): string[] {
   return [...listRefs(project, 'refs/wisdom/records/')].flatMap(([ref]) => {
     const commit = ref.slice('refs/wisdom/records/'.length);
     // Records of commits from before team mode was turned on are not pushed, so they get no guide here either.
@@ -304,7 +306,9 @@ const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
  * remote lacks". This file only says a retry is due, and which process is doing it, so the next
  * commit does not start a second one. */
 const outboxFile = (dataDir: string) => path.join(dataDir, 'links-outbox.json');
-interface Outbox { since: string; cause: string; attempts: number; pid?: number }
+/** `tips`: the commits of the pushes whose links wait (git's pre-push list), so the retry sends
+ * only theirs; absent when a push had no list, and then the retry goes by HEAD. */
+interface Outbox { since: string; cause: string; attempts: number; pid?: number; tips?: string[] }
 /** How long the background retry waits before each attempt. */
 const LINK_RETRY_MS = [30_000, 120_000, 600_000];
 
@@ -312,19 +316,34 @@ export function readOutbox(dataDir: string): Outbox | undefined {
   try { return JSON.parse(fs.readFileSync(outboxFile(dataDir), 'utf8')) as Outbox; } catch { return undefined; }
 }
 
-/** Note that links are waiting, and start the background retry unless one is running. */
-export function queueLinks(dataDir: string, cause: string): void {
+/** Note that links are waiting, and start the background retry unless one is running. `tips`:
+ * the commits of the push whose links could not go, added to those already waiting. */
+export function queueLinks(dataDir: string, cause: string, tips?: string[]): void {
   const before = readOutbox(dataDir);
-  if (before?.pid && alive(before.pid)) return;
-  fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ since: before?.since ?? new Date().toISOString(), cause, attempts: before?.attempts ?? 0 }));
+  const all = before?.tips || tips ? [...new Set([...before?.tips ?? [], ...tips ?? []])] : undefined;
+  if (before?.pid && alive(before.pid)) {
+    // The retry running reads the file before each attempt: it takes these commits too.
+    if (all && all.length !== (before.tips?.length ?? 0)) fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ ...before, tips: all }));
+    return;
+  }
+  fs.writeFileSync(outboxFile(dataDir), JSON.stringify({ since: before?.since ?? new Date().toISOString(), cause, attempts: before?.attempts ?? 0, ...(all ? { tips: all } : {}) }));
   startDetached([bin, 'githook', 'links', '--data', dataDir]);
+}
+
+/** What git's pre-push hook reads on stdin, one `<local ref> <local sha> <remote ref> <remote sha>`
+ * per ref being pushed: the local commits pushed (a deleted ref gives none). Undefined when git
+ * gave no list (nothing to update, or a hook installed before the list was passed on). */
+export function parsePushed(input: string): string[] | undefined {
+  const lines = input.split(/\r?\n/).map(line => line.trim().split(/\s+/)).filter(parts => parts.length >= 4 && /^[0-9a-f]{40,64}$/.test(parts[1]));
+  if (!lines.length) return undefined;
+  return [...new Set(lines.map(parts => parts[1]).filter(sha => !/^0+$/.test(sha)))];
 }
 
 /** One attempt to send the waiting links. Clears the outbox when nothing is left to send. */
 export function sendQueuedLinks(dataDir: string): { sent: number } | { failed: string } {
   const project = path.dirname(dataDir);
   try {
-    const { links } = pushLinks(project);
+    const { links } = pushLinks(project, undefined, readOutbox(dataDir)?.tips);
     fs.rmSync(outboxFile(dataDir), { force: true });
     jobLine(dataDir, `links outbox · ${links} link${links === 1 ? '' : 's'} sent`);
     return { sent: links };
@@ -338,7 +357,8 @@ export function sendQueuedLinks(dataDir: string): { sent: number } | { failed: s
 }
 
 /** `wisdom githook <name>`: what each hook does. It never throws: a hook must not fail git.
- * `input` is what git gave the hook on stdin (post-rewrite's old and new shas); read here when not given. */
+ * `input` is what git gave the hook on stdin (post-rewrite's old and new shas, pre-push's refs
+ * being pushed); read here when not given. */
 export function runGitHook(name: string, args: string[], dataDir: string, log: (line: string) => void = line => process.stderr.write(line + '\n'), input?: string): void {
   const project = path.dirname(dataDir);
   try {
@@ -394,6 +414,8 @@ export function runGitHook(name: string, args: string[], dataDir: string, log: (
       finally { dropJob(dataDir, sha); }
     } else if (name === 'pre-push') {
       const [remote] = args;
+      // Only the records of the commits being pushed go (policy 5.22), not all HEAD reaches.
+      const tips = parsePushed(input ?? readStdin());
       // A commit whose job died gets its record and guide now; commits just made may still
       // have theirs being written (a guide that reads its sessions takes a minute or two).
       finishDeadJobs(dataDir, log);
@@ -404,17 +426,17 @@ export function runGitHook(name: string, args: string[], dataDir: string, log: (
         running = jobs(dataDir).running;
       }
       finishDeadJobs(dataDir, log);
-      for (const sha of waitingForGuides(project, running.map(job => job.sha))) recordCommit(dataDir, sha);
+      for (const sha of waitingForGuides(project, running.map(job => job.sha), pushHistory(project, tips))) recordCommit(dataDir, sha);
       const store = new ReadStore(dataDir);
       try {
         let result: PushResult;
-        try { result = push(store, dataDir, remote); }
+        try { result = push(store, dataDir, remote, tips); }
         catch (error) {
           // The push stopped part way (the remote could not be reached, or refused the sessions).
           // Links go first, so they may be there already; one quick try says, and any still
           // waiting go to the outbox, retried in the background.
           if (listRefs(project, 'refs/wisdom/links/').size) {
-            try { pushLinks(project, remote); } catch (linkError) { queueLinks(dataDir, linkError instanceof Error ? linkError.message : String(linkError)); }
+            try { pushLinks(project, remote, tips); } catch (linkError) { queueLinks(dataDir, linkError instanceof Error ? linkError.message : String(linkError), tips); }
           }
           throw error;
         }
@@ -425,7 +447,7 @@ export function runGitHook(name: string, args: string[], dataDir: string, log: (
         if (held.length) log(`Wisdom: held back ${held.map(s => `${s.id.slice(0, 8)} (${s.heldBack})`).join(', ')}; it is tried again at each push.`);
         if (result.linksFailed) {
           log(`Wisdom: commit links not sent (${result.linksFailed}); retrying in the background. Your push is not affected.`);
-          queueLinks(dataDir, result.linksFailed);
+          queueLinks(dataDir, result.linksFailed, tips);
         } else if (readOutbox(dataDir)) fs.rmSync(outboxFile(dataDir), { force: true });
       } finally { store.close(); }
     }

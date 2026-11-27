@@ -100,7 +100,7 @@ Every harness is an adapter; none is central.
 
 ### Another service (export, sync, sharing, review tools)
 
-- **Reads only.** It reads through the ledger (`/ledger`) or the dashboard views
+- **Reads only.** It reads through the ledger (`/ledger`) or Usage views
   (`/view`). It never writes to `records`, payloads or native copies.
 - **Its own outputs, marked as derived.** Anything it produces lives in its own
   directory or table, is labelled as derived, and can be deleted without affecting evidence.

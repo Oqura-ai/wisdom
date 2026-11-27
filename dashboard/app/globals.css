@@ -74,6 +74,7 @@ body { zoom: var(--ui-scale); }
 .topbar { display: flex; align-items: center; gap: 12px; height: 48px; flex: none; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--paper); }
 .wordmark { font: 20px var(--serif); letter-spacing: -.6px; color: var(--ink); display: inline-flex; align-items: center; }
 .wordmark .face { width: 15px; height: 15px; margin: 0 1px; transform: translateY(2px); }
+.app-name { font-size: 13px; color: var(--muted); margin-left: -4px; }
 .project-name { font-weight: 600; color: var(--ink); }
 .project { height: 28px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; padding: 0 10px; color: var(--ink); }
 .live { white-space: nowrap; text-transform: capitalize; display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; font: 500 12px var(--sans);

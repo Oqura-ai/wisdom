@@ -11,6 +11,7 @@ import { SharedLibrary, readLedger, readView } from '../share/shared.js';
 import { hookSchema, viewSchema } from '../core/schema.js';
 import { writeJson } from '../storage/ledger.js';
 import { startDashboard } from './dashboard.js';
+import { startCommits } from './commits.js';
 import { CommitWatcher } from '../team/watch.js';
 import { deleteTeamSession, fetchTeam, prune, push } from '../team/team.js';
 
@@ -92,7 +93,7 @@ async function body(request: http.IncomingMessage): Promise<unknown> {
 }
 
 /** One local process owns SQLite and evidence files. No web framework is needed. */
-export async function startDaemon(dataDir: string, port = 7434, options: { dashboardPort?: number } = {}) {
+export async function startDaemon(dataDir: string, port = 7434, options: { dashboardPort?: number; commitsPort?: number } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const lock = path.join(dataDir, 'daemon.lock');
   if (fs.existsSync(lock)) {
@@ -114,6 +115,7 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   const checks = doctor(dataDir);
   const token = randomBytes(32).toString('hex');
   let dashboard: ReturnType<typeof startDashboard> | undefined;
+  let commits: ReturnType<typeof startCommits> | undefined;
   let closing = false;
   let timer: NodeJS.Timeout;
   let finish!: () => void;
@@ -132,7 +134,8 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
       if (request.method === 'GET' && url.pathname === '/health') {
         send(200, { status: 'running', pid: process.pid, captures: captures.ledgers.size,
           storage: 'sqlite', captureApi: CAPTURE_API, readVersion: captures.database.revision,
-          dashboard: dashboard?.state() ?? { status: 'unavailable', reason: 'Not started with this daemon.' } }); return;
+          dashboard: dashboard?.state() ?? { status: 'unavailable', reason: 'Not started with this daemon.' },
+          commits: commits?.state() ?? { status: 'unavailable', reason: 'Not started with this daemon.' } }); return;
       }
       if (request.method !== 'POST') { send(404, { error: 'Unknown route' }); return; }
       const input = await body(request);
@@ -195,12 +198,14 @@ export async function startDaemon(dataDir: string, port = 7434, options: { dashb
   timer = setInterval(() => { captures.poll(); library.poll(); watcher.poll(); }, 500);
   // Optional viewer. Started after daemon.json exists, since it reads it to connect.
   if (options.dashboardPort) dashboard = startDashboard(dataDir, options.dashboardPort);
+  if (options.commitsPort) commits = startCommits(dataDir, options.commitsPort);
 
   async function close(): Promise<void> {
     if (closing) return closed;
     closing = true;
     clearInterval(timer);
     dashboard?.close();
+    commits?.close();
     captures.shutdown();
     await new Promise<void>(resolve => server.close(() => resolve()));
     captures.database.close();

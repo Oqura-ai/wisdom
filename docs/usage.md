@@ -19,7 +19,9 @@
 | `wisdom guide <commit>`, `wisdom guide on\|off` | Commit guides in any mode: a model writes one commit's guide on request, or one after each commit. Local mode keeps them on this machine. See [Guides in local mode](team.md#guides-in-local-mode). |
 | `wisdom team …`, `wisdom check --range` | Team mode: git hooks, commit guides written by a cheap model, sharing sessions through your git remote, the CI check. See [Team mode](team.md). |
 | `wisdom open <position> --capture <session\|latest>` | Read one turn, tool call or subagent, whole. |
-| `wisdom dashboard` | Print the address of the live dashboard. |
+| `wisdom usage` | Print the address of Usage, the live view of your sessions. `wisdom dashboard`, its earlier name, does the same. |
+| `wisdom commits` | Print the address of Commits on this machine: main and your branches, each commit's record and the sessions behind it, live. See [Commits on this machine](#commits-on-this-machine). |
+| `wisdom commits deploy` | Team mode: set up the same dashboard for the whole team, from your git remote, behind a GitHub sign-in. See [Commits for your team](team.md#commits-for-your-team). |
 | `wisdom doctor` | Check that everything is working. See [installation](installation.md#check-a-project). |
 | `wisdom daemon start\|run\|status\|stop` | Control the background service. `run` stays in the foreground. |
 | `wisdom mcp` | Serve the optional `ledger` tool over MCP. See [agents](agents.md). |
@@ -80,7 +82,7 @@ The new or resumed session starts with a first prompt Wisdom writes from facts, 
 
 Run from inside a Claude Code session, the handoff reads that session by default: Wisdom's SessionStart hook gives the session's shell its ID as `WISDOM_SESSION`. From Codex or Pi, name it with `--from`. An agent emits (it can't open a session in its own terminal), as a background command if its harness can, so it keeps working while it waits.
 
-Each session says how it is linked. The glance shows `continues <id> (<harness>)` for a new session, or `continued after <id> (<harness>) · at t5` for an existing one, and the dashboard shows the link from both ends. One handoff links one session: a `/clear` or `/new` later in the same process is not a continuation.
+Each session says how it is linked. The glance shows `continues <id> (<harness>)` for a new session, or `continued after <id> (<harness>) · at t5` for an existing one, and Usage shows the link from both ends. One handoff links one session: a `/clear` or `/new` later in the same process is not a continuation.
 
 A session that is still running can't take outside input, so a handoff into one starts nothing and prints the prompt for you to paste, and the command for a new session instead. A very long existing session gets a note suggesting a new session instead, because its old context plus the reading can fill the window quickly. Codex needs its hooks trusted, as for `wisdom track codex`.
 
@@ -135,7 +137,7 @@ redacted by sender ×2 · patches edited by redaction: notes.txt
 - A shared copy has its own version numbers, so `--at` pins on it stay valid.
 - It can't be resumed, because it's someone else's recording. To carry its work on, clone it (below), or start a new session that reads it: `wisdom handoff claude --from <id>`.
 - If a session is also recorded in your project, for example one you shared yourself, every read shows your own recording.
-- The dashboard lists shared sessions under **Shared with you**, labelled with where they came from.
+- Usage lists shared sessions under **Shared with you**, labelled with where they came from.
 - Checksums catch a damaged file, not a deliberately edited one. Treat what you read as the sender's account of their recording.
 
 ## Cloning a session
@@ -147,7 +149,7 @@ wisdom clone 0f3c8a1e
 A clone is a new session in the same harness that already holds the other session's conversation, so the agent carries on as if it had done that work itself. The source can be one of your own sessions or one shared with you.
 
 - **Always a new session.** It gets a fresh ID and never takes over one already in use, so it can't overwrite or disturb another session. The original is never changed.
-- **Recorded from the clone onward.** The glance shows `cloned from <id> (<harness>) at version N · 12 turns`, and only prompts after the clone become turns. The copied turns stay readable in the original. The dashboard shows them as a collapsed **Cloned history** block that opens the original.
+- **Recorded from the clone onward.** The glance shows `cloned from <id> (<harness>) at version N · 12 turns`, and only prompts after the clone become turns. The copied turns stay readable in the original. Usage shows them as a collapsed **Cloned history** block that opens the original.
 - **Folders are moved.** A shared session's folder paths are rewritten to your project in the copy. Paths inside old tool output stay as they were.
 - **Files may differ.** The clone compares each file the session changed with your disk and names the ones that differ, because the agent will remember edits your files may not have.
 - **Same harness only.** A Claude Code conversation can't become a Codex one. To continue in another harness, start a new session that reads it: `wisdom handoff`.
@@ -167,16 +169,16 @@ A Markdown document for people who don't have Wisdom: a PR description, an issue
 
 The same check for secrets as `wisdom share` runs first, with the same choices: redact, keep, or cancel, and `--redact` or `--keep-secrets` when there's no terminal to ask. Messages go to stderr, so `--out -` prints only the document. Your own sessions and shared ones both export; a shared one says so.
 
-## Health, storage and repair in the dashboard
+## Health, storage and repair in Usage
 
 - **Health:** a line at the top of every page runs the same checks as `wisdom doctor`, in the background, and refreshes every minute. It stays quiet when recording works; open it for each check and the command that fixes it.
 - **Repair:** when a harness's hooks point to a copy of Wisdom that moved or is another one, or its reading skill is missing or older, **Repair…** rewrites them the way `wisdom init` or `wisdom connect` would. It first copies every file it changes into `.wisdom/backups/<time>/`, and each backup can be restored from the same place. Sessions already running keep the hooks they started with until they restart, and Codex runs changed hooks only after you review them again in `/hooks`. A project settings file that git tracks is never rewritten.
-- **What stays in the terminal:** starting and stopping the daemon. The dashboard is served by the daemon, so it can't start it, and stopping it would close the page.
+- **What stays in the terminal:** starting and stopping the daemon. Usage is served by the daemon, so it can't start it, and stopping it would close the page.
 - **Storage:** the overview shows the project's disk space: each session's evidence, the database, each harness home in `.wisdom`, and the rest, with the largest sessions. **Clean up…** lists sessions not active for 30 days (change the number), to pick one by one or delete all; the delete dialog below then shows exactly what goes. Nothing is ever deleted on a schedule.
 
 ## Deleting a session
 
-Open a session in the dashboard and press **Delete**. Nothing is deleted until you have read what goes and confirmed:
+Open a session in Usage and press **Delete**. Nothing is deleted until you have read what goes and confirmed:
 
 - **What goes:** the session's record and evidence (`.wisdom/harnesses/<harness>/<id>/`), and its transcript and other per-session files in the project's harness home. The dialog lists them with their size. Deleted rows are overwritten inside `ledger.sqlite`, not just unlinked.
 - **Linked sessions:** a session that continues it, or was cloned from it, keeps its own evidence and now says `continues a deleted session`. If one of them is still recording, the dialog names it: its agent may still read the session you are deleting, and those reads will fail.
@@ -245,9 +247,20 @@ When the daemon sees you make a commit, it keeps that answer as a record in your
 
 A kept record with agent work also shows a **guide** at the end, `guide · plain, built from the record now, no model`: each piece's step and the request of its turn, quoted. It is built each time you read it and never stored. For an account of what the change does and why, `wisdom guide <commit>` has a model (Claude Haiku 5.5, through your Claude Code) read the commit's sessions since your previous commit and write one, kept in that commit's record on this machine. `wisdom guide on` has one written after every commit, through a single `post-commit` hook that changes no commit message and pushes nothing; it is off by default. See [Guides in local mode](team.md#guides-in-local-mode). A normal `git push` never sends `refs/wisdom/*`; `git push --mirror` does.
 
+### Commits on this machine
+
+`wisdom commits` prints the address of Commits (`http://127.0.0.1:7436` for the first project), a page of its own beside Usage. It starts from git rather than from a session: what landed on main, your other branches, each commit with how its record was found, its pieces, its guide and its sessions, and a session's turns down to the chat view. The same app shows a team its remote once deployed; here it shows this machine only.
+
+- **Only this machine.** Your branches (main included), the records the daemon keeps for your commits, and your recordings. Nothing is fetched or compared with a remote, and it needs neither team mode nor a remote.
+- **Live.** It looks every two seconds at your branch tips, Wisdom's refs and each session's newest record, builds again when one moved, and the open page shows the new build in place.
+- **Checked here, not trusted.** Each status is worked out again from this machine's recordings: a step's change must still be in its session, and a guide must pass its check. A session a record names that is not here (deleted, or recorded elsewhere) is *needs attention*.
+- **History before Wisdom.** Without a team file, main's commits from before the first one Wisdom recorded fold into one line: none of them can have a record. With `wisdom-team.yaml`, the line starts at team mode instead.
+
+It runs as its own process, started by the daemon like Usage, and reads the recordings the way any other reader does, so a build never holds up recording. Its build lives in `.wisdom/commits/`, and `--no-dashboard` or `daemon.dashboard: false` leaves it out too.
+
 ## The background service
 
-The daemon listens on `127.0.0.1:7434` by default, or from `daemon.port` in [`wisdom.yaml`](#settings). When another project's daemon holds that port, it takes the next free pair (7436, 7438, …). `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
+The daemon listens on `127.0.0.1:7434` by default, or from `daemon.port` in [`wisdom.yaml`](#settings), with Usage on the next port and Commits on the one after. When another project's daemon holds that port, it takes the next free three (7437, 7440, …); Commits moves up further if its own port is taken, and `wisdom commits` says where it is. `--port N` asks for one port exactly. Its port, process ID and local access token are stored in `.wisdom/daemon.json`, and it binds only to loopback. It keeps running after the harness exits. Background startup errors go to `.wisdom/daemon.log`.
 
 A recording capture becomes interrupted when the daemon restarts. It does not silently resume with a missing file baseline. The session's next event continues it, with a gap for the time in between. A turn that had not settled stays open, so its calls and reply stay in it.
 
@@ -261,8 +274,8 @@ A recording capture becomes interrupted when the daemon restarts. It does not si
 | `paths.claude`, `.codex`, `.pi` | the installed one | Another installation, as `--claude-bin`, `--codex-bin` and `--pi-entry` do, for setup, `track`, `doctor` and the guide writer. A name is looked up on PATH; a path is taken from the project's folder. Pi's is its CLI's `.js` file. |
 | `skill` | `true` | `false`: Wisdom's reading skill is taken out of each place it went, and no command puts it back. |
 | `mcp` | `true` | `false`: tracked Claude Code and Codex sessions start without the read-only `ledger` tool. Connected sessions never get it. |
-| `daemon.port` | `7434` | The first port the daemon tries; when another project holds it, the next free pair. `--port` still asks for one port exactly. |
-| `daemon.dashboard` | `true` | `false` starts the daemon without the dashboard, as `--no-dashboard` does. |
+| `daemon.port` | `7434` | The first port the daemon tries; when another project holds it, the next free three. `--port` still asks for one port exactly. |
+| `daemon.dashboard` | `true` | `false` starts the daemon without Usage and Commits, as `--no-dashboard` does. |
 | `recording.idleMinutes` | `10` | A session with no event this long, and no tool running, is closed; its next event continues it. Read when a session starts being watched. |
 | `recording.maxFileMB` | `1` | A file bigger than this, 1 to 16, has its change recorded as a gap, without its contents. |
 | `recording.ignore` | none | Files or folders, from the project's top, never recorded: as `.wisdomignore` (still read too) takes them, with no `*` or `..`. |
@@ -296,13 +309,15 @@ wisdom.yaml                    # Your settings for this project (see Settings); 
   daemon.json                  # Local connection details; do not commit
   daemon.log
   dashboard.log
+  commits.json, commits.log    # Where Commits listens, and what its builds said
+  commits/data/                # Commits' latest build of this machine (rebuilt live)
   ledger.sqlite                # Authoritative capture/record metadata and SQL indexes
   ledger.sqlite-wal            # SQLite may keep sidecar files while running
   ledger.sqlite-shm
   spool/<harness>/<session>/   # Events a hook kept while the daemon was down
   handoffs/<id>.txt, <id>.log  # A background handoff's answer and log
   deleted.json                 # Hashes of deleted sessions' IDs, never recorded again
-  backups/<time>/              # Files a dashboard repair changed, as they were before
+  backups/<time>/              # Files a repair in Usage changed, as they were before
   harnesses/<harness>/home/    # The harness's own folder: settings with Wisdom's hooks,
                                # login, Codex hook trust, and its native sessions (source of truth)
   harnesses/<harness>/<capture-id>/   # pi, claude-code, codex: one directory per capture

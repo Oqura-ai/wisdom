@@ -29,7 +29,7 @@ Then follow the [quick start](../README.md#quick-start).
 wisdom doctor
 ```
 
-Run it inside a project, or pass `--cwd`. It reports the background service, the dashboard, each harness's hooks and version, Codex hook trust, and any events waiting to be recorded. It changes nothing and starts nothing. It exits with code 1 if it finds a problem, and prints the command that fixes each one.
+Run it inside a project, or pass `--cwd`. It reports the background service, Usage, each harness's hooks and version, Codex hook trust, and any events waiting to be recorded. It changes nothing and starts nothing. It exits with code 1 if it finds a problem, and prints the command that fixes each one.
 
 | Level | Meaning |
 | --- | --- |
@@ -91,6 +91,6 @@ Stop the service, then copy the whole `.wisdom/` folder, including payloads and 
 
    You can also remove Wisdom's block from `.git/info/exclude`, and the `.wisdom/` line from the project's `.gitignore` if an older version added it.
 
-If you connected a project, run `wisdom disconnect` in it first, so its settings no longer name Wisdom. There is nothing else to undo. Wisdom never changes `~/.claude`, `~/.codex` or `~/.pi/agent`, so a plain `claude`, `codex` or `pi` is exactly as it was. The one exception is yours to choose: deleting a connected session in the dashboard with **Also delete the harness's own copy** ticked removes that session's own files there.
+If you connected a project, run `wisdom disconnect` in it first, so its settings no longer name Wisdom. There is nothing else to undo. Wisdom never changes `~/.claude`, `~/.codex` or `~/.pi/agent`, so a plain `claude`, `codex` or `pi` is exactly as it was. The one exception is yours to choose: deleting a connected session in Usage with **Also delete the harness's own copy** ticked removes that session's own files there.
 
 If you uninstalled before stopping a service, it keeps running until you end it. Its process ID is in `.wisdom/daemon.json`.

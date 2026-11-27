@@ -39,7 +39,7 @@ export async function diagnose(dataDir: string, bins: { claude?: string; codex?:
   // Quiet: its Settings check below names any problem once.
   const settings = settingsOrDefaults(project, true);
   const checks = [await daemonCheck(dataDir)];
-  checks.push(dashboardCheck(dataDir, checks[0]!));
+  checks.push(dashboardCheck(dataDir, checks[0]!), commitsCheck(checks[0]!));
   const version = (key: keyof typeof testedWith, found: string) => found === testedWith[key] || found === 'unknown'
     ? `version ${found}` : `version ${found}, last tested with ${testedWith[key]}`;
 
@@ -125,13 +125,24 @@ async function daemonCheck(dataDir: string): Promise<Check & { health?: any }> {
   return { level: 'ok', name, detail: `running at ${connection.url} (PID ${connection.pid}), ${health.captures} session${health.captures === 1 ? '' : 's'}`, health };
 }
 
+/** Usage, the session viewer. */
 function dashboardCheck(dataDir: string, daemon: Check & { health?: any }): Check {
-  const name = 'Dashboard';
+  const name = 'Usage';
   const viewer = daemon.health?.dashboard;
   if (!viewer) return { level: 'note', name, detail: 'starts with the daemon' };
   if (viewer.url && viewer.status !== 'exited') return { level: 'ok', name, detail: viewer.url };
   if (viewer.url) return { level: 'problem', name, detail: `stopped unexpectedly. Read ${path.join(dataDir, 'dashboard.log')}` };
   return { level: 'note', name, detail: viewer.reason };
+}
+
+/** Commits on this machine: started with the daemon, as Usage is. */
+function commitsCheck(daemon: Check & { health?: any }): Check {
+  const name = 'Commits';
+  const state = daemon.health?.commits;
+  if (!state) return { level: 'note', name, detail: daemon.health ? 'the running daemon is from before Commits: wisdom daemon stop, then start' : 'starts with the daemon' };
+  if (state.status === 'exited') return { level: 'problem', name, detail: `stopped unexpectedly. Read ${state.log}` };
+  if (state.status === 'unavailable') return { level: 'note', name, detail: state.reason };
+  return { level: 'ok', name, detail: state.url ?? 'starting' };
 }
 
 /** Codex runs a hook only after it is trusted, so being set up is not the same as working.

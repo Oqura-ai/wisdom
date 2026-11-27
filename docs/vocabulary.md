@@ -155,7 +155,7 @@ Assistant text and native transcript lines are linked to the input that was most
 when they arrived, or to a recorded native turn ID. That link is temporal; after steering,
 compaction or queued input it can be wrong about intent.
 
-## Dashboard views
+## Usage views
 
-The dashboard reads `POST /view` (`projects`, `project`, `capture`, `turn`, `record`,
+Usage reads `POST /view` (`projects`, `project`, `capture`, `turn`, `record`,
 `native-result`). These return records as stored, for drawing; agents use the ledger.

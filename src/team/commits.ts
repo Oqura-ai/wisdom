@@ -312,7 +312,10 @@ export interface RecordWindow { since?: { commit: string; at: string }; until: s
  * exists, and keeps what that check found. */
 export interface RecordGuide { text: string; writtenAt: string; writer: string; problems: string[]; derived: true;
   /** How long the writer ran, and what it cost when it says (Claude Code does). */
-  seconds?: number; costUsd?: number }
+  seconds?: number; costUsd?: number;
+  /** Of `items` the commit's guide answers, how many the model left out and Wisdom filled from
+   * the plain guide (guides.ts fillFromPlain). Absent when the model answered them all. */
+  filled?: number; items?: number }
 
 /** Kept in `refs/wisdom/records/<commit>` (record.json), made when the commit is noticed. */
 export interface CommitRecord {

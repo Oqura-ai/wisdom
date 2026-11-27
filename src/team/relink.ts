@@ -3,7 +3,7 @@ import path from 'node:path';
 import { FETCHED_RECORDS, git, gitError, gitText, patchId, readFile, recordRefs, recordText, remoteRef, topLevel, type Policy } from './gitrefs.js';
 import { linkRef, pairCommits, parseCommitMap, readLink, writeLink, type CommitLink } from './links.js';
 import { githubApi, type GitHubApi, type PullRequest } from './github.js';
-import { FETCHED, fetchRefs, policyOrThrow, sessionKey } from './team.js';
+import { FETCHED, fetchAllRecords, fetchRecordsOf, policyOrThrow, remoteRefs, sessionKey } from './team.js';
 import type { CommitRecord } from './commits.js';
 import { wisdomVersion } from '../setup/doctor.js';
 
@@ -65,7 +65,7 @@ function recordsByPatchId(project: string, skip: Set<string>): Map<string, strin
 /** A pull request from a fork: its contributor could push Wisdom's refs only to the fork. Copy
  * the records of its commits, and the sessions they name, into this repository's remote, sessions
  * first, so a record never names a session the remote lacks. Returns how many records came. */
-function copyFromFork(project: string, remote: string, policy: Policy, pull: PullRequest, commits: string[], lines: string[]): number {
+function copyFromFork(project: string, remote: string, policy: Policy, refs: Map<string, string>, pull: PullRequest, commits: string[], lines: string[]): number {
   const fork = pull.fork!;
   const base = `refs/wisdom/${policy.repoId}/`;
   let listed: Map<string, string>;
@@ -73,7 +73,9 @@ function copyFromFork(project: string, remote: string, policy: Policy, pull: Pul
     const out = gitText(project, ['ls-remote', fork.cloneUrl, `${base}*`]);
     listed = new Map(out ? out.split('\n').map(line => { const [sha, ref] = line.split('\t'); return [ref, sha] as [string, string]; }) : []);
   } catch (error) { lines.push(`PR #${pull.number} came from the fork ${fork.fullName}, which could not be read: ${gitError(error)}`); return 0; }
-  const wanted = commits.filter(commit => listed.has(`${base}records/${commit}`) && !readFile(project, `refs/wisdom/records/${commit}`, 'record.json'));
+  // Not those this repository's remote has already: only what is in question is fetched, so
+  // its records of them may not be here.
+  const wanted = commits.filter(commit => listed.has(`${base}records/${commit}`) && !refs.has(`${base}records/${commit}`) && !readFile(project, `refs/wisdom/records/${commit}`, 'record.json'));
   if (!wanted.length) { lines.push(`PR #${pull.number} came from the fork ${fork.fullName}, which has no Wisdom records of its commits`); return 0; }
   git(project, ['fetch', '--no-tags', '--no-prune', '--quiet', fork.cloneUrl, ...wanted.map(commit => `+${base}records/${commit}:refs/wisdom/records/${commit}`)]);
   const keys = [...new Set(wanted.flatMap(commit => parseRecord(recordText(project, commit))?.sessions.filter(s => s.recorder).map(s => sessionKey(s.recorder!, s.id)) ?? []))]
@@ -89,7 +91,7 @@ function copyFromFork(project: string, remote: string, policy: Policy, pull: Pul
 
 /** Ask GitHub about the commits nobody linked, and link those a merged pull request made.
  * Returns the commits it linked. */
-async function linkPullRequests(project: string, remote: string, policy: Policy, api: GitHubApi, open: string[], write: (link: Omit<CommitLink, 'kind' | 'version' | 'writtenAt' | 'writer'>) => void, lines: string[]): Promise<Set<string>> {
+async function linkPullRequests(project: string, remote: string, policy: Policy, refs: Map<string, string>, api: GitHubApi, open: string[], write: (link: Omit<CommitLink, 'kind' | 'version' | 'writtenAt' | 'writer'>) => void, lines: string[]): Promise<Set<string>> {
   const linked = new Set<string>();
   const byPull = new Map<number, { pull: PullRequest; mains: string[] }>();
   for (const sha of open) {
@@ -107,7 +109,7 @@ async function linkPullRequests(project: string, remote: string, policy: Policy,
     // GitHub keeps every pull request's commits under refs/pull/<n>/head, after the merge too.
     try { git(project, ['fetch', '--no-tags', '--no-prune', '--quiet', remote, `refs/pull/${number}/head`]); }
     catch (error) { lines.push(`PR #${number}: refs/pull/${number}/head could not be fetched (${gitError(error)}), so only records already here are used`); }
-    if (pull.fork) copyFromFork(project, remote, policy, pull, commits, lines);
+    if (pull.fork) copyFromFork(project, remote, policy, refs, pull, commits, lines);
     if (mains.length === 1 && singleParent(project, mains[0])) {
       write({ commit: mains[0], from: commits, how: 'squash-merge', basis: 'github', pr: number });
       linked.add(mains[0]);
@@ -132,7 +134,9 @@ export async function relink(cwd: string, options: { range?: string; commitMap?:
   const env = options.env ?? process.env;
   if (!options.range && !options.commitMap) throw new Error('Use: wisdom team relink --range <base>..<head>, or --commit-map <git filter-repo\'s commit-map file>');
   const writer = env.GITHUB_ACTIONS === 'true' ? 'github-actions' : 'wisdom team relink';
-  fetchRefs(project, remote, policy);
+  // Only what is in question (policy 5.22): the records and links of the commits named, never
+  // the team's whole history and never a session.
+  const listed = remoteRefs(project, remote, policy);
   const lines: string[] = [];
   const written: string[] = [];
   const write = (link: Omit<CommitLink, 'kind' | 'version' | 'writtenAt' | 'writer'>) => {
@@ -143,7 +147,9 @@ export async function relink(cwd: string, options: { range?: string; commitMap?:
     let text: string;
     try { text = fs.readFileSync(options.commitMap, 'utf8'); } catch (error) { throw new Error(`Cannot read ${options.commitMap}: ${error instanceof Error ? error.message : error}`); }
     let count = 0;
-    for (const [old, next] of parseCommitMap(text)) {
+    const pairs = parseCommitMap(text);
+    fetchRecordsOf(project, remote, policy, listed, pairs.map(([old]) => old), 0);
+    for (const [old, next] of pairs) {
       // Only commits with something to point to: filter-repo lists Wisdom's own ref commits too.
       if (!recordText(project, old) && !readLink(project, old)) continue;
       write({ commit: next, from: [old], how: 'filter-repo', basis: 'commit-map' });
@@ -154,17 +160,21 @@ export async function relink(cwd: string, options: { range?: string; commitMap?:
 
   if (options.range) {
     const commits = rangeCommits(project, options.range, lines);
-    const open = commits.filter(sha => !recordText(project, sha) && !readLink(project, sha));
+    fetchRecordsOf(project, remote, policy, listed, commits, 0);
+    const open =commits.filter(sha => !recordText(project, sha) && !readLink(project, sha));
     lines.push(`${commits.length} commit${commits.length === 1 ? '' : 's'} in ${options.range}, ${open.length} with neither a record nor a link`);
     let left = open;
     if (open.length) {
       const api = githubApi(project, remote, env);
       if (api) {
-        const done = await linkPullRequests(project, remote, policy, api, open, write, lines);
+        const done = await linkPullRequests(project, remote, policy, listed, api, open, write, lines);
         left = open.filter(sha => !done.has(sha));
       } else lines.push(`GitHub not asked: ${remote} is not a GitHub remote and GITHUB_REPOSITORY is not set`);
     }
     if (left.length) {
+      // "The same change as a recorded commit anywhere" can be answered only by reading every
+      // record: they all come now, never a session.
+      fetchAllRecords(project, remote, policy, listed);
       const onBranch = new Set(gitText(project, ['rev-list', '--max-count=5000', commits.at(-1)!]).split('\n'));
       const index = recordsByPatchId(project, onBranch);
       for (const sha of left) {

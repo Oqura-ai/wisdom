@@ -8,24 +8,24 @@ What doesn't work yet, what can't work, and roughly how much effort each one nee
 
 | Limitation | What it means for you | Effort |
 | --- | --- | --- |
-| Each project stands alone | By design, each project has its own daemon, dashboard and address, and there is no view across projects. | By design |
-| The daemon starts and stops in the terminal | The dashboard deletes sessions and repairs hooks, but it is served by the daemon, so it can't start it and stopping it would close the page. | By design |
-| At most about 20 projects running at once | Each running project takes a pair of ports, and each daemon and dashboard stay in memory. | L |
+| Each project stands alone | By design, each project has its own daemon, Usage and Commits pages and address, and there is no view across projects. | By design |
+| The daemon starts and stops in the terminal | Usage deletes sessions and repairs hooks, but it is served by the daemon, so it can't start it and stopping it would close the page. | By design |
+| At most about 20 projects running at once | Each running project takes three ports (the daemon, Usage, Commits), and each stays in memory. | L |
 | No search | You read one session at a time. | L |
-| Delete only in the dashboard | Sessions are deleted from the dashboard; there is no command for it in the terminal. | S |
+| Delete only in Usage | Sessions are deleted from Usage; there is no command for it in the terminal. | S |
 | An emitted handoff only reads | With `--emit`, the session that takes it reads and replies, held to reading by its harness; the work goes on when you open it with `wisdom resume`. Verified with Claude Code and Codex (whose hooks must be trusted first). Pi can't take one, since it reads only through its shell. Only Claude Code tells its shell which session it is in (from Codex or Pi, pass `--from`). | M |
 | Connected recording has limits | With `wisdom connect`, Claude Code and Pi record only when started in the project's top folder; Codex needs the project trusted and Wisdom's hooks reviewed once, and ignores them in a git worktree. `wisdom track` records these, with one login per project. | M |
 | Failed subagents go unmarked | A subagent cut off before it stops loses its report, transcript and tokens, with no gap to say so. | M |
 | Sessions aren't linked | Forks and `/clear` are a flat list, and `/rewind` isn't marked. | M |
 | Commit records cover your own new commits | Wisdom keeps a record for commits it sees you make while it runs. Others are worked out when asked; a deleted session then turns its pieces into `not recorded`. Merges get no record, and a rename shows as a delete and a create. | M |
 | Team mode is new | Tested on GitHub, not yet GitLab. The default guide writer needs Claude Code installed. Fork contributors can't push hidden refs; the CI job copies them at the merge. Commit links that GitHub's merges need come from that CI job, verified with a stand-in for GitHub's API so far, not yet a live repository. A conflicted cherry-pick is not linked. See [Team mode](team.md#limits). | M |
-| Huge commits | A commit of thousands of files takes minutes to record, its model guide can run out of time, and the dashboard slows on a turn that changed that many files. | M |
+| Huge commits | A commit of thousands of files takes minutes to record, its model guide can run out of time, and Usage slows on a turn that changed that many files. | M |
 | Deleting from a remote | A deleted session stays fetchable by hash until the host cleans up, and there is no command to delete a commit record. | M |
 | Model guides need their sessions | `wisdom guide <commit>` reads the sessions a commit's record names, so it cannot write a guide once one was deleted; it says so. The plain guide in `glance --commit` needs only the record, but loses the quoted request of a deleted session's turn. | S |
 | `git push --mirror` sends records | A normal push never sends `refs/wisdom/*`. A mirror push sends every ref, so commit records and model guides go too, in local mode as well. | Ongoing |
 | Long replies through a shell | A harness can cut long shell output. Claude Code saves it to a file and Codex removes the middle, both with a notice, and the skill teaches agents to read the rest. It relies on the agent following that. | S |
 | The secret check finds known shapes only | `wisdom share` catches common keys, tokens and `PASSWORD=` style values, and misses others. Look through what you send. | Ongoing |
-| Codex cost is an estimate | Codex reports tokens, not cost. The dashboard prices them at OpenAI's standard API rates for short prompts, read on a set date. Long prompts cost more, prices change, a model not in the table shows no cost, and on a ChatGPT plan you aren't billed per token. | S to keep current |
+| Codex cost is an estimate | Codex reports tokens, not cost. Usage prices them at OpenAI's standard API rates for short prompts, read on a set date. Long prompts cost more, prices change, a model not in the table shows no cost, and on a ChatGPT plan you aren't billed per token. | S to keep current |
 | Large projects | Past 10,000 files or 64 MiB of retained contents, changes become gaps instead of diffs. | M |
 | Sessions sharing a folder | Two sessions in one folder see each other's changes, labelled honestly. A commit gives each piece to the session whose own call named the file or held its text; when none did, it lists every session that saw it. | L |
 | Native formats can change | A new harness version can change what Wisdom reads. `wisdom doctor` shows when you're past the last tested version. | Ongoing |
