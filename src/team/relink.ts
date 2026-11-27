@@ -5,6 +5,7 @@ import { linkRef, pairCommits, parseCommitMap, readLink, writeLink, type CommitL
 import { githubApi, type GitHubApi, type PullRequest } from './github.js';
 import { FETCHED, fetchAllRecords, fetchRecordsOf, policyOrThrow, remoteRefs, sessionKey } from './team.js';
 import type { CommitRecord } from './commits.js';
+import { wisdomVersion } from '../setup/doctor.js';
 
 /** `wisdom team relink`: write the links nobody could write when the rewrite happened, then send
  * them. Every link comes from something that proves it, never from a commit message:
@@ -218,7 +219,8 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npm install -g @oqura/wisdom
+      # Pinned: npm's latest may be an older Wisdom without relink. Update it with the team's.
+      - run: npm install -g @oqura/wisdom@${wisdomVersion()}
       - run: wisdom team relink --range "\${{ github.event.before }}..\${{ github.sha }}"
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}

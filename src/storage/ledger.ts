@@ -10,8 +10,21 @@ import type { NativeEntry } from '../harnesses/types.js';
 export const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 
 export function writeJson(file: string, value: unknown): void {
-  fs.writeFileSync(file + '.tmp', JSON.stringify(value, null, 2) + '\n');
-  fs.renameSync(file + '.tmp', file);
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n');
+  // Windows refuses to replace a file another process has open (a hook or the CLI reading
+  // daemon.json) with EPERM/EACCES/EBUSY for a moment; wait and try again, about 1 s in all.
+  for (let attempt = 0; ; attempt++) {
+    try { fs.renameSync(temporary, file); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) {
+        fs.rmSync(temporary, { force: true });
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
 }
 
 /** One capture's native mirror and payload files, backed by the shared database. */
