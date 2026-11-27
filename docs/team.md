@@ -402,7 +402,7 @@ jobs:
     uses: Oqura-ai/wisdom/.github/workflows/wisdom.yml@v1
     with:
       main: "main"
-      wisdom-version: "0.6.0-beta.4"
+      wisdom-version: "0.6.0"
       commits: true
       vercel-org-id: "team_..."
       vercel-project-id: "prj_..."
@@ -429,7 +429,7 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npm install -g @oqura/wisdom@0.6.0-beta.4
+      - run: npm install -g @oqura/wisdom@0.6.0
       - run: wisdom check --range origin/${{ github.base_ref }}..HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -461,7 +461,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       # Pinned: npm's latest may be an older Wisdom without relink. Update it with the team's.
-      - run: npm install -g @oqura/wisdom@0.6.0-beta.4
+      - run: npm install -g @oqura/wisdom@0.6.0
       - run: wisdom team relink --range "${{ github.event.before }}..${{ github.sha }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
