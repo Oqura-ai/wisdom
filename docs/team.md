@@ -424,7 +424,7 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npm install -g @oqura/wisdom@0.6.0-beta.3
+      - run: npm install -g @oqura/wisdom@0.6.0-beta.4
       - run: wisdom check --range origin/${{ github.base_ref }}..HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -456,7 +456,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       # Pinned: npm's latest may be an older Wisdom without relink. Update it with the team's.
-      - run: npm install -g @oqura/wisdom@0.6.0-beta.3
+      - run: npm install -g @oqura/wisdom@0.6.0-beta.4
       - run: wisdom team relink --range "${{ github.event.before }}..${{ github.sha }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
